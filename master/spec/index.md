@@ -21,13 +21,6 @@ progressively modified and expanded.
 
 </important>
 
-### Learn and practice Rust
-
-The second purpose is for me to refresh, expand and practice my Rust skills.
-While the implementation of this project is important, the process and experience
-of building it together should serve the development of my skills as a Rust
-programmer.
-
 ## Features and API
 
 We plan to implement the following:
@@ -60,27 +53,33 @@ Contents of `.rgignore`:
 !*/ref/
 ```
 
-### `mem add` 
+### `mem add <category> <filepath> [flags] [content]` 
 
 Arguments and flags:
-- `filepath`: required, can include '/' to create subdirectories
+- `filepath`: required, can include '/' to automaticaly create subdirs
+- `category`: required, "spec" | "trace" | "tmp" | "bin | "ref"
 - `content`: optional, defaults to stdin
-- `--type`: "spec" | "trace" | "tmp" | "ref", optional, defauts to: "spec"
+- flags:
+  - `--branch <branch-name>` use the provided branch name
 
-Creates files in `<dir-name>/<current-branch-name>/<type>/` according to the following rules:
+Creates files in `<dir-name>/<current-branch-name>/<category>/` according to the following rules:
 
-- type "spec" or "ref":
-  `<dir-name>/<current-branch-name>/<type>/<filepath>`
+- category "spec" or "ref":
+  `<dir-name>/<current-branch-name>/<category>/<filepath>`
 
-- type "trace" or "tmp":
-  `<dir-name>/<current-branch-name>/<type>/<commit-timestamp>-<commit-hash>/<filepath>` where:
+- category "trace" or "tmp":
+  `<dir-name>/<current-branch-name>/<category>/<commit-timestamp>-<commit-hash>/<filepath>` where:
     <commit-timestamp> and <commit-hash> refer to current commit on the project branch, not `mem` orphan branch
 
 ### `mem list`
 
-Prints a list of files in `<dir-name>/<current-branch-name>/` relative to project root
+Prints a list of files in `<dir-name>/<current-branch-name>/` relative to project root.
+By default, excludedes files from gitignored categories.
 
 Flags:
+- `--branch <branch-name>` list files for following branch
+- `--all(-a)` list files for all branches
+- `--include-gitignored(-i)`: prints in the following example format:
 - `--json(-j)`: prints in the following example format:
 ```json
 [
@@ -111,5 +110,11 @@ This application will be written in Rust and distributed via a Nix flake.
 
 We plan to use the following crates:
 - clap
-- gix
+- figment (config management)
 - anyhow
+
+Suggested test deps:
+- assert_cmd
+- predicates
+- pretty_assertions
+- tempfile
