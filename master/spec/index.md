@@ -118,3 +118,9 @@ Suggested test deps:
 - predicates
 - pretty_assertions
 - tempfile
+
+## Handling `git` commands
+
+Although git operations can be handled with specialized Rust crates,
+for this project we are going to keep it simple and rely on system
+installed `git` and simply shell out run the commands.
