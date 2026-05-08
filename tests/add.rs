@@ -346,6 +346,39 @@ fn test_add_type_bin() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_add_type_doc() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("doc")
+        .arg("manual.md")
+        .arg("doc content");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/main/doc/manual.md\n"));
+
+    let file_path = temp.path().join(".test-mem/main/doc/manual.md");
+    assert!(file_path.exists());
+    assert_eq!(fs::read_to_string(file_path)?, "doc content");
+
+    Ok(())
+}
+
+#[test]
 fn test_add_force_overwrite() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());

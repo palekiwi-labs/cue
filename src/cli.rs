@@ -14,6 +14,7 @@ pub enum MemType {
     Tmp,
     Ref,
     Bin,
+    Doc,
 }
 
 #[derive(Subcommand)]
