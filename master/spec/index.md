@@ -57,7 +57,7 @@ Contents of `.rgignore`:
 
 Arguments and flags:
 - `filepath`: required, can include '/' to automaticaly create subdirs
-- `category`: required, "spec" | "trace" | "tmp" | "bin | "ref"
+- `category`: required, "spec" | "trace" | "tmp" | "bin" | "ref" | "doc"
 - `content`: optional, defaults to stdin
 - flags:
   - `--branch <branch-name>` use the provided branch name
@@ -79,6 +79,7 @@ By default, excludedes files from gitignored categories.
 Flags:
 - `--branch <branch-name>` list files for following branch
 - `--all(-a)` list files for all branches
+- `--type(-t) <category>` filter by category
 - `--include-gitignored(-i)`: prints in the following example format:
 - `--json(-j)`: prints in the following example format:
 ```json
@@ -94,6 +95,32 @@ Flags:
   }
 ]
 ```
+
+### `mem log`
+
+Operations on `<dir-name>/<current-branch-name>/spec/log.md`.
+This file is a central log for progress made, failed approaches tried, issues discovered, etc.
+
+### `mem log add`
+
+Flags:
+- `--title <text>`
+- `--body <text>`
+- `--found <text>`
+- `--decided <text>`
+- `--open <text>`
+- `--file <path-to-file>` uses a json file as in input
+
+Adds a log entry. Similarly to `mem add`, we need to account for two kinds of users: humans and AI.
+The log will be primarily maintained by the AI agent so it is important that agents can effectively
+and reliably create content for their entries.
+
+### `mem log list`
+
+Prints log entries
+
+Flags:
+- `--branch <branch-name>` list log entries for a given branch
 
 ### Configuration management
 

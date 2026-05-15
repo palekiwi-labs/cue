@@ -1,0 +1,1 @@
+Restore support for --type bin in mem add command. The bin type should behave similarly to spec but target the bin directory.

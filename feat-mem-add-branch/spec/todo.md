@@ -1,0 +1,5 @@
+- [ ] Update CLI definition in `src/cli.rs` (add `--branch` with `-b` short flag)
+- [ ] Update `main.rs` to pass `branch` to `add::handle`
+- [ ] Update `src/commands/add.rs` with branch logic and sanitization
+- [ ] Add test case `test_add_with_explicit_branch` to `tests/add.rs`
+- [ ] Verify implementation with `cargo test`
