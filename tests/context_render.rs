@@ -42,3 +42,38 @@ fn test_context_render_with_globs() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_context_render_instructions() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    // Initialize mem
+    env.command().arg("init").assert().success();
+
+    // Create context.json with instructions
+    let mem_main = env.root().join(".mem").join("main");
+    fs::create_dir_all(&mem_main)?;
+    let context_json = mem_main.join("context.json");
+    fs::write(
+        &context_json,
+        r#"{
+        "default": {
+            "artifacts": [],
+            "instructions": "Please implement the feature"
+        }
+    }"#,
+    )?;
+
+    // Run mem context render
+    env.command()
+        .arg("context")
+        .arg("render")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "<instructions>\nPlease implement the feature\n</instructions>",
+        ));
+
+    Ok(())
+}

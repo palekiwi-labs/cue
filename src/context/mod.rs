@@ -15,6 +15,7 @@ pub struct Artifact {
 pub struct ResolvedContext {
     pub artifacts: Vec<Artifact>,
     pub diff: Option<String>,
+    pub instructions: Option<String>,
 }
 
 pub fn context_json_path(root: &Path, branch_dir: &str) -> PathBuf {
@@ -255,7 +256,13 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
         }
     }
 
-    Ok(ResolvedContext { artifacts, diff })
+    let instructions = profile_obj.instructions.clone();
+
+    Ok(ResolvedContext {
+        artifacts,
+        diff,
+        instructions,
+    })
 }
 
 pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
@@ -299,6 +306,7 @@ pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
             artifacts,
             diff: None,
             include: Vec::new(),
+            instructions: None,
         };
 
         let mut map = HashMap::new();
@@ -324,7 +332,8 @@ mod tests {
             "default": {
                 "artifacts": ["./spec/index.md"],
                 "diff": "main...HEAD",
-                "include": ["@other-branch"]
+                "include": ["@other-branch"],
+                "instructions": "Go fast"
             },
             "brief": {
                 "artifacts": ["./spec/index.md"]
@@ -336,6 +345,7 @@ mod tests {
         assert_eq!(config["default"].artifacts, vec!["./spec/index.md"]);
         assert_eq!(config["default"].diff, Some("main...HEAD".to_string()));
         assert_eq!(config["default"].include, vec!["@other-branch"]);
+        assert_eq!(config["default"].instructions, Some("Go fast".to_string()));
         assert_eq!(config["brief"].artifacts, vec!["./spec/index.md"]);
         assert_eq!(config["brief"].diff, None);
         assert_eq!(config["brief"].include, Vec::<String>::new());

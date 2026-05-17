@@ -14,6 +14,8 @@ pub struct ContextProfile {
     pub diff: Option<String>,
     #[serde(default)]
     pub include: Vec<String>,
+    #[serde(default)]
+    pub instructions: Option<String>,
 }
 
 pub type ContextConfig = HashMap<String, ContextProfile>;
