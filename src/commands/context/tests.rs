@@ -50,4 +50,24 @@ mod tests {
         let config: ContextConfig = serde_json::from_value(data).unwrap();
         assert!(config.contains_key("default"));
     }
+
+    #[test]
+    fn test_parse_artifact_path() {
+        let root = Path::new("/repo");
+        let current = "feat-ctx";
+
+        // Current branch
+        let path = parse_artifact_path("./spec/index.md", current, root).unwrap();
+        assert_eq!(path, root.join(".mem").join(current).join("spec/index.md"));
+
+        // Cross branch
+        let path = parse_artifact_path("@other:spec/plan.md", current, root).unwrap();
+        assert_eq!(path, root.join(".mem").join("other").join("spec/plan.md"));
+
+        // Failures
+        assert!(parse_artifact_path("../outside.md", current, root).is_err());
+        assert!(parse_artifact_path("/absolute.md", current, root).is_err());
+        assert!(parse_artifact_path("@branch_with/slash:spec.md", current, root).is_err());
+        assert!(parse_artifact_path("no_prefix.md", current, root).is_err());
+    }
 }
