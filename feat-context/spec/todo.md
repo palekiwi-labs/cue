@@ -1,0 +1,22 @@
+# Todo: `mem context` implementation
+
+- [ ] Phase 1 — CLI Scaffolding <!-- id: 0 -->
+    - [ ] Add `Context` command to `cli.rs` <!-- id: 1 -->
+    - [ ] Define `ContextCommands` enum <!-- id: 2 -->
+    - [ ] Create `src/commands/context/` module structure <!-- id: 3 -->
+    - [ ] Hook up subcommands in `main.rs` <!-- id: 4 -->
+- [ ] Phase 2 — Shared Types <!-- id: 5 -->
+    - [ ] Define `ContextProfile` and `ContextConfig` types <!-- id: 6 -->
+    - [ ] Implement config loading helpers <!-- id: 7 -->
+- [ ] Phase 3 — `mem context init` <!-- id: 8 -->
+    - [ ] Implement auto-population logic <!-- id: 9 -->
+    - [ ] Implement file writing and --force flag <!-- id: 10 -->
+- [ ] Phase 4 — `mem context show` and `profiles` <!-- id: 11 -->
+    - [ ] Implement `show` (JSON pretty-print) <!-- id: 12 -->
+    - [ ] Implement `profiles` (list names) <!-- id: 13 -->
+- [ ] Phase 5 — `render` Path Resolution & Security <!-- id: 14 -->
+- [ ] Phase 6 — `render` Include Resolution & Cycle Detection <!-- id: 15 -->
+- [ ] Phase 7 — `render` Diff Integration <!-- id: 16 -->
+- [ ] Phase 8 — `render` Output Assembly <!-- id: 17 -->
+- [ ] Phase 9 — `mem.json` Config Additions <!-- id: 18 -->
+- [ ] Phase 10 — Polish & Sign-off <!-- id: 19 -->
