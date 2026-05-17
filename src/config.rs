@@ -3,7 +3,20 @@ use figment::{
     providers::{Env, Format, Json, Serialized},
 };
 use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::Path;
+
+#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
+pub struct ContextProfile {
+    #[serde(default)]
+    pub artifacts: Vec<String>,
+    #[serde(default)]
+    pub diff: Option<String>,
+    #[serde(default)]
+    pub include: Vec<String>,
+}
+
+pub type ContextConfig = HashMap<String, ContextProfile>;
 
 #[derive(Deserialize, Serialize, Debug)]
 pub struct Config {
@@ -13,6 +26,8 @@ pub struct Config {
     pub diff_exclude_paths: Vec<String>,
     #[serde(default)]
     pub base_branch_cmd: Option<String>,
+    #[serde(default)]
+    pub context: ContextConfig,
 }
 
 impl Default for Config {
@@ -22,6 +37,7 @@ impl Default for Config {
             dir_name: ".mem".into(),
             diff_exclude_paths: Vec::new(),
             base_branch_cmd: None,
+            context: HashMap::new(),
         }
     }
 }

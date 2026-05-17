@@ -79,3 +79,46 @@ fn test_context_init_force_overwrites() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_context_init_with_template() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    // Create mem.json with context template
+    let mem_json = temp.path().join("mem.json");
+    fs::write(
+        &mem_json,
+        r#"{
+        "context": {
+            "default": {
+                "artifacts": ["./spec/index.md", "./spec/tickets/*"],
+                "diff": "main...HEAD"
+            }
+        }
+    }"#,
+    )?;
+
+    // Initialize mem
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path()).arg("init").assert().success();
+
+    // Run mem context init
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .arg("context")
+        .arg("init")
+        .assert()
+        .success();
+
+    // Verify content matches template
+    let context_json = temp.path().join(".mem").join("main").join("context.json");
+    let content = fs::read_to_string(context_json)?;
+    let v: serde_json::Value = serde_json::from_str(&content)?;
+
+    assert_eq!(v["default"]["artifacts"][0], "./spec/index.md");
+    assert_eq!(v["default"]["artifacts"][1], "./spec/tickets/*");
+    assert_eq!(v["default"]["diff"], "main...HEAD");
+
+    Ok(())
+}

@@ -1,20 +1,9 @@
-use crate::config::Config;
+use crate::config::{Config, ContextConfig, ContextProfile};
 use crate::git::{get_current_branch, get_git_root, run_git, sanitize_branch_name};
+use glob::glob;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
-
-#[derive(Debug, Serialize, Deserialize, Default, Clone, PartialEq)]
-pub struct ContextProfile {
-    #[serde(default)]
-    pub artifacts: Vec<String>,
-    #[serde(default)]
-    pub diff: Option<String>,
-    #[serde(default)]
-    pub include: Vec<String>,
-}
-
-pub type ContextConfig = HashMap<String, ContextProfile>;
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Artifact {
@@ -147,7 +136,22 @@ pub fn resolve_profile(
 
     for art in &profile.artifacts {
         let path = parse_artifact_path(art, branch_dir, git_root)?;
-        accumulator.push(path);
+
+        if art.contains('*') || art.contains('?') || art.contains('[') {
+            let pattern = path.to_string_lossy();
+            match glob(&pattern) {
+                Ok(entries) => {
+                    for p in entries.flatten() {
+                        accumulator.push(p);
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Invalid glob pattern '{}': {}", art, e);
+                }
+            }
+        } else {
+            accumulator.push(path);
+        }
     }
 
     visited.remove(&key);
@@ -257,35 +261,42 @@ pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
         );
     }
 
-    let git_root = get_git_root(cwd)?;
-    let mem_branch_path = git_root.join(".mem").join(&sanitized_branch);
-    let spec_path = mem_branch_path.join("spec");
+    let config = Config::load(&git_root)?;
+    let context_config = if !config.context.is_empty() {
+        // Use template from config
+        config.context.clone()
+    } else {
+        // Fallback to legacy auto-discovery
+        let mem_branch_path = git_root.join(".mem").join(&sanitized_branch);
+        let spec_path = mem_branch_path.join("spec");
 
-    let mut artifacts = Vec::new();
-    if spec_path.exists() {
-        let mut entries: Vec<_> = std::fs::read_dir(&spec_path)?
-            .filter_map(|e| e.ok())
-            .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-            .collect();
-        entries.sort_by_key(|e| e.file_name());
+        let mut artifacts = Vec::new();
+        if spec_path.exists() {
+            let mut entries: Vec<_> = std::fs::read_dir(&spec_path)?
+                .filter_map(|e| e.ok())
+                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
+                .collect();
+            entries.sort_by_key(|e| e.file_name());
 
-        for entry in entries {
-            if let Some(name) = entry.file_name().to_str() {
-                artifacts.push(format!("./spec/{}", name));
+            for entry in entries {
+                if let Some(name) = entry.file_name().to_str() {
+                    artifacts.push(format!("./spec/{}", name));
+                }
             }
         }
-    }
 
-    let profile = ContextProfile {
-        artifacts,
-        diff: None,
-        include: Vec::new(),
+        let profile = ContextProfile {
+            artifacts,
+            diff: None,
+            include: Vec::new(),
+        };
+
+        let mut map = HashMap::new();
+        map.insert("default".to_string(), profile);
+        map
     };
 
-    let mut config = HashMap::new();
-    config.insert("default".to_string(), profile);
-
-    let json = serde_json::to_string_pretty(&config)?;
+    let json = serde_json::to_string_pretty(&context_config)?;
     std::fs::create_dir_all(config_path.parent().unwrap())?;
     std::fs::write(&config_path, json)?;
 
@@ -466,5 +477,34 @@ mod tests {
         assert!(res[0].to_str().unwrap().contains("D"));
         assert!(res[1].to_str().unwrap().contains("B"));
         assert!(res[2].to_str().unwrap().contains("C"));
+    }
+
+    #[test]
+    fn test_resolve_profile_with_globs() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+
+        let branch_a = root.join(".mem").join("A");
+        let spec_a = branch_a.join("spec");
+        std::fs::create_dir_all(&spec_a).unwrap();
+
+        std::fs::write(spec_a.join("1.md"), "1").unwrap();
+        std::fs::write(spec_a.join("2.md"), "2").unwrap();
+        std::fs::write(
+            branch_a.join("context.json"),
+            r#"{"default": {"artifacts": ["./spec/*.md"]}}"#,
+        )
+        .unwrap();
+
+        let mut visited = HashSet::new();
+        let res = resolve_profile("A", "default", root, &mut visited).unwrap();
+
+        assert_eq!(res.len(), 2);
+        let mut paths: Vec<_> = res
+            .iter()
+            .map(|p| p.file_name().unwrap().to_str().unwrap())
+            .collect();
+        paths.sort();
+        assert_eq!(paths, vec!["1.md", "2.md"]);
     }
 }
