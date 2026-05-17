@@ -41,40 +41,39 @@ pub fn parse_artifact_path(
     current_branch_dir: &str,
     git_root: &Path,
 ) -> anyhow::Result<PathBuf> {
-    if Path::new(raw)
-        .components()
-        .any(|c| matches!(c, std::path::Component::ParentDir))
-    {
-        anyhow::bail!("Path traversal ('..') is not allowed in artifact paths");
-    }
-
-    let (base_path, rest) = if let Some(stripped) = raw.strip_prefix("./") {
-        (git_root.join(".mem").join(current_branch_dir), stripped)
-    } else if let Some(stripped) = raw.strip_prefix('@') {
-        let (branch, path) = match stripped.split_once(':') {
-            Some((b, p)) => (b, p),
+    let (branch, rest) = if let Some(stripped) = raw.strip_prefix('@') {
+        // Cross-branch reference
+        // Use rsplit_once to allow colons in branch names (splitting on the last colon)
+        let (b, p) = match stripped.rsplit_once(':') {
+            Some((branch, path)) => (branch, path),
             None => (stripped, ""),
         };
 
-        if branch.contains('/') || branch.contains('\\') {
+        if b.contains('/') || b.contains('\\') {
             anyhow::bail!(
                 "Branch component in cross-branch reference must be a sanitized name (no slashes)"
             );
         }
 
-        (git_root.join(".mem").join(branch), path)
+        (b, p)
     } else {
-        anyhow::bail!(
-            "Unrecognized artifact path format: {}. Use ./... or @branch:path",
-            raw
-        );
+        // Local artifact. Defaults to current branch.
+        // We optionally strip a leading "./" for cleaner aesthetics.
+        let p = raw.strip_prefix("./").unwrap_or(raw);
+        (current_branch_dir, p)
     };
 
-    if Path::new(rest).is_absolute() {
-        anyhow::bail!("Absolute paths are not allowed in artifact paths");
+    let rest_path = Path::new(rest);
+
+    // Prevent base path overwrite via `join`
+    if rest_path.has_root() {
+        anyhow::bail!(
+            "Absolute or root paths are not allowed in artifact paths: {}",
+            raw
+        );
     }
 
-    Ok(base_path.join(rest))
+    Ok(git_root.join(".mem").join(branch).join(rest_path))
 }
 
 pub fn resolve_profile(

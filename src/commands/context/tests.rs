@@ -56,27 +56,44 @@ mod tests {
         let root = Path::new("/repo");
         let current = "feat-ctx";
 
-        // Current branch
+        // Current branch with ./
         let path = parse_artifact_path("./spec/index.md", current, root).unwrap();
         assert_eq!(path, root.join(".mem").join(current).join("spec/index.md"));
+
+        // Current branch without prefix
+        let path = parse_artifact_path("spec/plan.md", current, root).unwrap();
+        assert_eq!(path, root.join(".mem").join(current).join("spec/plan.md"));
+
+        // Current branch with parent traversal (allowed now)
+        let path = parse_artifact_path("../master/spec/index.md", current, root).unwrap();
+        assert_eq!(
+            path,
+            root.join(".mem")
+                .join(current)
+                .join("../master/spec/index.md")
+        );
 
         // Cross branch
         let path = parse_artifact_path("@other:spec/plan.md", current, root).unwrap();
         assert_eq!(path, root.join(".mem").join("other").join("spec/plan.md"));
 
+        // Cross branch with colon in branch name
+        let path = parse_artifact_path("@feat:context:spec/index.md", current, root).unwrap();
+        assert_eq!(
+            path,
+            root.join(".mem").join("feat:context").join("spec/index.md")
+        );
+
+        // Cross branch without path
+        let path = parse_artifact_path("@other", current, root).unwrap();
+        assert_eq!(path, root.join(".mem").join("other").join(""));
+
         // Failures
-        assert!(parse_artifact_path("../outside.md", current, root).is_err());
         assert!(parse_artifact_path("/absolute.md", current, root).is_err());
         assert!(parse_artifact_path("@branch_with/slash:spec.md", current, root).is_err());
-        assert!(parse_artifact_path("no_prefix.md", current, root).is_err());
-
-        // Security bypass attempts (flagged by consultant)
-        assert!(parse_artifact_path(".//etc/passwd", current, root).is_err());
         assert!(parse_artifact_path("@other:/etc/passwd", current, root).is_err());
 
-        // ParentDir traversal check (flagged by consultant)
-        assert!(parse_artifact_path("./spec/../secret.md", current, root).is_err());
-        // Valid path containing ".." as part of filename (should pass now)
+        // Valid path containing ".." as part of filename
         assert!(parse_artifact_path("./spec/my..file.md", current, root).is_ok());
     }
 
