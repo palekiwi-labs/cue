@@ -1,4 +1,4 @@
-use crate::commands::context::{context_json_path, load_context_config};
+use crate::context::{context_json_path, load_context_config};
 use crate::git::{get_current_branch, sanitize_branch_name};
 use std::path::Path;
 

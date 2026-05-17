@@ -1,6 +1,7 @@
 mod cli;
 mod commands;
 mod config;
+mod context;
 mod git;
 
 use crate::cli::{Cli, Commands};
