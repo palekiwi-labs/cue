@@ -473,6 +473,80 @@ fn test_add_with_slashed_branch_name() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_add_with_explicit_branch() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    // Initialize mem
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // Add a file to a DIFFERENT branch than current (main)
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--branch")
+        .arg("feature/other")
+        .arg("other.md")
+        .arg("other branch content");
+
+    cmd.assert().success().stdout(predicate::str::diff(
+        ".test-mem/feature-other/spec/other.md\n",
+    ));
+
+    let file_path = temp.path().join(".test-mem/feature-other/spec/other.md");
+    assert!(file_path.exists());
+    let content = fs::read_to_string(file_path)?;
+    assert_eq!(content, "other branch content");
+
+    // Verify main branch spec doesn't have it
+    let main_file = temp.path().join(".test-mem/main/spec/other.md");
+    assert!(!main_file.exists());
+
+    Ok(())
+}
+
+#[test]
+fn test_add_with_explicit_branch_short() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    // Initialize mem
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // Add a file using short flag -b
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-b")
+        .arg("short-b")
+        .arg("short.md")
+        .arg("short content");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/short-b/spec/short.md\n"));
+
+    let file_path = temp.path().join(".test-mem/short-b/spec/short.md");
+    assert!(file_path.exists());
+
+    Ok(())
+}
+
+#[test]
 fn test_add_rejects_path_traversal() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());

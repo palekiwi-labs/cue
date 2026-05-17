@@ -38,10 +38,14 @@ pub enum Commands {
         /// Type of artifact
         #[arg(short = 't', long = "type", value_enum, default_value = "spec")]
         mem_type: MemType,
+        /// Save artifact to a specific branch instead of current
+        #[arg(short = 'b', long)]
+        branch: Option<String>,
         /// Overwrite existing file
         #[arg(long)]
         force: bool,
     },
+
     /// List artifacts for a branch
     List {
         /// List files for a specific branch instead of current

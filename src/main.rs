@@ -24,6 +24,7 @@ fn main() -> anyhow::Result<()> {
             clipboard,
             mem_type,
             force,
+            branch,
         } => {
             let resolved_content: Vec<u8> = if clipboard {
                 resolve_clipboard(&filename)?
@@ -42,7 +43,7 @@ fn main() -> anyhow::Result<()> {
                 }
             };
 
-            commands::add::handle(&cwd, &filename, resolved_content, mem_type, force)?;
+            commands::add::handle(&cwd, &filename, resolved_content, mem_type, force, branch)?;
         }
         Commands::List {
             branch,

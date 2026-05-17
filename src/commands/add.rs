@@ -11,6 +11,7 @@ pub fn handle(
     content: Vec<u8>,
     mem_type: MemType,
     force: bool,
+    branch_name: Option<String>,
 ) -> Result<()> {
     // 1. Verify git repo
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
@@ -30,9 +31,13 @@ pub fn handle(
         );
     }
 
-    // 5. Get current branch (handle no-commits case)
-    let branch = git::get_current_branch(&root)
-        .context("Could not determine current branch. Have you made your first commit yet?")?;
+    // 5. Get branch (handle no-commits case if using current branch)
+    let branch = if let Some(b) = branch_name {
+        b
+    } else {
+        git::get_current_branch(&root)
+            .context("Could not determine current branch. Have you made your first commit yet?")?
+    };
     let branch_dir = branch.replace(['/', '\\'], "-");
 
     // 6. Resolve destination directory
