@@ -93,6 +93,7 @@ pub fn resolve_profile(
     profile_name: &str,
     git_root: &Path,
     visited: &mut HashSet<(String, String)>,
+    base_branch: Option<&str>,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let key = (branch_dir.to_string(), profile_name.to_string());
     if visited.contains(&key) {
@@ -131,8 +132,33 @@ pub fn resolve_profile(
     for inc in &profile.include {
         let (inc_branch, inc_profile) = if let Some(rest) = inc.strip_prefix('@') {
             match rest.split_once(':') {
-                Some((b, p)) => (b.to_string(), p.to_string()),
-                None => (rest.to_string(), "default".to_string()),
+                Some((b, p)) => {
+                    let resolved_branch = if b == "base" {
+                        let base = base_branch.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Context profile uses '@base' in include, but no --base branch was provided."
+                            )
+                        })?;
+                        sanitize_branch_name(base)
+                    } else {
+                        b.to_string()
+                    };
+                    (resolved_branch, p.to_string())
+                }
+                None => {
+                    let branch = inc.strip_prefix('@').unwrap();
+                    let resolved_branch = if branch == "base" {
+                        let base = base_branch.ok_or_else(|| {
+                            anyhow::anyhow!(
+                                "Context profile uses '@base' in include, but no --base branch was provided."
+                            )
+                        })?;
+                        sanitize_branch_name(base)
+                    } else {
+                        branch.to_string()
+                    };
+                    (resolved_branch, "default".to_string())
+                }
             }
         } else {
             visited.remove(&key);
@@ -142,12 +168,12 @@ pub fn resolve_profile(
             );
         };
 
-        let inc_paths = resolve_profile(&inc_branch, &inc_profile, git_root, visited)?;
+        let inc_paths = resolve_profile(&inc_branch, &inc_profile, git_root, visited, base_branch)?;
         accumulator.extend(inc_paths);
     }
 
     for art in &profile.artifacts {
-        let path = parse_artifact_path(art, branch_dir, git_root, None)?;
+        let path = parse_artifact_path(art, branch_dir, git_root, base_branch)?;
 
         if art.contains('*') || art.contains('?') || art.contains('[') {
             let pattern = path.to_string_lossy();
@@ -195,7 +221,13 @@ pub fn gather_context(
     let config = Config::load(&git_root)?;
 
     let mut visited = HashSet::new();
-    let paths = resolve_profile(&sanitized_branch, profile_name, &git_root, &mut visited)?;
+    let paths = resolve_profile(
+        &sanitized_branch,
+        profile_name,
+        &git_root,
+        &mut visited,
+        base_branch,
+    )?;
 
     let mut artifacts = Vec::new();
     for path in paths {
@@ -487,7 +519,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited);
+        let res = resolve_profile("A", "default", root, &mut visited, None);
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("Cycle detected"));
     }
@@ -529,7 +561,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited).unwrap();
+        let res = resolve_profile("A", "default", root, &mut visited, None).unwrap();
 
         // Deduplication should ensure D appears once, and DFS ordering
         // Accumulator: [D, B, D, C] -> Deduplicated: [D, B, C]
@@ -557,7 +589,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited).unwrap();
+        let res = resolve_profile("A", "default", root, &mut visited, None).unwrap();
 
         assert_eq!(res.len(), 2);
         let mut paths: Vec<_> = res
@@ -587,7 +619,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited).unwrap();
+        let res = resolve_profile("A", "default", root, &mut visited, None).unwrap();
 
         // Should include 1.md and 2.md, but NOT the 'notes' directory
         assert_eq!(res.len(), 2);
@@ -597,5 +629,33 @@ mod tests {
             .collect();
         file_names.sort();
         assert_eq!(file_names, vec!["1.md", "2.md"]);
+    }
+
+    #[test]
+    fn test_resolve_profile_with_base_include() {
+        let temp = tempfile::tempdir().unwrap();
+        let root = temp.path();
+
+        let branch_feat = root.join(".mem").join("feat");
+        let branch_main = root.join(".mem").join("main");
+        std::fs::create_dir_all(&branch_feat).unwrap();
+        std::fs::create_dir_all(&branch_main).unwrap();
+
+        std::fs::write(
+            branch_feat.join("context.json"),
+            r#"{"default": {"include": ["@base"]}}"#,
+        )
+        .unwrap();
+        std::fs::write(
+            branch_main.join("context.json"),
+            r#"{"default": {"artifacts": ["./spec/main.md"]}}"#,
+        )
+        .unwrap();
+
+        let mut visited = HashSet::new();
+        let res = resolve_profile("feat", "default", root, &mut visited, Some("main")).unwrap();
+
+        assert_eq!(res.len(), 1);
+        assert!(res[0].to_str().unwrap().contains("main/spec/main.md"));
     }
 }
