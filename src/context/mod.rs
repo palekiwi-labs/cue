@@ -121,8 +121,6 @@ pub fn resolve_profile(
                 Some((b, p)) => (b.to_string(), p.to_string()),
                 None => (rest.to_string(), "default".to_string()),
             }
-        } else if let Some(p) = inc.strip_prefix(':') {
-            (branch_dir.to_string(), p.to_string())
         } else {
             match inc.split_once(':') {
                 Some((b, p)) => (b.to_string(), p.to_string()),
@@ -399,8 +397,7 @@ mod tests {
         std::fs::write(
             branch_a.join("context.json"),
             r#"{
-                "default": { "include": ["B", "B:brief", ":local", "@B"] },
-                "local": { "artifacts": ["./local.md"] }
+                "default": { "include": ["B", "B:brief", "@B"] }
             }"#,
         )
         .unwrap();
@@ -414,19 +411,17 @@ mod tests {
         .unwrap();
 
         // Create dummy files
-        std::fs::write(branch_a.join("local.md"), "local").unwrap();
         std::fs::write(branch_b.join("b-default.md"), "b-default").unwrap();
         std::fs::write(branch_b.join("b-brief.md"), "b-brief").unwrap();
 
         let mut visited = HashSet::new();
         let res = resolve_profile("A", "default", root, &mut visited).unwrap();
 
-        // Accumulator: [b-default, b-brief, local, b-default (deduped)]
-        // Final: [b-default, b-brief, local]
-        assert_eq!(res.len(), 3);
+        // Accumulator: [b-default, b-brief, b-default (deduped)]
+        // Final: [b-default, b-brief]
+        assert_eq!(res.len(), 2);
         assert!(res[0].to_str().unwrap().contains("b-default.md"));
         assert!(res[1].to_str().unwrap().contains("b-brief.md"));
-        assert!(res[2].to_str().unwrap().contains("local.md"));
     }
 
     #[test]
