@@ -8,7 +8,7 @@ pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
         ContextCommands::Init { force } => handle_init(cwd, force),
         ContextCommands::Show => handle_show(cwd),
         ContextCommands::Profiles => handle_profiles(cwd),
-        ContextCommands::Render { profile, base } => handle_render(cwd, profile, base),
+        ContextCommands::Render { profile } => handle_render(cwd, profile),
         ContextCommands::Path { all } => handle_path(cwd, all),
     }
 }
@@ -50,9 +50,9 @@ fn handle_profiles(cwd: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_render(cwd: &Path, profile: Option<String>, base: Option<String>) -> anyhow::Result<()> {
+fn handle_render(cwd: &Path, profile: Option<String>) -> anyhow::Result<()> {
     let git_root = get_git_root(cwd)?;
-    let resolved = gather_context(cwd, profile.as_deref(), base.as_deref())?;
+    let resolved = gather_context(cwd, profile.as_deref())?;
 
     for artifact in resolved.artifacts {
         let relative_path = artifact

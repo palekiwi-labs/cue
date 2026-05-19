@@ -93,9 +93,6 @@ pub enum ContextCommands {
         /// Profile name to render
         #[arg(short = 'p', long, default_value = "default")]
         profile: Option<String>,
-        /// Explicit base branch name for resolving @base sigil in diff
-        #[arg(long)]
-        base: Option<String>,
     },
     /// Print absolute path to context.json
     Path {

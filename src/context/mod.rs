@@ -18,43 +18,6 @@ pub struct ResolvedContext {
     pub instructions: Option<String>,
 }
 
-pub fn resolve_base_branch_name(flag_base: Option<&str>) -> anyhow::Result<Option<String>> {
-    if let Some(base) = flag_base {
-        return Ok(Some(base.to_string()));
-    }
-
-    if let Ok(file_path) = std::env::var("MEM_BASE_BRANCH_FILE") {
-        let content = std::fs::read_to_string(&file_path).map_err(|e| {
-            anyhow::anyhow!(
-                "Failed to read base branch from MEM_BASE_BRANCH_FILE ({}): {}",
-                file_path,
-                e
-            )
-        })?;
-
-        let first_line = content.lines().next().unwrap_or("").trim();
-        if first_line.is_empty() {
-            anyhow::bail!(
-                "Base branch file specified by MEM_BASE_BRANCH_FILE ({}) is empty",
-                file_path
-            );
-        }
-
-        // Basic sanitization: no path traversal or suspicious characters
-        if first_line.contains("..") || first_line.contains('/') || first_line.contains('\\') {
-            anyhow::bail!(
-                "Invalid base branch name read from {}: {}",
-                file_path,
-                first_line
-            );
-        }
-
-        return Ok(Some(first_line.to_string()));
-    }
-
-    Ok(None)
-}
-
 pub fn context_json_path(root: &Path, branch_dir: &str) -> PathBuf {
     root.join(".mem").join(branch_dir).join("context.json")
 }
@@ -72,7 +35,6 @@ pub fn parse_artifact_path(
     raw: &str,
     current_branch_dir: &str,
     git_root: &Path,
-    base_branch: Option<&str>,
 ) -> anyhow::Result<PathBuf> {
     let (branch, rest) = if let Some(stripped) = raw.strip_prefix('@') {
         // Cross-branch reference
@@ -81,23 +43,12 @@ pub fn parse_artifact_path(
             None => (stripped, ""),
         };
 
-        let resolved_branch = if b == "base" {
-            let base = base_branch.ok_or_else(|| {
-                anyhow::anyhow!(
-                    "Context profile uses '@base' in artifact path, but no --base branch or MEM_BASE_BRANCH_FILE was provided."
-                )
-            })?;
-            sanitize_branch_name(base)
-        } else {
-            if b.contains('/') || b.contains('\\') {
-                anyhow::bail!(
-                    "Branch component in cross-branch reference must be a sanitized name (no slashes)"
-                );
-            }
-            b.to_string()
-        };
-
-        (resolved_branch, p.to_string())
+        if b.contains('/') || b.contains('\\') {
+            anyhow::bail!(
+                "Branch component in cross-branch reference must be a sanitized name (no slashes)"
+            );
+        }
+        (b.to_string(), p.to_string())
     } else {
         // Local artifact. Defaults to current branch.
         // We optionally strip a leading "./" for cleaner aesthetics.
@@ -130,7 +81,6 @@ pub fn resolve_profile(
     profile_name: &str,
     git_root: &Path,
     visited: &mut HashSet<(String, String)>,
-    base_branch: Option<&str>,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let key = (branch_dir.to_string(), profile_name.to_string());
     if visited.contains(&key) {
@@ -169,33 +119,8 @@ pub fn resolve_profile(
     for inc in &profile.include {
         let (inc_branch, inc_profile) = if let Some(rest) = inc.strip_prefix('@') {
             match rest.split_once(':') {
-                Some((b, p)) => {
-                    let resolved_branch = if b == "base" {
-                        let base = base_branch.ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "Context profile uses '@base' in include, but no --base branch or MEM_BASE_BRANCH_FILE was provided."
-                            )
-                        })?;
-                        sanitize_branch_name(base)
-                    } else {
-                        b.to_string()
-                    };
-                    (resolved_branch, p.to_string())
-                }
-                None => {
-                    let branch = inc.strip_prefix('@').unwrap();
-                    let resolved_branch = if branch == "base" {
-                        let base = base_branch.ok_or_else(|| {
-                            anyhow::anyhow!(
-                                "Context profile uses '@base' in include, but no --base branch or MEM_BASE_BRANCH_FILE was provided."
-                            )
-                        })?;
-                        sanitize_branch_name(base)
-                    } else {
-                        branch.to_string()
-                    };
-                    (resolved_branch, "default".to_string())
-                }
+                Some((b, p)) => (b.to_string(), p.to_string()),
+                None => (rest.to_string(), "default".to_string()),
             }
         } else {
             visited.remove(&key);
@@ -205,12 +130,12 @@ pub fn resolve_profile(
             );
         };
 
-        let inc_paths = resolve_profile(&inc_branch, &inc_profile, git_root, visited, base_branch)?;
+        let inc_paths = resolve_profile(&inc_branch, &inc_profile, git_root, visited)?;
         accumulator.extend(inc_paths);
     }
 
     for art in &profile.artifacts {
-        let path = parse_artifact_path(art, branch_dir, git_root, base_branch)?;
+        let path = parse_artifact_path(art, branch_dir, git_root)?;
 
         if art.contains('*') || art.contains('?') || art.contains('[') {
             let pattern = path.to_string_lossy();
@@ -245,14 +170,7 @@ pub fn resolve_profile(
     Ok(final_paths)
 }
 
-pub fn gather_context(
-    cwd: &Path,
-    profile_name: Option<&str>,
-    base_branch: Option<&str>,
-) -> anyhow::Result<ResolvedContext> {
-    let base_branch = resolve_base_branch_name(base_branch)?;
-    let base_branch_ref = base_branch.as_deref();
-
+pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<ResolvedContext> {
     let profile_name = profile_name.unwrap_or("default");
     let branch = get_current_branch(cwd)?;
     let sanitized_branch = sanitize_branch_name(&branch);
@@ -261,13 +179,7 @@ pub fn gather_context(
     let config = Config::load(&git_root)?;
 
     let mut visited = HashSet::new();
-    let paths = resolve_profile(
-        &sanitized_branch,
-        profile_name,
-        &git_root,
-        &mut visited,
-        base_branch_ref,
-    )?;
+    let paths = resolve_profile(&sanitized_branch, profile_name, &git_root, &mut visited)?;
 
     let mut artifacts = Vec::new();
     for path in paths {
@@ -315,17 +227,7 @@ pub fn gather_context(
 
     let mut diff = None;
     if let Some(diff_args) = &profile_obj.diff {
-        let mut diff_string = diff_args.to_string();
-
-        if diff_string.contains("@base") {
-            if let Some(base) = base_branch_ref {
-                diff_string = diff_string.replace("@base", base);
-            } else {
-                anyhow::bail!(
-                    "Context profile uses '@base' in diff, but no --base branch or MEM_BASE_BRANCH_FILE was provided."
-                );
-            }
-        }
+        let diff_string = diff_args.to_string();
 
         let mut args = vec!["diff"];
         let split_args: Vec<&str> = diff_string.split_whitespace().collect();
@@ -350,7 +252,7 @@ pub fn gather_context(
                 diff = Some(diff_output);
             }
             Err(e) => {
-                if diff_string.contains("@base") || diff_string.contains("..") {
+                if diff_string.contains("..") {
                     anyhow::bail!("git diff failed: {}", e);
                 }
                 eprintln!("Warning: git diff failed: {}", e);
@@ -484,15 +386,15 @@ mod tests {
         let current = "feat-ctx";
 
         // Current branch with ./
-        let path = parse_artifact_path("./spec/index.md", current, root, None).unwrap();
+        let path = parse_artifact_path("./spec/index.md", current, root).unwrap();
         assert_eq!(path, root.join(".mem").join(current).join("spec/index.md"));
 
         // Current branch without prefix
-        let path = parse_artifact_path("spec/plan.md", current, root, None).unwrap();
+        let path = parse_artifact_path("spec/plan.md", current, root).unwrap();
         assert_eq!(path, root.join(".mem").join(current).join("spec/plan.md"));
 
         // Current branch with parent traversal (allowed now)
-        let path = parse_artifact_path("../master/spec/index.md", current, root, None).unwrap();
+        let path = parse_artifact_path("../master/spec/index.md", current, root).unwrap();
         assert_eq!(
             path,
             root.join(".mem")
@@ -501,42 +403,29 @@ mod tests {
         );
 
         // Cross branch
-        let path = parse_artifact_path("@other:spec/plan.md", current, root, None).unwrap();
+        let path = parse_artifact_path("@other:spec/plan.md", current, root).unwrap();
         assert_eq!(path, root.join(".mem").join("other").join("spec/plan.md"));
-
-        // Cross branch with @base
-        let path = parse_artifact_path("@base:spec/plan.md", current, root, Some("main")).unwrap();
-        assert_eq!(path, root.join(".mem").join("main").join("spec/plan.md"));
-
-        // Cross branch with @base requiring sanitization
-        let path =
-            parse_artifact_path("@base:spec/plan.md", current, root, Some("feature/foo")).unwrap();
-        assert_eq!(
-            path,
-            root.join(".mem").join("feature-foo").join("spec/plan.md")
-        );
 
         // Cross branch with colon in branch name (This will now fail or split differently)
         // Since git doesn't allow colons, we don't need to support them.
         // But let's see how our split_once handles it.
-        let path = parse_artifact_path("@feat:context:spec/index.md", current, root, None).unwrap();
+        let path = parse_artifact_path("@feat:context:spec/index.md", current, root).unwrap();
         assert_eq!(
             path,
             root.join(".mem").join("feat").join("context:spec/index.md")
         );
 
         // Cross branch without path
-        let path = parse_artifact_path("@other", current, root, None).unwrap();
+        let path = parse_artifact_path("@other", current, root).unwrap();
         assert_eq!(path, root.join(".mem").join("other").join(""));
 
         // Failures
-        assert!(parse_artifact_path("/absolute.md", current, root, None).is_err());
-        assert!(parse_artifact_path("@branch_with/slash:spec.md", current, root, None).is_err());
-        assert!(parse_artifact_path("@other:/etc/passwd", current, root, None).is_err());
-        assert!(parse_artifact_path("@base:spec/index.md", current, root, None).is_err());
+        assert!(parse_artifact_path("/absolute.md", current, root).is_err());
+        assert!(parse_artifact_path("@branch_with/slash:spec.md", current, root).is_err());
+        assert!(parse_artifact_path("@other:/etc/passwd", current, root).is_err());
 
         // Valid path containing ".." as part of filename
-        assert!(parse_artifact_path("./spec/my..file.md", current, root, None).is_ok());
+        assert!(parse_artifact_path("./spec/my..file.md", current, root).is_ok());
     }
 
     #[test]
@@ -562,7 +451,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited, None);
+        let res = resolve_profile("A", "default", root, &mut visited);
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("Cycle detected"));
     }
@@ -604,7 +493,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited, None).unwrap();
+        let res = resolve_profile("A", "default", root, &mut visited).unwrap();
 
         // Deduplication should ensure D appears once, and DFS ordering
         // Accumulator: [D, B, D, C] -> Deduplicated: [D, B, C]
@@ -632,7 +521,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited, None).unwrap();
+        let res = resolve_profile("A", "default", root, &mut visited).unwrap();
 
         assert_eq!(res.len(), 2);
         let mut paths: Vec<_> = res
@@ -662,7 +551,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited, None).unwrap();
+        let res = resolve_profile("A", "default", root, &mut visited).unwrap();
 
         // Should include 1.md and 2.md, but NOT the 'notes' directory
         assert_eq!(res.len(), 2);
@@ -672,46 +561,5 @@ mod tests {
             .collect();
         file_names.sort();
         assert_eq!(file_names, vec!["1.md", "2.md"]);
-    }
-
-    #[test]
-    fn test_resolve_base_branch_name_flag_priority() {
-        // Flag should take priority over env var
-        let res = resolve_base_branch_name(Some("from-flag")).unwrap();
-        assert_eq!(res, Some("from-flag".to_string()));
-    }
-
-    #[test]
-    fn test_resolve_base_branch_name_none() {
-        let res = resolve_base_branch_name(None).unwrap();
-        assert_eq!(res, None);
-    }
-
-    #[test]
-    fn test_resolve_profile_with_base_include() {
-        let temp = tempfile::tempdir().unwrap();
-        let root = temp.path();
-
-        let branch_feat = root.join(".mem").join("feat");
-        let branch_main = root.join(".mem").join("main");
-        std::fs::create_dir_all(&branch_feat).unwrap();
-        std::fs::create_dir_all(&branch_main).unwrap();
-
-        std::fs::write(
-            branch_feat.join("context.json"),
-            r#"{"default": {"include": ["@base"]}}"#,
-        )
-        .unwrap();
-        std::fs::write(
-            branch_main.join("context.json"),
-            r#"{"default": {"artifacts": ["./spec/main.md"]}}"#,
-        )
-        .unwrap();
-
-        let mut visited = HashSet::new();
-        let res = resolve_profile("feat", "default", root, &mut visited, Some("main")).unwrap();
-
-        assert_eq!(res.len(), 1);
-        assert!(res[0].to_str().unwrap().contains("main/spec/main.md"));
     }
 }
