@@ -1,5 +1,5 @@
 use crate::config::{Config, ContextConfig, ContextProfile};
-use crate::git::{get_current_branch, get_git_root, run_git, sanitize_branch_name};
+use crate::git::{get_current_branch, get_git_root, sanitize_branch_name};
 use glob::glob;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -14,7 +14,6 @@ pub struct Artifact {
 #[derive(Debug, Serialize, Deserialize)]
 pub struct ResolvedContext {
     pub artifacts: Vec<Artifact>,
-    pub diff: Option<String>,
     pub instructions: Option<String>,
 }
 
@@ -176,7 +175,7 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
     let sanitized_branch = sanitize_branch_name(&branch);
     let git_root = get_git_root(cwd)?;
     let canonical_git_root = git_root.canonicalize()?;
-    let config = Config::load(&git_root)?;
+    let _config = Config::load(&git_root)?;
 
     let mut visited = HashSet::new();
     let paths = resolve_profile(&sanitized_branch, profile_name, &git_root, &mut visited)?;
@@ -214,7 +213,6 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
         });
     }
 
-    // Diff block
     let context_path = context_json_path(&git_root, &sanitized_branch);
     let context_config = load_context_config(&context_path)?;
     let profile_obj = context_config.get(profile_name).ok_or_else(|| {
@@ -225,46 +223,10 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
         )
     })?;
 
-    let mut diff = None;
-    if let Some(diff_args) = &profile_obj.diff {
-        let diff_string = diff_args.to_string();
-
-        let mut args = vec!["diff"];
-        let split_args: Vec<&str> = diff_string.split_whitespace().collect();
-        args.extend(split_args.iter().cloned());
-
-        // Apply diff_exclude_paths
-        let mut exclude_args = Vec::new();
-        if !config.diff_exclude_paths.is_empty() {
-            if !split_args.contains(&"--") {
-                args.push("--");
-            }
-            for pattern in &config.diff_exclude_paths {
-                exclude_args.push(format!(":(exclude){}", pattern));
-            }
-            for arg in &exclude_args {
-                args.push(arg);
-            }
-        }
-
-        match run_git(args, &git_root) {
-            Ok(diff_output) => {
-                diff = Some(diff_output);
-            }
-            Err(e) => {
-                if diff_string.contains("..") {
-                    anyhow::bail!("git diff failed: {}", e);
-                }
-                eprintln!("Warning: git diff failed: {}", e);
-            }
-        }
-    }
-
     let instructions = profile_obj.instructions.clone();
 
     Ok(ResolvedContext {
         artifacts,
-        diff,
         instructions,
     })
 }
@@ -308,7 +270,6 @@ pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
 
         let profile = ContextProfile {
             artifacts,
-            diff: None,
             include: Vec::new(),
             instructions: None,
         };
@@ -335,7 +296,6 @@ mod tests {
         let data = json!({
             "default": {
                 "artifacts": ["./spec/index.md"],
-                "diff": "main...HEAD",
                 "include": ["@other-branch"],
                 "instructions": "Go fast"
             },
@@ -347,11 +307,9 @@ mod tests {
 
         assert_eq!(config.len(), 2);
         assert_eq!(config["default"].artifacts, vec!["./spec/index.md"]);
-        assert_eq!(config["default"].diff, Some("main...HEAD".to_string()));
         assert_eq!(config["default"].include, vec!["@other-branch"]);
         assert_eq!(config["default"].instructions, Some("Go fast".to_string()));
         assert_eq!(config["brief"].artifacts, vec!["./spec/index.md"]);
-        assert_eq!(config["brief"].diff, None);
         assert_eq!(config["brief"].include, Vec::<String>::new());
     }
 
@@ -364,7 +322,6 @@ mod tests {
         });
         let config: ContextConfig = serde_json::from_value(data).unwrap();
         assert_eq!(config["default"].artifacts, vec!["./spec/index.md"]);
-        assert_eq!(config["default"].diff, None);
         assert_eq!(config["default"].include, Vec::<String>::new());
     }
 

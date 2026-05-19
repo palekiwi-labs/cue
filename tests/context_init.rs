@@ -86,8 +86,7 @@ fn test_context_init_with_template() -> anyhow::Result<()> {
         r#"{
         "context": {
             "default": {
-                "artifacts": ["./spec/index.md", "./spec/tickets/*"],
-                "diff": "main...HEAD"
+                "artifacts": ["./spec/index.md", "./spec/tickets/*"]
             }
         }
     }"#,
@@ -106,7 +105,7 @@ fn test_context_init_with_template() -> anyhow::Result<()> {
 
     assert_eq!(v["default"]["artifacts"][0], "./spec/index.md");
     assert_eq!(v["default"]["artifacts"][1], "./spec/tickets/*");
-    assert_eq!(v["default"]["diff"], "main...HEAD");
+    assert!(v["default"]["diff"].is_null());
 
     Ok(())
 }

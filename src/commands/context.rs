@@ -67,10 +67,6 @@ fn handle_render(cwd: &Path, profile: Option<String>) -> anyhow::Result<()> {
         );
     }
 
-    if let Some(diff_output) = resolved.diff {
-        println!("<diff>\n{}\n</diff>\n", diff_output);
-    }
-
     if let Some(instructions) = resolved.instructions {
         println!("<instructions>\n{}\n</instructions>", instructions);
     }

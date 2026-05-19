@@ -11,8 +11,6 @@ pub struct ContextProfile {
     #[serde(default)]
     pub artifacts: Vec<String>,
     #[serde(default)]
-    pub diff: Option<String>,
-    #[serde(default)]
     pub include: Vec<String>,
     #[serde(default)]
     pub instructions: Option<String>,
@@ -25,8 +23,6 @@ pub struct Config {
     pub branch_name: String,
     pub dir_name: String,
     #[serde(default)]
-    pub diff_exclude_paths: Vec<String>,
-    #[serde(default)]
     pub context: ContextConfig,
 }
 
@@ -35,7 +31,6 @@ impl Default for Config {
         Self {
             branch_name: "mem".into(),
             dir_name: ".mem".into(),
-            diff_exclude_paths: Vec::new(),
             context: HashMap::new(),
         }
     }
