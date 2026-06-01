@@ -137,3 +137,7 @@ pub fn is_working_tree_dirty(cwd: &Path) -> anyhow::Result<bool> {
     let output = run_git(["status", "--porcelain"], cwd)?;
     Ok(!output.trim().is_empty())
 }
+
+pub fn sanitize_branch_name(branch: &str) -> String {
+    branch.replace(['/', '\\'], "-")
+}

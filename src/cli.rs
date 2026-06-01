@@ -69,6 +69,37 @@ pub enum Commands {
         #[command(subcommand)]
         command: LogCommands,
     },
+    /// Manage branch-specific AI agent context
+    Context {
+        #[command(subcommand)]
+        command: ContextCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ContextCommands {
+    /// Create context.json, auto-populated from existing spec/ files
+    Init {
+        /// Overwrite existing context.json
+        #[arg(long)]
+        force: bool,
+    },
+    /// Print raw context.json
+    Show,
+    /// List available profile names
+    Profiles,
+    /// Expand and stream context to stdout
+    Render {
+        /// Profile name to render
+        #[arg(short = 'p', long, default_value = "default")]
+        profile: Option<String>,
+    },
+    /// Print absolute path to context.json
+    Path {
+        /// Show paths for all branches
+        #[arg(short = 'a', long)]
+        all: bool,
+    },
 }
 
 #[derive(Subcommand)]

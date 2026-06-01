@@ -35,7 +35,7 @@ pub fn handle(cwd: &Path, branch_name: Option<String>) -> Result<()> {
         Ok(content) => print!("{}", content),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {} // Silently exit
         Err(e) => {
-            return Err(e).with_context(|| format!("Failed to read {}", log_file_path.display()))
+            return Err(e).with_context(|| format!("Failed to read {}", log_file_path.display()));
         }
     }
 

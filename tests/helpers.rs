@@ -1,5 +1,40 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
+use tempfile::TempDir;
+
+#[allow(dead_code)]
+pub struct TestEnv {
+    pub temp_dir: TempDir,
+    pub config_dir: PathBuf,
+}
+
+impl TestEnv {
+    #[allow(dead_code)]
+    pub fn new() -> Self {
+        let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
+        let config_dir = temp_dir.path().join("config");
+        std::fs::create_dir(&config_dir).expect("Failed to create config dir");
+
+        Self {
+            temp_dir,
+            config_dir,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn command(&self) -> assert_cmd::Command {
+        let mut cmd = assert_cmd::Command::cargo_bin("mem").expect("Failed to find mem binary");
+        cmd.env("MEM_CONFIG_DIR", &self.config_dir);
+        // Isolate from user's git config if necessary, but for now we focus on mem config
+        cmd.current_dir(self.temp_dir.path());
+        cmd
+    }
+
+    #[allow(dead_code)]
+    pub fn root(&self) -> &Path {
+        self.temp_dir.path()
+    }
+}
 
 pub fn setup_git_repo(dir: &Path) {
     Command::new("git")
