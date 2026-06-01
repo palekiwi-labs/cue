@@ -183,7 +183,7 @@ fn test_add_no_content_empty_file() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_add_type_trace() -> anyhow::Result<()> {
+fn test_add_type_trace_flat() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
@@ -195,7 +195,7 @@ fn test_add_type_trace() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // Add a trace file
+    // Add a trace file without --pin: saved flat under trace/
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
@@ -208,11 +208,48 @@ fn test_add_type_trace() -> anyhow::Result<()> {
 
     cmd.assert()
         .success()
+        .stdout(predicate::str::diff(".test-mem/main/trace/error.log\n"));
+
+    let file_path = temp.path().join(".test-mem/main/trace/error.log");
+    assert!(file_path.exists());
+    let content = fs::read_to_string(file_path)?;
+    assert_eq!(content, "stack trace content");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_pin_nests_under_ts_hash() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    // Initialize mem
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // Add a trace file WITH --pin: saved under trace/<ts>-<hash>/
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("trace")
+        .arg("--pin")
+        .arg("error.log")
+        .arg("stack trace content");
+
+    cmd.assert()
+        .success()
         .stdout(predicate::str::starts_with(".test-mem/main/trace/"));
 
-    // Check if file exists under some timestamped dir
+    // File must be nested under a <ts>-<hash> subdirectory
     let trace_base = temp.path().join(".test-mem/main/trace");
-    let entries = fs::read_dir(trace_base)?;
+    let entries = fs::read_dir(&trace_base)?;
     let mut found = false;
     for entry in entries {
         let entry = entry?;
@@ -227,13 +264,70 @@ fn test_add_type_trace() -> anyhow::Result<()> {
             }
         }
     }
-    assert!(found, "Trace file not found in any timestamped directory");
+    assert!(
+        found,
+        "Pinned trace file not found in any timestamped directory"
+    );
 
     Ok(())
 }
 
 #[test]
-fn test_add_type_tmp() -> anyhow::Result<()> {
+fn test_add_pin_works_for_any_type() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // Pinning a spec file nests it under a ts-hash dir too
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("spec")
+        .arg("--pin")
+        .arg("snapshot.md")
+        .arg("pinned spec");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::starts_with(".test-mem/main/spec/"));
+
+    // Must be nested, not at spec/snapshot.md
+    let flat_path = temp.path().join(".test-mem/main/spec/snapshot.md");
+    assert!(!flat_path.exists(), "File should NOT be at flat path");
+
+    let spec_base = temp.path().join(".test-mem/main/spec");
+    let entries = fs::read_dir(&spec_base)?;
+    let mut found = false;
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            let file_path = path.join("snapshot.md");
+            if file_path.exists() {
+                found = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        found,
+        "Pinned spec file not found in any timestamped directory"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_unknown_type_rejected() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
@@ -249,6 +343,78 @@ fn test_add_type_tmp() -> anyhow::Result<()> {
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--type")
+        .arg("unknown-type")
+        .arg("file.md")
+        .arg("content");
+
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Unknown artifact type 'unknown-type'",
+        ))
+        .stderr(predicate::str::contains("Valid types:"));
+
+    Ok(())
+}
+
+#[test]
+fn test_add_custom_type_via_config() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    // Write a mem.json that registers a custom type
+    fs::write(
+        temp.path().join("mem.json"),
+        r#"{"artifact_types": ["spec", "trace", "tmp", "custom"]}"#,
+    )?;
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("custom")
+        .arg("notes.md")
+        .arg("custom content");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/main/custom/notes.md\n"));
+
+    let file_path = temp.path().join(".test-mem/main/custom/notes.md");
+    assert!(file_path.exists());
+    assert_eq!(fs::read_to_string(file_path)?, "custom content");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_type_tmp_flat() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // tmp without --pin saves flat
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
         .arg("-t")
         .arg("tmp")
         .arg("session.log")
@@ -256,25 +422,11 @@ fn test_add_type_tmp() -> anyhow::Result<()> {
 
     cmd.assert()
         .success()
-        .stdout(predicate::str::starts_with(".test-mem/main/tmp/"));
+        .stdout(predicate::str::diff(".test-mem/main/tmp/session.log\n"));
 
-    let tmp_base = temp.path().join(".test-mem/main/tmp");
-    let entries = fs::read_dir(tmp_base)?;
-    let mut found = false;
-    for entry in entries {
-        let entry = entry?;
-        let path = entry.path();
-        if path.is_dir() {
-            let file_path = path.join("session.log");
-            if file_path.exists() {
-                let content = fs::read_to_string(file_path)?;
-                assert_eq!(content, "tmp content");
-                found = true;
-                break;
-            }
-        }
-    }
-    assert!(found, "Tmp file not found");
+    let file_path = temp.path().join(".test-mem/main/tmp/session.log");
+    assert!(file_path.exists());
+    assert_eq!(fs::read_to_string(file_path)?, "tmp content");
 
     Ok(())
 }
@@ -283,6 +435,12 @@ fn test_add_type_tmp() -> anyhow::Result<()> {
 fn test_add_type_ref() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
+
+    // Register 'ref' as a valid type in project config
+    fs::write(
+        temp.path().join("mem.json"),
+        r#"{"artifact_types": ["spec", "trace", "tmp", "ref"]}"#,
+    )?;
 
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
@@ -317,6 +475,12 @@ fn test_add_type_bin() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
+    // Register 'bin' as a valid type in project config
+    fs::write(
+        temp.path().join("mem.json"),
+        r#"{"artifact_types": ["spec", "trace", "tmp", "bin"]}"#,
+    )?;
+
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
@@ -349,6 +513,12 @@ fn test_add_type_bin() -> anyhow::Result<()> {
 fn test_add_type_doc() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
+
+    // Register 'doc' as a valid type in project config
+    fs::write(
+        temp.path().join("mem.json"),
+        r#"{"artifact_types": ["spec", "trace", "tmp", "doc"]}"#,
+    )?;
 
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
