@@ -1,4 +1,3 @@
-use crate::cli::MemType;
 use crate::config::Config;
 use crate::git;
 use anyhow::{Context, Result};
@@ -21,7 +20,7 @@ pub fn handle(
     cwd: &Path,
     branch_name: Option<String>,
     all: bool,
-    mem_type: Option<MemType>,
+    mem_type: Option<String>,
     include_gitignored: bool,
     json: bool,
 ) -> Result<()> {
@@ -50,9 +49,15 @@ pub fn handle(
     paths.sort();
 
     // 7. Filter
-    let valid_paths = paths
-        .into_iter()
-        .filter(|path| is_valid_mem_file(path, &mem_path, mem_type, include_gitignored));
+    let valid_paths = paths.into_iter().filter(|path| {
+        is_valid_mem_file(
+            path,
+            &mem_path,
+            mem_type.as_deref(),
+            include_gitignored,
+            &config.ignored_types,
+        )
+    });
 
     // 8. Process files and Output
     if !json {
@@ -98,8 +103,9 @@ fn resolve_scan_paths(
 fn is_valid_mem_file(
     path: &Path,
     mem_path: &Path,
-    mem_type: Option<MemType>,
+    mem_type: Option<&str>,
     include_gitignored: bool,
+    ignored_types: &[String],
 ) -> bool {
     let Ok(rel_to_mem) = path.strip_prefix(mem_path) else {
         return false;
@@ -116,19 +122,11 @@ fn is_valid_mem_file(
 
     let category = category_comp.as_os_str().to_string_lossy();
 
-    if let Some(requested_type) = mem_type {
-        let requested_cat = match requested_type {
-            MemType::Spec => "spec",
-            MemType::Trace => "trace",
-            MemType::Tmp => "tmp",
-            MemType::Ref => "ref",
-            MemType::Bin => "bin",
-            MemType::Doc => "doc",
-        };
-        if category != requested_cat {
+    if let Some(requested) = mem_type {
+        if category != requested {
             return false;
         }
-    } else if !include_gitignored && (category == "tmp" || category == "ref") {
+    } else if !include_gitignored && ignored_types.iter().any(|t| t == category.as_ref()) {
         return false;
     }
 
@@ -150,11 +148,6 @@ fn to_mem_file(path: &Path, mem_path: &Path, root: &Path) -> Option<MemFile> {
         .to_string_lossy()
         .into_owned();
 
-    let name = path
-        .file_name()
-        .map(|n| n.to_string_lossy().to_string())
-        .unwrap_or_default();
-
     let rel_path = path
         .strip_prefix(root)
         .unwrap_or(path)
@@ -163,7 +156,7 @@ fn to_mem_file(path: &Path, mem_path: &Path, root: &Path) -> Option<MemFile> {
 
     let mut mem_file = MemFile {
         path: rel_path,
-        name: name.clone(),
+        name: String::new(),
         branch: branch.clone(),
         category: category.clone(),
         hash: None,
@@ -171,10 +164,10 @@ fn to_mem_file(path: &Path, mem_path: &Path, root: &Path) -> Option<MemFile> {
         commit_timestamp: 0,
     };
 
-    // Trace/Tmp handling for hash/timestamp
+    // Detect pinned artifacts structurally: any category with depth >= 4
+    // where the 3rd component parses as <timestamp>-<hash>.
     let comp_count = rel_to_mem.components().count();
-    if (category == "trace" || category == "tmp") && comp_count >= 4 {
-        // Need to iterate again or extract specifically the 3rd component
+    if comp_count >= 4 {
         let mut comps = rel_to_mem.components();
         comps.next(); // branch
         comps.next(); // category
@@ -187,19 +180,20 @@ fn to_mem_file(path: &Path, mem_path: &Path, root: &Path) -> Option<MemFile> {
                 mem_file.hash = Some(hash_str.to_string());
                 mem_file.commit_hash = Some(hash_str.to_string());
 
-                // For trace/tmp, name is relative to ts-hash dir
+                // name is relative to the ts-hash dir
                 let prefix = mem_path.join(&branch).join(&category).join(ts_hash_dir);
                 if let Ok(rel_name) = path.strip_prefix(&prefix) {
                     mem_file.name = rel_name.to_string_lossy().to_string();
                 }
+                return Some(mem_file);
             }
         }
-    } else {
-        // For spec, bin, ref, name is relative to category dir
-        let prefix = mem_path.join(&branch).join(&category);
-        if let Ok(rel_name) = path.strip_prefix(&prefix) {
-            mem_file.name = rel_name.to_string_lossy().to_string();
-        }
+    }
+
+    // Flat artifact: name is relative to the category dir
+    let prefix = mem_path.join(&branch).join(&category);
+    if let Ok(rel_name) = path.strip_prefix(&prefix) {
+        mem_file.name = rel_name.to_string_lossy().to_string();
     }
 
     Some(mem_file)

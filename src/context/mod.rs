@@ -243,33 +243,9 @@ pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
         // Use template from config
         config.context.clone()
     } else {
-        // Fallback to legacy auto-discovery
-        let mem_branch_path = git_root.join(".mem").join(&sanitized_branch);
-        let spec_path = mem_branch_path.join("spec");
-
-        let mut artifacts = Vec::new();
-        if spec_path.exists() {
-            let mut entries: Vec<_> = std::fs::read_dir(&spec_path)?
-                .filter_map(|e| e.ok())
-                .filter(|e| e.file_type().map(|t| t.is_file()).unwrap_or(false))
-                .collect();
-            entries.sort_by_key(|e| e.file_name());
-
-            for entry in entries {
-                if let Some(name) = entry.file_name().to_str() {
-                    artifacts.push(format!("./spec/{}", name));
-                }
-            }
-        }
-
-        let profile = ContextProfile {
-            artifacts,
-            include: Vec::new(),
-            instructions: None,
-        };
-
+        // No template defined: initialize with an empty default profile
         let mut map = HashMap::new();
-        map.insert("default".to_string(), profile);
+        map.insert("default".to_string(), ContextProfile::default());
         map
     };
 

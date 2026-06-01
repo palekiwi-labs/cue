@@ -1,4 +1,3 @@
-use crate::cli::MemType;
 use crate::config::Config;
 use crate::git;
 use anyhow::{Context, Result, bail};
@@ -9,7 +8,8 @@ pub fn handle(
     cwd: &Path,
     filename: &str,
     content: Vec<u8>,
-    mem_type: MemType,
+    mem_type: String,
+    pin: bool,
     force: bool,
     branch_name: Option<String>,
 ) -> Result<()> {
@@ -31,7 +31,16 @@ pub fn handle(
         );
     }
 
-    // 5. Get branch (handle no-commits case if using current branch)
+    // 5. Validate artifact type
+    if !config.artifact_types.contains(&mem_type) {
+        bail!(
+            "Unknown artifact type '{}'. Valid types: {}",
+            mem_type,
+            config.artifact_types.join(", ")
+        );
+    }
+
+    // 6. Get branch (handle no-commits case if using current branch)
     let branch = if let Some(b) = branch_name {
         b
     } else {
@@ -40,26 +49,15 @@ pub fn handle(
     };
     let branch_dir = branch.replace(['/', '\\'], "-");
 
-    // 6. Resolve destination directory
-    let dest_dir = match mem_type {
-        MemType::Spec => mem_path.join(&branch_dir).join("spec"),
-        MemType::Ref => mem_path.join(&branch_dir).join("ref"),
-        MemType::Bin => mem_path.join(&branch_dir).join("bin"),
-        MemType::Doc => mem_path.join(&branch_dir).join("doc"),
-        MemType::Trace | MemType::Tmp => {
-            let ts = git::get_head_timestamp(&root)?;
-            let hash = git::get_short_head_hash(&root)
-                .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
-            let type_dir = if matches!(mem_type, MemType::Trace) {
-                "trace"
-            } else {
-                "tmp"
-            };
-            mem_path
-                .join(&branch_dir)
-                .join(type_dir)
-                .join(format!("{}-{}", ts, hash))
-        }
+    // 7. Resolve destination directory
+    let type_dir = mem_path.join(&branch_dir).join(&mem_type);
+    let dest_dir = if pin {
+        let ts = git::get_head_timestamp(&root)?;
+        let hash = git::get_short_head_hash(&root)
+            .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
+        type_dir.join(format!("{}-{}", ts, hash))
+    } else {
+        type_dir
     };
 
     // 7. Validate filename for path traversal

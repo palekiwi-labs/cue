@@ -62,12 +62,20 @@ fn ensure_worktree(root: &Path, mem_path: &Path, config: &Config) -> Result<()> 
     } else {
         git::add_worktree_orphan(root, mem_path, branch)?;
 
-        // Initialize orphan branch
-        let gitignore_content = "*/tmp/\n*/ref/\n";
-        fs::write(mem_path.join(".gitignore"), gitignore_content)?;
+        // Initialize orphan branch with config-driven ignore patterns
+        let gitignore_content: String = config
+            .ignored_types
+            .iter()
+            .map(|t| format!("*/{}/\n", t))
+            .collect();
+        fs::write(mem_path.join(".gitignore"), &gitignore_content)?;
 
-        let rgignore_content = "!*/tmp/\n!*/ref/\n";
-        fs::write(mem_path.join(".rgignore"), rgignore_content)?;
+        let rgignore_content: String = config
+            .ignored_types
+            .iter()
+            .map(|t| format!("!*/{}/\n", t))
+            .collect();
+        fs::write(mem_path.join(".rgignore"), &rgignore_content)?;
 
         git::git_add(mem_path, &[".gitignore", ".rgignore"])?;
         git::git_commit(mem_path, &format!("Initialize {} branch", branch))?;

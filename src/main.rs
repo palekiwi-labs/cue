@@ -24,6 +24,7 @@ fn main() -> anyhow::Result<()> {
             file,
             clipboard,
             mem_type,
+            pin,
             force,
             branch,
         } => {
@@ -44,7 +45,15 @@ fn main() -> anyhow::Result<()> {
                 }
             };
 
-            commands::add::handle(&cwd, &filename, resolved_content, mem_type, force, branch)?;
+            commands::add::handle(
+                &cwd,
+                &filename,
+                resolved_content,
+                mem_type,
+                pin,
+                force,
+                branch,
+            )?;
         }
         Commands::List {
             branch,
