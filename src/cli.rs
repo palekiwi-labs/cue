@@ -67,6 +67,17 @@ pub enum Commands {
         #[command(subcommand)]
         command: ContextCommands,
     },
+    /// Manage mem configuration
+    Config {
+        #[command(subcommand)]
+        command: ConfigCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ConfigCommands {
+    /// Show the resolved configuration as JSON
+    Show,
 }
 
 #[derive(Subcommand)]

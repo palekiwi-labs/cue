@@ -36,6 +36,12 @@ impl TestEnv {
     }
 }
 
+impl Default for TestEnv {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 pub fn setup_git_repo(dir: &Path) {
     Command::new("git")
         .args(["init", "-b", "main"])
