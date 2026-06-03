@@ -8,6 +8,12 @@ pub struct TestEnv {
     pub config_dir: PathBuf,
 }
 
+impl Default for TestEnv {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl TestEnv {
     #[allow(dead_code)]
     pub fn new() -> Self {
@@ -33,12 +39,6 @@ impl TestEnv {
     #[allow(dead_code)]
     pub fn root(&self) -> &Path {
         self.temp_dir.path()
-    }
-}
-
-impl Default for TestEnv {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

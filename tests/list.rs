@@ -57,12 +57,13 @@ fn test_list_from_subdirectory() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // 2. Add a file
+    // 2. Add a root file (stable anchor)
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("index.md")
         .arg("content");
     cmd.assert().success();
@@ -330,12 +331,13 @@ fn test_list_json_spec() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // 2. Add spec file
+    // 2. Add a root spec file (--root: stable anchor, saved flat)
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("index.md")
         .arg("content");
     cmd.assert().success();
@@ -359,6 +361,7 @@ fn test_list_json_spec() -> anyhow::Result<()> {
     assert_eq!(item["name"], "index.md");
     assert_eq!(item["category"], "spec");
     assert_eq!(item["branch"], "main"); // default git branch in setup_git_repo is main
+                                        // Root artifact: no hash or timestamp
     assert!(item["hash"].is_null());
     assert!(item["commit_hash"].is_null());
     assert_eq!(item["commit_timestamp"], 0);
@@ -457,7 +460,7 @@ fn test_list_json_nested_trace() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_list_json_trace_flat() -> anyhow::Result<()> {
+fn test_list_json_trace_with_root() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
@@ -469,7 +472,7 @@ fn test_list_json_trace_flat() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // 2. Add trace file without --pin: saved flat
+    // 2. Add trace file with --root: saved flat at trace/<filename>
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
@@ -477,6 +480,7 @@ fn test_list_json_trace_flat() -> anyhow::Result<()> {
         .arg("add")
         .arg("-t")
         .arg("trace")
+        .arg("--root")
         .arg("trace.log")
         .arg("trace content");
     cmd.assert().success();
@@ -499,7 +503,7 @@ fn test_list_json_trace_flat() -> anyhow::Result<()> {
     assert_eq!(item["name"], "trace.log");
     assert_eq!(item["category"], "trace");
 
-    // Flat artifact: no hash or timestamp
+    // Root (flat) artifact: no hash or timestamp
     assert!(item["hash"].is_null());
     assert!(item["commit_hash"].is_null());
     assert_eq!(item["commit_timestamp"], 0);
@@ -508,7 +512,7 @@ fn test_list_json_trace_flat() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_list_json_pinned_trace() -> anyhow::Result<()> {
+fn test_list_json_trace_nested_by_default() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
@@ -520,7 +524,7 @@ fn test_list_json_pinned_trace() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // 2. Add trace file WITH --pin: nested under ts-hash
+    // 2. Add trace file without --root: nested under ts-hash by default
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
@@ -528,7 +532,6 @@ fn test_list_json_pinned_trace() -> anyhow::Result<()> {
         .arg("add")
         .arg("-t")
         .arg("trace")
-        .arg("--pin")
         .arg("trace.log")
         .arg("trace content");
     cmd.assert().success();
@@ -551,7 +554,7 @@ fn test_list_json_pinned_trace() -> anyhow::Result<()> {
     assert_eq!(item["name"], "trace.log");
     assert_eq!(item["category"], "trace");
 
-    // Pinned artifact: should have non-null hash and non-zero timestamp
+    // Nested artifact: has non-null hash and non-zero timestamp
     assert!(item["hash"].is_string());
     assert!(item["commit_hash"].is_string());
     assert!(item["commit_timestamp"].as_u64().unwrap() > 0);
