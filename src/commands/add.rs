@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::{Component, Path};
 
@@ -9,7 +9,7 @@ pub fn handle(
     filename: &str,
     content: Vec<u8>,
     mem_type: String,
-    pin: bool,
+    save_at_root: bool,
     force: bool,
     branch_name: Option<String>,
 ) -> Result<()> {
@@ -51,13 +51,13 @@ pub fn handle(
 
     // 7. Resolve destination directory
     let type_dir = mem_path.join(&branch_dir).join(&mem_type);
-    let dest_dir = if pin {
+    let dest_dir = if save_at_root {
+        type_dir
+    } else {
         let ts = git::get_head_timestamp(&root)?;
         let hash = git::get_short_head_hash(&root)
             .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
         type_dir.join(format!("{}-{}", ts, hash))
-    } else {
-        type_dir
     };
 
     // 7. Validate filename for path traversal

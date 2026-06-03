@@ -24,7 +24,7 @@ fn main() -> anyhow::Result<()> {
             file,
             clipboard,
             mem_type,
-            pin,
+            root,
             force,
             branch,
         } => {
@@ -50,7 +50,7 @@ fn main() -> anyhow::Result<()> {
                 &filename,
                 resolved_content,
                 mem_type,
-                pin,
+                root,
                 force,
                 branch,
             )?;

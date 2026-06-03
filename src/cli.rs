@@ -28,9 +28,9 @@ pub enum Commands {
         /// Type of artifact (must be in configured artifact_types)
         #[arg(short = 't', long = "type", default_value = "spec")]
         mem_type: String,
-        /// Save artifact under a <timestamp>-<hash> subdirectory
+        /// Save artifact at the root of the type directory, not under a <timestamp>-<hash> subdir
         #[arg(long)]
-        pin: bool,
+        root: bool,
         /// Save artifact to a specific branch instead of current
         #[arg(short = 'b', long)]
         branch: Option<String>,
