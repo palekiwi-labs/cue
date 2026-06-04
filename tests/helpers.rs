@@ -42,6 +42,16 @@ impl TestEnv {
     }
 }
 
+/// Returns a `mem` command with host MEM_* variables that affect config
+/// pre-cleared, so tests are not affected by the developer's environment.
+#[allow(dead_code)]
+pub fn mem_cmd() -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("mem").expect("Failed to find mem binary");
+    cmd.env_remove("MEM_ARTIFACT_TYPES")
+        .env_remove("MEM_IGNORED_TYPES");
+    cmd
+}
+
 pub fn setup_git_repo(dir: &Path) {
     Command::new("git")
         .args(["init", "-b", "main"])

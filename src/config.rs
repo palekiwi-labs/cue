@@ -88,7 +88,9 @@ mod tests {
         let config_json = r#"{"artifact_types": ["spec", "trace", "tmp", "doc", "custom"]}"#;
         std::fs::write(dir.path().join("mem.json"), config_json).unwrap();
 
-        let config = Config::load(dir.path()).unwrap();
+        // Unset MEM_ARTIFACT_TYPES so host environment cannot override the JSON config
+        let config =
+            temp_env::with_var_unset("MEM_ARTIFACT_TYPES", || Config::load(dir.path()).unwrap());
         assert_eq!(
             config.artifact_types,
             vec!["spec", "trace", "tmp", "doc", "custom"]
@@ -103,7 +105,9 @@ mod tests {
         let config_json = r#"{"ignored_types": ["tmp", "ref"]}"#;
         std::fs::write(dir.path().join("mem.json"), config_json).unwrap();
 
-        let config = Config::load(dir.path()).unwrap();
+        // Unset MEM_IGNORED_TYPES so host environment cannot override the JSON config
+        let config =
+            temp_env::with_var_unset("MEM_IGNORED_TYPES", || Config::load(dir.path()).unwrap());
         assert_eq!(config.ignored_types, vec!["tmp", "ref"]);
     }
 
