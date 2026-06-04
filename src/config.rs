@@ -1,6 +1,6 @@
 use figment::{
-    providers::{Env, Format, Json, Serialized},
     Figment,
+    providers::{Env, Format, Json, Serialized},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -23,6 +23,10 @@ pub struct Config {
     pub branch_name: String,
     pub dir_name: String,
     #[serde(default)]
+    pub artifact_types: Vec<String>,
+    #[serde(default)]
+    pub ignored_types: Vec<String>,
+    #[serde(default)]
     pub context: ContextConfig,
 }
 
@@ -31,6 +35,8 @@ impl Default for Config {
         Self {
             branch_name: "mem".into(),
             dir_name: ".mem".into(),
+            artifact_types: vec!["spec".into(), "trace".into(), "tmp".into()],
+            ignored_types: vec!["tmp".into()],
             context: HashMap::new(),
         }
     }
@@ -61,6 +67,45 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_default_artifact_types() {
+        let config = Config::default();
+        assert_eq!(config.artifact_types, vec!["spec", "trace", "tmp"]);
+    }
+
+    #[test]
+    fn test_default_ignored_types() {
+        let config = Config::default();
+        assert_eq!(config.ignored_types, vec!["tmp"]);
+    }
+
+    #[test]
+    fn test_artifact_types_json_override() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+
+        let config_json = r#"{"artifact_types": ["spec", "trace", "tmp", "doc", "custom"]}"#;
+        std::fs::write(dir.path().join("mem.json"), config_json).unwrap();
+
+        let config = Config::load(dir.path()).unwrap();
+        assert_eq!(
+            config.artifact_types,
+            vec!["spec", "trace", "tmp", "doc", "custom"]
+        );
+    }
+
+    #[test]
+    fn test_ignored_types_json_override() {
+        use tempfile::tempdir;
+        let dir = tempdir().unwrap();
+
+        let config_json = r#"{"ignored_types": ["tmp", "ref"]}"#;
+        std::fs::write(dir.path().join("mem.json"), config_json).unwrap();
+
+        let config = Config::load(dir.path()).unwrap();
+        assert_eq!(config.ignored_types, vec!["tmp", "ref"]);
+    }
 
     #[test]
     fn test_nested_env_override() {

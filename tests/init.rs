@@ -2,6 +2,7 @@ mod helpers;
 
 use assert_cmd::Command;
 use predicates::prelude::*;
+use std::fs;
 use tempfile::TempDir;
 
 #[test]
@@ -23,6 +24,39 @@ fn test_init_fresh_repo() -> anyhow::Result<()> {
     assert!(mem_dir.exists());
     assert!(mem_dir.join(".gitignore").exists());
     assert!(mem_dir.join(".rgignore").exists());
+
+    // Default gitignore covers the default ignored_types: ["tmp"]
+    let gitignore = fs::read_to_string(mem_dir.join(".gitignore"))?;
+    assert!(gitignore.contains("*/tmp/"));
+
+    Ok(())
+}
+
+#[test]
+fn test_init_gitignore_respects_config() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    // Configure custom ignored types
+    fs::write(
+        temp.path().join("mem.json"),
+        r#"{"ignored_types": ["tmp", "ref"]}"#,
+    )?;
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let gitignore = fs::read_to_string(temp.path().join(".test-mem/.gitignore"))?;
+    assert!(gitignore.contains("*/tmp/"));
+    assert!(gitignore.contains("*/ref/"));
+
+    let rgignore = fs::read_to_string(temp.path().join(".test-mem/.rgignore"))?;
+    assert!(rgignore.contains("!*/tmp/"));
+    assert!(rgignore.contains("!*/ref/"));
 
     Ok(())
 }

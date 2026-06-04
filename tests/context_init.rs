@@ -5,14 +5,14 @@ use predicates::prelude::*;
 use std::fs;
 
 #[test]
-fn test_context_init_auto_populates_spec() -> anyhow::Result<()> {
+fn test_context_init_empty_by_default() -> anyhow::Result<()> {
     let env = TestEnv::new();
     helpers::setup_git_repo(env.root());
 
     // Initialize mem
     env.command().arg("init").assert().success();
 
-    // Create some spec files
+    // Create some spec files (these should NOT be auto-discovered)
     let spec_dir = env.root().join(".mem").join("main").join("spec");
     fs::create_dir_all(&spec_dir)?;
     fs::write(spec_dir.join("index.md"), "# Index")?;
@@ -26,16 +26,14 @@ fn test_context_init_auto_populates_spec() -> anyhow::Result<()> {
         .success()
         .stdout(predicate::str::contains("Created .mem/main/context.json"));
 
-    // Verify content
+    // Verify content: artifacts should be empty even though spec files exist
     let context_json = env.root().join(".mem").join("main").join("context.json");
     let content = fs::read_to_string(context_json)?;
     let v: serde_json::Value = serde_json::from_str(&content)?;
 
     assert!(v["default"]["artifacts"].is_array());
     let artifacts = v["default"]["artifacts"].as_array().unwrap();
-    assert_eq!(artifacts.len(), 2);
-    assert_eq!(artifacts[0], "./spec/index.md");
-    assert_eq!(artifacts[1], "./spec/plan.md");
+    assert_eq!(artifacts.len(), 0);
 
     Ok(())
 }

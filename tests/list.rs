@@ -1,6 +1,7 @@
 mod helpers;
 
 use assert_cmd::Command;
+use std::fs;
 use tempfile::TempDir;
 
 #[test]
@@ -56,12 +57,13 @@ fn test_list_from_subdirectory() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // 2. Add a file
+    // 2. Add a root file (stable anchor)
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("index.md")
         .arg("content");
     cmd.assert().success();
@@ -127,7 +129,7 @@ fn test_list_ignores_shallow_paths() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_list_excludes_tmp_and_ref() -> anyhow::Result<()> {
+fn test_list_excludes_ignored_types() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
@@ -139,8 +141,7 @@ fn test_list_excludes_tmp_and_ref() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // 2. Add spec, tmp, and ref files
-    // Spec
+    // 2. Add spec and tmp files (tmp is in ignored_types by default)
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
@@ -150,7 +151,6 @@ fn test_list_excludes_tmp_and_ref() -> anyhow::Result<()> {
         .arg("content");
     cmd.assert().success();
 
-    // Tmp
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
@@ -162,19 +162,7 @@ fn test_list_excludes_tmp_and_ref() -> anyhow::Result<()> {
         .arg("content");
     cmd.assert().success();
 
-    // Ref
-    let mut cmd = Command::cargo_bin("mem")?;
-    cmd.current_dir(temp.path())
-        .env("MEM_BRANCH_NAME", "test-mem")
-        .env("MEM_DIR_NAME", ".test-mem")
-        .arg("add")
-        .arg("-t")
-        .arg("ref")
-        .arg("ref.md")
-        .arg("content");
-    cmd.assert().success();
-
-    // 3. List
+    // 3. List without -i: tmp should be hidden
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
@@ -183,14 +171,61 @@ fn test_list_excludes_tmp_and_ref() -> anyhow::Result<()> {
 
     let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
     let lines: Vec<&str> = output.trim().lines().collect();
-
-    // Should only contain spec.md (and potentially other spec files if created by init, but init only creates .gitignore/.rgignore which are NOT in spec/)
-    // Wait, add command puts things in .test-mem/main/spec/
-    // Let's check exactly what's there.
     assert_eq!(lines.len(), 1);
     assert!(lines[0].contains("spec.md"));
     assert!(!output.contains("tmp.log"));
-    assert!(!output.contains("ref.md"));
+
+    Ok(())
+}
+
+#[test]
+fn test_list_ignored_types_configurable() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    // Configure trace as an additional ignored type
+    fs::write(
+        temp.path().join("mem.json"),
+        r#"{"ignored_types": ["tmp", "trace"]}"#,
+    )?;
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("spec.md")
+        .arg("content");
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("trace")
+        .arg("trace.log")
+        .arg("content");
+    cmd.assert().success();
+
+    // List without -i: trace should be hidden because it's in ignored_types
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    assert!(output.contains("spec.md"));
+    assert!(!output.contains("trace.log"));
 
     Ok(())
 }
@@ -296,12 +331,13 @@ fn test_list_json_spec() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // 2. Add spec file
+    // 2. Add a root spec file (--root: stable anchor, saved flat)
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("index.md")
         .arg("content");
     cmd.assert().success();
@@ -325,6 +361,7 @@ fn test_list_json_spec() -> anyhow::Result<()> {
     assert_eq!(item["name"], "index.md");
     assert_eq!(item["category"], "spec");
     assert_eq!(item["branch"], "main"); // default git branch in setup_git_repo is main
+                                        // Root artifact: no hash or timestamp
     assert!(item["hash"].is_null());
     assert!(item["commit_hash"].is_null());
     assert_eq!(item["commit_timestamp"], 0);
@@ -423,7 +460,7 @@ fn test_list_json_nested_trace() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_list_json_trace() -> anyhow::Result<()> {
+fn test_list_json_trace_with_root() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
@@ -435,8 +472,59 @@ fn test_list_json_trace() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // 2. Add trace file
-    // The add command will create a ts-hash directory automatically for trace type
+    // 2. Add trace file with --root: saved flat at trace/<filename>
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("trace")
+        .arg("--root")
+        .arg("trace.log")
+        .arg("trace content");
+    cmd.assert().success();
+
+    // 3. List with --json
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--json");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    let json: serde_json::Value = serde_json::from_str(&output)?;
+
+    let arr = json.as_array().unwrap();
+    assert_eq!(arr.len(), 1);
+
+    let item = &arr[0];
+    assert_eq!(item["name"], "trace.log");
+    assert_eq!(item["category"], "trace");
+
+    // Root (flat) artifact: no hash or timestamp
+    assert!(item["hash"].is_null());
+    assert!(item["commit_hash"].is_null());
+    assert_eq!(item["commit_timestamp"], 0);
+
+    Ok(())
+}
+
+#[test]
+fn test_list_json_trace_nested_by_default() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    // 1. Initialize
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // 2. Add trace file without --root: nested under ts-hash by default
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
@@ -466,7 +554,7 @@ fn test_list_json_trace() -> anyhow::Result<()> {
     assert_eq!(item["name"], "trace.log");
     assert_eq!(item["category"], "trace");
 
-    // Should have non-null hash and non-zero timestamp
+    // Nested artifact: has non-null hash and non-zero timestamp
     assert!(item["hash"].is_string());
     assert!(item["commit_hash"].is_string());
     assert!(item["commit_timestamp"].as_u64().unwrap() > 0);
@@ -647,6 +735,13 @@ fn test_list_not_initialized() -> anyhow::Result<()> {
 fn test_list_type_filter() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
+
+    // Register 'trace' as a type (already default, but being explicit for clarity)
+    // doc is not a default type; add it to config
+    fs::write(
+        temp.path().join("mem.json"),
+        r#"{"artifact_types": ["spec", "trace", "tmp", "doc"]}"#,
+    )?;
 
     // 1. Initialize
     let mut cmd = Command::cargo_bin("mem")?;

@@ -22,12 +22,13 @@ fn test_add_from_file() -> anyhow::Result<()> {
     let source_file = temp.path().join("source.txt");
     fs::write(&source_file, "content from file")?;
 
-    // Add from file
+    // Add from file with --root (stable anchor document)
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("index.md")
         .arg("--file")
         .arg(&source_file);
@@ -127,12 +128,13 @@ fn test_add_spec_default() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // Add a file
+    // Add a root spec document (stable anchor)
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("index.md")
         .arg("Project scope");
 
@@ -161,12 +163,13 @@ fn test_add_no_content_empty_file() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // Add a file without content
+    // Add a file without content using --root
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("empty.txt")
         .arg("");
 
@@ -183,7 +186,7 @@ fn test_add_no_content_empty_file() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_add_type_trace() -> anyhow::Result<()> {
+fn test_add_type_trace_nested_by_default() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
@@ -195,7 +198,7 @@ fn test_add_type_trace() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // Add a trace file
+    // Add a trace file without --root: saved under trace/<ts>-<hash>/ by default
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
@@ -210,9 +213,9 @@ fn test_add_type_trace() -> anyhow::Result<()> {
         .success()
         .stdout(predicate::str::starts_with(".test-mem/main/trace/"));
 
-    // Check if file exists under some timestamped dir
+    // File must be nested under a <ts>-<hash> subdirectory
     let trace_base = temp.path().join(".test-mem/main/trace");
-    let entries = fs::read_dir(trace_base)?;
+    let entries = fs::read_dir(&trace_base)?;
     let mut found = false;
     for entry in entries {
         let entry = entry?;
@@ -233,7 +236,94 @@ fn test_add_type_trace() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_add_type_tmp() -> anyhow::Result<()> {
+fn test_add_type_trace_with_root() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    // Initialize mem
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // Add a trace file WITH --root: saved flat at trace/<filename>
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("trace")
+        .arg("--root")
+        .arg("error.log")
+        .arg("stack trace content");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/main/trace/error.log\n"));
+
+    let file_path = temp.path().join(".test-mem/main/trace/error.log");
+    assert!(file_path.exists());
+    let content = fs::read_to_string(file_path)?;
+    assert_eq!(content, "stack trace content");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_nested_by_default_for_any_type() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // spec type: default saves nested under ts-hash
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("spec")
+        .arg("snapshot.md")
+        .arg("nested spec");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::starts_with(".test-mem/main/spec/"));
+
+    // Must be nested, not at spec/snapshot.md
+    let flat_path = temp.path().join(".test-mem/main/spec/snapshot.md");
+    assert!(!flat_path.exists(), "File should NOT be at flat path");
+
+    let spec_base = temp.path().join(".test-mem/main/spec");
+    let entries = fs::read_dir(&spec_base)?;
+    let mut found = false;
+    for entry in entries {
+        let entry = entry?;
+        let path = entry.path();
+        if path.is_dir() {
+            let file_path = path.join("snapshot.md");
+            if file_path.exists() {
+                found = true;
+                break;
+            }
+        }
+    }
+    assert!(found, "Spec file not found in any timestamped directory");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_unknown_type_rejected() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
@@ -249,6 +339,80 @@ fn test_add_type_tmp() -> anyhow::Result<()> {
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--type")
+        .arg("unknown-type")
+        .arg("file.md")
+        .arg("content");
+
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Unknown artifact type 'unknown-type'",
+        ))
+        .stderr(predicate::str::contains("Valid types:"));
+
+    Ok(())
+}
+
+#[test]
+fn test_add_custom_type_via_config() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    // Write a mem.json that registers a custom type
+    fs::write(
+        temp.path().join("mem.json"),
+        r#"{"artifact_types": ["spec", "trace", "tmp", "custom"]}"#,
+    )?;
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // --root saves flat at custom/<filename>
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("custom")
+        .arg("--root")
+        .arg("notes.md")
+        .arg("custom content");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/main/custom/notes.md\n"));
+
+    let file_path = temp.path().join(".test-mem/main/custom/notes.md");
+    assert!(file_path.exists());
+    assert_eq!(fs::read_to_string(file_path)?, "custom content");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_type_tmp_nested_by_default() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // tmp without --root saves nested by default
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
         .arg("-t")
         .arg("tmp")
         .arg("session.log")
@@ -258,8 +422,9 @@ fn test_add_type_tmp() -> anyhow::Result<()> {
         .success()
         .stdout(predicate::str::starts_with(".test-mem/main/tmp/"));
 
+    // Must be nested under a ts-hash dir
     let tmp_base = temp.path().join(".test-mem/main/tmp");
-    let entries = fs::read_dir(tmp_base)?;
+    let entries = fs::read_dir(&tmp_base)?;
     let mut found = false;
     for entry in entries {
         let entry = entry?;
@@ -267,14 +432,48 @@ fn test_add_type_tmp() -> anyhow::Result<()> {
         if path.is_dir() {
             let file_path = path.join("session.log");
             if file_path.exists() {
-                let content = fs::read_to_string(file_path)?;
-                assert_eq!(content, "tmp content");
+                assert_eq!(fs::read_to_string(file_path)?, "tmp content");
                 found = true;
                 break;
             }
         }
     }
-    assert!(found, "Tmp file not found");
+    assert!(found, "Tmp file not found in any timestamped directory");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_type_tmp_with_root() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // tmp with --root saves flat
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("tmp")
+        .arg("--root")
+        .arg("session.log")
+        .arg("tmp content");
+
+    cmd.assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/main/tmp/session.log\n"));
+
+    let file_path = temp.path().join(".test-mem/main/tmp/session.log");
+    assert!(file_path.exists());
+    assert_eq!(fs::read_to_string(file_path)?, "tmp content");
 
     Ok(())
 }
@@ -283,6 +482,12 @@ fn test_add_type_tmp() -> anyhow::Result<()> {
 fn test_add_type_ref() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
+
+    // Register 'ref' as a valid type in project config
+    fs::write(
+        temp.path().join("mem.json"),
+        r#"{"artifact_types": ["spec", "trace", "tmp", "ref"]}"#,
+    )?;
 
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
@@ -298,6 +503,7 @@ fn test_add_type_ref() -> anyhow::Result<()> {
         .arg("add")
         .arg("-t")
         .arg("ref")
+        .arg("--root")
         .arg("doc.md")
         .arg("ref content");
 
@@ -317,6 +523,12 @@ fn test_add_type_bin() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
+    // Register 'bin' as a valid type in project config
+    fs::write(
+        temp.path().join("mem.json"),
+        r#"{"artifact_types": ["spec", "trace", "tmp", "bin"]}"#,
+    )?;
+
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
@@ -331,6 +543,7 @@ fn test_add_type_bin() -> anyhow::Result<()> {
         .arg("add")
         .arg("-t")
         .arg("bin")
+        .arg("--root")
         .arg("tool.sh")
         .arg("echo hello");
 
@@ -350,6 +563,12 @@ fn test_add_type_doc() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
+    // Register 'doc' as a valid type in project config
+    fs::write(
+        temp.path().join("mem.json"),
+        r#"{"artifact_types": ["spec", "trace", "tmp", "doc"]}"#,
+    )?;
+
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
@@ -364,6 +583,7 @@ fn test_add_type_doc() -> anyhow::Result<()> {
         .arg("add")
         .arg("-t")
         .arg("doc")
+        .arg("--root")
         .arg("manual.md")
         .arg("doc content");
 
@@ -390,12 +610,13 @@ fn test_add_force_overwrite() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // 1. Create file
+    // 1. Create file at root
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("test.txt")
         .arg("v1");
     cmd.assert().success();
@@ -406,6 +627,7 @@ fn test_add_force_overwrite() -> anyhow::Result<()> {
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("test.txt")
         .arg("v2");
     cmd.assert().failure().stderr(
@@ -418,6 +640,7 @@ fn test_add_force_overwrite() -> anyhow::Result<()> {
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("--force")
         .arg("test.txt")
         .arg("v2");
@@ -448,12 +671,13 @@ fn test_add_with_slashed_branch_name() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // Add a file
+    // Add a root file
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("test.md")
         .arg("content");
 
@@ -485,12 +709,13 @@ fn test_add_with_explicit_branch() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // Add a file to a DIFFERENT branch than current (main)
+    // Add a root file to a DIFFERENT branch than current (main)
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("--branch")
         .arg("feature/other")
         .arg("other.md")
@@ -525,12 +750,13 @@ fn test_add_with_explicit_branch_short() -> anyhow::Result<()> {
         .arg("init");
     cmd.assert().success();
 
-    // Add a file using short flag -b
+    // Add a root file using short flag -b
     let mut cmd = Command::cargo_bin("mem")?;
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--root")
         .arg("-b")
         .arg("short-b")
         .arg("short.md")

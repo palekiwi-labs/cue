@@ -1,20 +1,10 @@
-use clap::{Parser, Subcommand, ValueEnum};
+use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
-}
-
-#[derive(ValueEnum, Clone, Copy, Debug)]
-pub enum MemType {
-    Spec,
-    Trace,
-    Tmp,
-    Ref,
-    Bin,
-    Doc,
 }
 
 #[derive(Subcommand)]
@@ -35,9 +25,12 @@ pub enum Commands {
         /// Read content from system clipboard
         #[arg(short = 'c', long = "clipboard", conflicts_with_all = &["content", "file"])]
         clipboard: bool,
-        /// Type of artifact
-        #[arg(short = 't', long = "type", value_enum, default_value = "spec")]
-        mem_type: MemType,
+        /// Type of artifact (must be in configured artifact_types)
+        #[arg(short = 't', long = "type", default_value = "spec")]
+        mem_type: String,
+        /// Save artifact at the root of the type directory, not under a <timestamp>-<hash> subdir
+        #[arg(long)]
+        root: bool,
         /// Save artifact to a specific branch instead of current
         #[arg(short = 'b', long)]
         branch: Option<String>,
@@ -55,9 +48,9 @@ pub enum Commands {
         #[arg(short = 'a', long)]
         all: bool,
         /// Filter by artifact type
-        #[arg(short = 't', long = "type", value_enum)]
-        mem_type: Option<MemType>,
-        /// Include gitignored categories (tmp, ref)
+        #[arg(short = 't', long = "type")]
+        mem_type: Option<String>,
+        /// Include ignored artifact types (e.g. tmp)
         #[arg(short = 'i', long)]
         include_gitignored: bool,
         /// Output as JSON
