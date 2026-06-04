@@ -61,8 +61,17 @@ fn main() -> anyhow::Result<()> {
             mem_type,
             include_gitignored,
             json,
+            frontmatter,
         } => {
-            commands::list::handle(&cwd, branch, all, mem_type, include_gitignored, json)?;
+            commands::list::handle(
+                &cwd,
+                branch,
+                all,
+                mem_type,
+                include_gitignored,
+                json,
+                frontmatter,
+            )?;
         }
         Commands::Log { command } => {
             commands::log::handle(&cwd, command)?;

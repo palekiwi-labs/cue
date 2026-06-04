@@ -30,16 +30,190 @@ fn test_list_empty_repo() -> anyhow::Result<()> {
     Ok(())
 }
 
+// ── Frontmatter tests ────────────────────────────────────────────────────────
+
 #[test]
-fn test_list_not_a_git_repo() -> anyhow::Result<()> {
+fn test_list_frontmatter_flag_implies_json() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
 
     let mut cmd = Command::cargo_bin("mem")?;
-    cmd.current_dir(temp.path()).arg("list");
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
 
-    cmd.assert()
-        .failure()
-        .stderr(predicates::str::contains("Not in a git repository"));
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("index.md")
+        .arg("no frontmatter here");
+    cmd.assert().success();
+
+    // --frontmatter without --json should still produce valid JSON
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--frontmatter");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    let json: serde_json::Value = serde_json::from_str(&output)?;
+    assert!(json.is_array());
+
+    Ok(())
+}
+
+#[test]
+fn test_list_frontmatter_absent_when_no_flag() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // Write file with frontmatter directly to bypass clap argument parsing of "---"
+    let artifact_path = temp.path().join(".test-mem/main/spec/index.md");
+    fs::create_dir_all(artifact_path.parent().unwrap())?;
+    fs::write(&artifact_path, "---\nstatus: active\n---\n# Hello")?;
+
+    // Without --frontmatter, the field should be absent
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--json");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    let json: serde_json::Value = serde_json::from_str(&output)?;
+    let item = &json.as_array().unwrap()[0];
+
+    assert!(item.get("frontmatter").is_none());
+
+    Ok(())
+}
+
+#[test]
+fn test_list_frontmatter_parsed_correctly() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // Write file with frontmatter directly to bypass clap argument parsing of "---"
+    let artifact_path = temp.path().join(".test-mem/main/spec/index.md");
+    fs::create_dir_all(artifact_path.parent().unwrap())?;
+    fs::write(
+        &artifact_path,
+        "---\nstatus: active\npriority: high\n---\n# Body here",
+    )?;
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--frontmatter");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    let json: serde_json::Value = serde_json::from_str(&output)?;
+    let item = &json.as_array().unwrap()[0];
+
+    let fm = item.get("frontmatter").expect("frontmatter field missing");
+    assert_eq!(fm["status"], "active");
+    assert_eq!(fm["priority"], "high");
+
+    Ok(())
+}
+
+#[test]
+fn test_list_frontmatter_absent_for_file_without_frontmatter() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let content = "# No frontmatter in this file";
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("index.md")
+        .arg(content);
+    cmd.assert().success();
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--frontmatter");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    let json: serde_json::Value = serde_json::from_str(&output)?;
+    let item = &json.as_array().unwrap()[0];
+
+    // File has no frontmatter — field should be absent
+    assert!(item.get("frontmatter").is_none());
+
+    Ok(())
+}
+
+#[test]
+fn test_list_frontmatter_malformed_unclosed_fence() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // Opening fence but no closing fence — write directly to avoid clap parsing "---"
+    let artifact_path = temp.path().join(".test-mem/main/spec/index.md");
+    fs::create_dir_all(artifact_path.parent().unwrap())?;
+    fs::write(
+        &artifact_path,
+        "---\nstatus: active\n# Body starts here without closing fence",
+    )?;
+
+    let mut cmd = Command::cargo_bin("mem")?;
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--frontmatter");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    let json: serde_json::Value = serde_json::from_str(&output)?;
+    // Should succeed (not crash), with frontmatter absent
+    assert!(json.is_array());
+    let item = &json.as_array().unwrap()[0];
+    assert!(item.get("frontmatter").is_none());
 
     Ok(())
 }
@@ -361,7 +535,7 @@ fn test_list_json_spec() -> anyhow::Result<()> {
     assert_eq!(item["name"], "index.md");
     assert_eq!(item["category"], "spec");
     assert_eq!(item["branch"], "main"); // default git branch in setup_git_repo is main
-                                        // Root artifact: no hash or timestamp
+    // Root artifact: no hash or timestamp
     assert!(item["hash"].is_null());
     assert!(item["commit_hash"].is_null());
     assert_eq!(item["commit_timestamp"], 0);

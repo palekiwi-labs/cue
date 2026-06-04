@@ -3,7 +3,10 @@ use crate::git;
 use anyhow::{Context, Result};
 use serde::Serialize;
 use std::fs;
+use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+
+const FRONTMATTER_MAX_LINES: usize = 64;
 
 #[derive(Serialize)]
 struct MemFile {
@@ -14,6 +17,8 @@ struct MemFile {
     hash: Option<String>,
     commit_hash: Option<String>,
     commit_timestamp: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    frontmatter: Option<serde_json::Value>,
 }
 
 pub fn handle(
@@ -23,7 +28,9 @@ pub fn handle(
     mem_type: Option<String>,
     include_gitignored: bool,
     json: bool,
+    frontmatter: bool,
 ) -> Result<()> {
+    let json = json || frontmatter;
     // 1. Verify git repo
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
 
@@ -67,7 +74,14 @@ pub fn handle(
         }
     } else {
         let mem_files: Vec<MemFile> = valid_paths
-            .filter_map(|path| to_mem_file(&path, &mem_path, &root))
+            .filter_map(|path| {
+                let mf = to_mem_file(&path, &mem_path, &root)?;
+                Some(if frontmatter {
+                    enrich_frontmatter(mf, &path)
+                } else {
+                    mf
+                })
+            })
             .collect();
         println!("{}", serde_json::to_string_pretty(&mem_files)?);
     }
@@ -162,6 +176,7 @@ fn to_mem_file(path: &Path, mem_path: &Path, root: &Path) -> Option<MemFile> {
         hash: None,
         commit_hash: None,
         commit_timestamp: 0,
+        frontmatter: None,
     };
 
     // Detect pinned artifacts structurally: any category with depth >= 4
@@ -197,6 +212,40 @@ fn to_mem_file(path: &Path, mem_path: &Path, root: &Path) -> Option<MemFile> {
     }
 
     Some(mem_file)
+}
+
+fn extract_frontmatter_yaml(path: &Path) -> Option<String> {
+    let file = fs::File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+    let mut line = String::new();
+
+    // First line must be exactly "---"
+    reader.read_line(&mut line).ok()?;
+    if line.trim_end() != "---" {
+        return None;
+    }
+
+    let mut yaml = String::new();
+    for _ in 0..FRONTMATTER_MAX_LINES {
+        line.clear();
+        let n = reader.read_line(&mut line).ok()?;
+        if n == 0 {
+            return None; // EOF before closing fence — malformed
+        }
+        if line.trim_end() == "---" {
+            return Some(yaml);
+        }
+        yaml.push_str(&line);
+    }
+
+    None // Exceeded line budget — treat as malformed
+}
+
+fn enrich_frontmatter(mut mem_file: MemFile, path: &Path) -> MemFile {
+    if let Some(yaml_str) = extract_frontmatter_yaml(path) {
+        mem_file.frontmatter = serde_yaml::from_str::<serde_json::Value>(&yaml_str).ok();
+    }
+    mem_file
 }
 
 fn collect_files(dir: &Path) -> Result<Vec<PathBuf>> {

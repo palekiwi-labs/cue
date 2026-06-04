@@ -56,6 +56,9 @@ pub enum Commands {
         /// Output as JSON
         #[arg(short = 'j', long)]
         json: bool,
+        /// Parse and include YAML frontmatter in output (implies --json)
+        #[arg(long)]
+        frontmatter: bool,
     },
     /// Manage project log (add entries)
     Log {
