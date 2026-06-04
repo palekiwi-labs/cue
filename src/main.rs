@@ -70,6 +70,9 @@ fn main() -> anyhow::Result<()> {
         Commands::Context { command } => {
             commands::context::handle(&cwd, command)?;
         }
+        Commands::Config { command } => {
+            commands::config::handle(&cwd, command)?;
+        }
     }
 
     Ok(())
