@@ -1,3 +1,4 @@
+use crate::commands::list::Filter;
 use clap::{Parser, Subcommand};
 
 #[derive(Parser)]
@@ -59,6 +60,12 @@ pub enum Commands {
         /// Parse and include YAML frontmatter in output (implies --json)
         #[arg(long)]
         frontmatter: bool,
+        /// Filter by frontmatter field (repeatable, ANDed).
+        /// Syntax: KEY[OP]VALUE where OP is =, !=, or ~= (substring).
+        /// Dot notation for nested keys: meta.status=done
+        /// Examples: --filter "status!=done"  --filter "priority=high"
+        #[arg(long = "filter", value_name = "EXPR")]
+        filters: Vec<Filter>,
     },
     /// Manage project log (add entries)
     Log {

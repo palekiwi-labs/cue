@@ -62,15 +62,19 @@ fn main() -> anyhow::Result<()> {
             include_gitignored,
             json,
             frontmatter,
+            filters,
         } => {
             commands::list::handle(
                 &cwd,
-                branch,
-                all,
-                mem_type,
-                include_gitignored,
-                json,
-                frontmatter,
+                commands::list::ListOptions {
+                    branch_name: branch,
+                    all,
+                    mem_type,
+                    include_gitignored,
+                    json,
+                    frontmatter,
+                    filters,
+                },
             )?;
         }
         Commands::Log { command } => {

@@ -889,6 +889,310 @@ fn test_list_all_with_slashed_branch() -> anyhow::Result<()> {
     Ok(())
 }
 
+// ── Filter tests ─────────────────────────────────────────────────────────────
+
+/// Helper: init a mem repo with two todo files, one `status: todo` and one `status: done`.
+fn setup_filter_repo(temp: &tempfile::TempDir) -> anyhow::Result<()> {
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // Write artifacts directly to avoid clap parsing "---"
+    let todo_dir = temp.path().join(".test-mem/main/todo");
+    fs::create_dir_all(&todo_dir)?;
+    fs::write(
+        todo_dir.join("pending.md"),
+        "---\nstatus: todo\n---\n# Pending",
+    )?;
+    fs::write(
+        todo_dir.join("finished.md"),
+        "---\nstatus: done\n---\n# Finished",
+    )?;
+
+    Ok(())
+}
+
+#[test]
+fn test_list_filter_equality() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    setup_filter_repo(&temp)?;
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--filter")
+        .arg("status=todo");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    assert!(output.contains("pending.md"), "should include pending.md");
+    assert!(
+        !output.contains("finished.md"),
+        "should exclude finished.md"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_list_filter_inequality() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    setup_filter_repo(&temp)?;
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--filter")
+        .arg("status!=done");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    assert!(output.contains("pending.md"), "should include pending.md");
+    assert!(
+        !output.contains("finished.md"),
+        "should exclude finished.md"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_list_filter_contains() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let todo_dir = temp.path().join(".test-mem/main/spec");
+    fs::create_dir_all(&todo_dir)?;
+    fs::write(
+        todo_dir.join("meeting.md"),
+        "---\ntitle: Weekly Meeting Notes\n---\n# Body",
+    )?;
+    fs::write(
+        todo_dir.join("review.md"),
+        "---\ntitle: Code Review\n---\n# Body",
+    )?;
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--filter")
+        .arg("title~=Meeting");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    assert!(output.contains("meeting.md"), "should include meeting.md");
+    assert!(!output.contains("review.md"), "should exclude review.md");
+
+    Ok(())
+}
+
+#[test]
+fn test_list_filter_multiple_anded() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let todo_dir = temp.path().join(".test-mem/main/todo");
+    fs::create_dir_all(&todo_dir)?;
+    fs::write(
+        todo_dir.join("a.md"),
+        "---\nstatus: todo\npriority: high\n---",
+    )?;
+    fs::write(
+        todo_dir.join("b.md"),
+        "---\nstatus: todo\npriority: low\n---",
+    )?;
+    fs::write(
+        todo_dir.join("c.md"),
+        "---\nstatus: done\npriority: high\n---",
+    )?;
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--filter")
+        .arg("status=todo")
+        .arg("--filter")
+        .arg("priority=high");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    assert!(output.contains("a.md"), "a.md should match both filters");
+    assert!(!output.contains("b.md"), "b.md fails priority=high");
+    assert!(!output.contains("c.md"), "c.md fails status=todo");
+
+    Ok(())
+}
+
+#[test]
+fn test_list_filter_missing_frontmatter_excluded_by_eq() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    setup_filter_repo(&temp)?;
+
+    // Add a file with no frontmatter at all
+    let spec_dir = temp.path().join(".test-mem/main/spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(spec_dir.join("plain.md"), "# No frontmatter here")?;
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--filter")
+        .arg("status=todo");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    assert!(
+        !output.contains("plain.md"),
+        "plain.md has no frontmatter, should be excluded by ="
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_list_filter_missing_frontmatter_included_by_neq() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let spec_dir = temp.path().join(".test-mem/main/spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(spec_dir.join("plain.md"), "# No frontmatter here")?;
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--filter")
+        .arg("status!=done");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    assert!(
+        output.contains("plain.md"),
+        "plain.md has no status key, should pass !="
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_list_filter_with_json_output() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    setup_filter_repo(&temp)?;
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--json")
+        .arg("--filter")
+        .arg("status=todo");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    let json: serde_json::Value = serde_json::from_str(&output)?;
+    let arr = json.as_array().unwrap();
+
+    assert_eq!(arr.len(), 1, "only one item should match status=todo");
+    assert!(arr[0]["path"].as_str().unwrap().contains("pending.md"));
+    // frontmatter field not in output unless --frontmatter passed
+    assert!(arr[0].get("frontmatter").is_none());
+
+    Ok(())
+}
+
+#[test]
+fn test_list_filter_with_frontmatter_output() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    setup_filter_repo(&temp)?;
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--frontmatter")
+        .arg("--filter")
+        .arg("status!=done");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    let json: serde_json::Value = serde_json::from_str(&output)?;
+    let arr = json.as_array().unwrap();
+
+    assert_eq!(arr.len(), 1);
+    assert!(arr[0]["path"].as_str().unwrap().contains("pending.md"));
+    // --frontmatter was passed so field should appear
+    assert_eq!(arr[0]["frontmatter"]["status"], "todo");
+
+    Ok(())
+}
+
+#[test]
+fn test_list_filter_nested_key() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let spec_dir = temp.path().join(".test-mem/main/spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(
+        spec_dir.join("high.md"),
+        "---\nmeta:\n  priority: high\n---",
+    )?;
+    fs::write(spec_dir.join("low.md"), "---\nmeta:\n  priority: low\n---")?;
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--filter")
+        .arg("meta.priority=high");
+
+    let output = String::from_utf8(cmd.assert().success().get_output().stdout.clone())?;
+    assert!(output.contains("high.md"));
+    assert!(!output.contains("low.md"));
+
+    Ok(())
+}
+
 #[test]
 fn test_list_not_initialized() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
