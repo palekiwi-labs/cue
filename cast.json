@@ -1,6 +1,6 @@
 {
   "use_flake": true,
-  "pids_limit": 512,
+  "pids_limit": 1024,
   "extra_data_volumes": {
     "cargo": {
       "source": "~/.cargo/",
