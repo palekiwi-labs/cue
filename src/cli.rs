@@ -69,11 +69,17 @@ pub enum Commands {
         /// Parse and include YAML frontmatter in output (implies --json)
         #[arg(long)]
         frontmatter: bool,
-        /// Filter by frontmatter field (repeatable, ANDed).
-        /// Syntax: KEY[OP]VALUE where OP is =, !=, or ~= (substring).
-        /// Dot notation for nested keys: meta.status=done
-        /// Examples: --filter "status!=done"  --filter "priority=high"
-        #[arg(long = "filter", value_name = "EXPR")]
+        /// Filter by frontmatter field (repeatable, ANDed)
+        ///
+        /// Syntax: KEY[OP]VALUE where OP is =, !=, or ~= (substring match).
+        /// Dot notation is supported for nested keys: meta.status=done
+        ///
+        /// Examples:
+        ///   --filter status=todo
+        ///   --filter "status!=done"
+        ///   --filter "title~=report"
+        ///   --filter status=active --filter priority=high
+        #[arg(long = "filter", value_name = "EXPR", verbatim_doc_comment)]
         filters: Vec<Filter>,
     },
     /// Manage project log (add entries)
