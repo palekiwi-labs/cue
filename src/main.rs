@@ -23,6 +23,7 @@ fn main() -> anyhow::Result<()> {
             content,
             file,
             clipboard,
+            frontmatter,
             mem_type,
             root,
             force,
@@ -47,12 +48,15 @@ fn main() -> anyhow::Result<()> {
 
             commands::add::handle(
                 &cwd,
-                &filename,
-                resolved_content,
-                mem_type,
-                root,
-                force,
-                branch,
+                commands::add::AddOptions {
+                    filename,
+                    content: resolved_content,
+                    frontmatter,
+                    mem_type,
+                    save_at_root: root,
+                    force,
+                    branch_name: branch,
+                },
             )?;
         }
         Commands::List {

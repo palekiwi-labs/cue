@@ -772,6 +772,204 @@ fn test_add_with_explicit_branch_short() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_add_with_single_frontmatter_field() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body text")
+        .arg("-f")
+        .arg("status=todo");
+    cmd.assert().success();
+
+    let file_path = temp.path().join(".test-mem/main/spec/note.md");
+    let content = fs::read_to_string(file_path)?;
+    assert!(content.starts_with("---\n"), "File should start with ---");
+    assert!(
+        content.contains("status: todo"),
+        "File should contain 'status: todo'"
+    );
+    assert!(
+        content.contains("body text"),
+        "File should contain the body"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_with_multiple_frontmatter_fields() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body text")
+        .arg("-f")
+        .arg("title=Hello")
+        .arg("-f")
+        .arg("priority=high");
+    cmd.assert().success();
+
+    let file_path = temp.path().join(".test-mem/main/spec/note.md");
+    let content = fs::read_to_string(file_path)?;
+    assert!(content.starts_with("---\n"), "File should start with ---");
+    assert!(
+        content.contains("title: Hello"),
+        "File should contain 'title: Hello'"
+    );
+    assert!(
+        content.contains("priority: high"),
+        "File should contain 'priority: high'"
+    );
+    assert!(
+        content.contains("body text"),
+        "File should contain the body"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_type_coercion() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("")
+        .arg("-f")
+        .arg("done=true")
+        .arg("-f")
+        .arg("count=3");
+    cmd.assert().success();
+
+    let file_path = temp.path().join(".test-mem/main/spec/note.md");
+    let content = fs::read_to_string(file_path)?;
+    // Booleans and integers must not be quoted in YAML output
+    assert!(
+        content.contains("done: true"),
+        "bool should be unquoted: got:\n{}",
+        content
+    );
+    assert!(
+        content.contains("count: 3"),
+        "integer should be unquoted: got:\n{}",
+        content
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_roundtrip_with_list() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // Create artifact with frontmatter
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("content")
+        .arg("-f")
+        .arg("status=active");
+    cmd.assert().success();
+
+    // List with --frontmatter --json and check the parsed field
+    let output = helpers::mem_cmd()
+        .current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--frontmatter")
+        .arg("--json")
+        .output()?;
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let artifacts = json.as_array().expect("Expected JSON array");
+    let note = artifacts
+        .iter()
+        .find(|a| a["name"].as_str() == Some("note.md"))
+        .expect("note.md not found in list output");
+
+    assert_eq!(
+        note["frontmatter"]["status"].as_str(),
+        Some("active"),
+        "frontmatter.status should be 'active'"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_invalid_format_rejected() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .arg("add")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("no-equals-sign");
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("Expected key=value"));
+
+    Ok(())
+}
+
+#[test]
 fn test_add_rejects_path_traversal() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());

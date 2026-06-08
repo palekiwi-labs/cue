@@ -1,18 +1,30 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
+use serde_yaml;
 use std::fs;
 use std::path::{Component, Path};
 
-pub fn handle(
-    cwd: &Path,
-    filename: &str,
-    content: Vec<u8>,
-    mem_type: String,
-    save_at_root: bool,
-    force: bool,
-    branch_name: Option<String>,
-) -> Result<()> {
+pub struct AddOptions {
+    pub filename: String,
+    pub content: Vec<u8>,
+    pub frontmatter: Vec<(String, String)>,
+    pub mem_type: String,
+    pub save_at_root: bool,
+    pub force: bool,
+    pub branch_name: Option<String>,
+}
+
+pub fn handle(cwd: &Path, opts: AddOptions) -> Result<()> {
+    let AddOptions {
+        filename,
+        content,
+        frontmatter,
+        mem_type,
+        save_at_root,
+        force,
+        branch_name,
+    } = opts;
     // 1. Verify git repo
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
 
@@ -61,9 +73,9 @@ pub fn handle(
     };
 
     // 7. Validate filename for path traversal
-    validate_filename(filename)?;
+    validate_filename(&filename)?;
 
-    let file_path = dest_dir.join(filename);
+    let file_path = dest_dir.join(&filename);
 
     // 8. Check if exists
     if file_path.exists() && !force {
@@ -79,16 +91,40 @@ pub fn handle(
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
     }
 
-    // 10. Write file
-    fs::write(&file_path, content)
+    // 10. Assemble final content (prepend frontmatter if provided)
+    let final_content = if frontmatter.is_empty() {
+        content
+    } else {
+        let mut fm = build_frontmatter_bytes(&frontmatter)?;
+        fm.extend_from_slice(&content);
+        fm
+    };
+
+    // 11. Write file
+    fs::write(&file_path, final_content)
         .with_context(|| format!("Failed to write to {}", file_path.display()))?;
 
-    // 11. Print confirmation
+    // 12. Print confirmation
     let rel_path = file_path.strip_prefix(&root).unwrap_or(&file_path);
     eprintln!("✓ Created");
     println!("{}", rel_path.to_string_lossy());
 
     Ok(())
+}
+
+fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
+    let mut map = serde_yaml::Mapping::new();
+    for (k, v) in fields {
+        let yaml_val: serde_yaml::Value =
+            serde_yaml::from_str(v).unwrap_or_else(|_| serde_yaml::Value::String(v.clone()));
+        map.insert(serde_yaml::Value::String(k.clone()), yaml_val);
+    }
+    let yaml_str =
+        serde_yaml::to_string(&map).context("Failed to serialize frontmatter to YAML")?;
+    let mut out = b"---\n".to_vec();
+    out.extend_from_slice(yaml_str.as_bytes());
+    out.extend_from_slice(b"---\n");
+    Ok(out)
 }
 
 fn validate_filename(filename: &str) -> Result<()> {

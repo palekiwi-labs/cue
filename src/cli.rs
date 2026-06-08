@@ -1,6 +1,12 @@
 use crate::commands::list::Filter;
 use clap::{Parser, Subcommand};
 
+fn parse_frontmatter_field(s: &str) -> Result<(String, String), String> {
+    s.split_once('=')
+        .map(|(k, v)| (k.to_string(), v.to_string()))
+        .ok_or_else(|| format!("Expected key=value, got '{}'", s))
+}
+
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
@@ -21,11 +27,14 @@ pub enum Commands {
         #[arg(conflicts_with_all = &["file", "clipboard"])]
         content: Option<String>,
         /// Read content from a file (recommended for AI agents to avoid escaping)
-        #[arg(short = 'f', long = "file", conflicts_with_all = &["content", "clipboard"])]
+        #[arg(long = "file", conflicts_with_all = &["content", "clipboard"])]
         file: Option<String>,
         /// Read content from system clipboard
         #[arg(short = 'c', long = "clipboard", conflicts_with_all = &["content", "file"])]
         clipboard: bool,
+        /// Frontmatter fields to prepend to the artifact (repeatable, KEY=VALUE format)
+        #[arg(short = 'f', long = "frontmatter", value_name = "KEY=VALUE", value_parser = parse_frontmatter_field)]
+        frontmatter: Vec<(String, String)>,
         /// Type of artifact (must be in configured artifact_types)
         #[arg(short = 't', long = "type", default_value = "spec")]
         mem_type: String,
