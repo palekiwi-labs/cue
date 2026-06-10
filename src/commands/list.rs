@@ -85,16 +85,17 @@ fn evaluate_filter(filter: &Filter, fm: &serde_json::Value) -> bool {
     }
 }
 
-/// Returns `true` if the file at `path` satisfies every filter (AND semantics).
-/// Files without frontmatter will fail any `=` / `~=` filter and pass any `!=` filter.
-fn matches_filters(path: &Path, filters: &[Filter]) -> bool {
-    if filters.is_empty() {
-        return true;
-    }
-    let fm: serde_json::Value = extract_frontmatter_yaml(path)
+/// Parse frontmatter from `path` into a JSON value, or `Null` if absent/malformed.
+fn parse_frontmatter(path: &Path) -> serde_json::Value {
+    extract_frontmatter_yaml(path)
         .and_then(|yaml| serde_yaml::from_str(&yaml).ok())
-        .unwrap_or(serde_json::Value::Null);
-    filters.iter().all(|f| evaluate_filter(f, &fm))
+        .unwrap_or(serde_json::Value::Null)
+}
+
+/// Returns `true` if `fm` satisfies every filter (AND semantics).
+/// `Null` (no frontmatter) will fail any `=` / `~=` filter and pass any `!=` filter.
+fn apply_filters(fm: &serde_json::Value, filters: &[Filter]) -> bool {
+    filters.iter().all(|f| evaluate_filter(f, fm))
 }
 
 #[derive(Serialize)]
@@ -132,6 +133,9 @@ pub fn handle(cwd: &Path, opts: ListOptions) -> Result<()> {
     } = opts;
 
     let json_output = json || frontmatter;
+    // Parse frontmatter once when either filtering or outputting it requires it.
+    let need_frontmatter = frontmatter || !filters.is_empty();
+
     // 1. Verify git repo
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
 
@@ -167,24 +171,41 @@ pub fn handle(cwd: &Path, opts: ListOptions) -> Result<()> {
         )
     });
 
-    // 8. Filter by frontmatter (reads files only when filters are present)
-    let filtered_paths = valid_paths.filter(|path| matches_filters(path, &filters));
+    // 8. Parse frontmatter once (if needed), apply filters, carry value forward.
+    //    This avoids a second file read in step 9 when --frontmatter is also set.
+    let filtered: Vec<(PathBuf, Option<serde_json::Value>)> = valid_paths
+        .filter_map(|path| {
+            let fm_val = if need_frontmatter {
+                let fm = parse_frontmatter(&path);
+                if !apply_filters(&fm, &filters) {
+                    return None;
+                }
+                Some(fm)
+            } else {
+                None
+            };
+            Some((path, fm_val))
+        })
+        .collect();
 
     // 9. Process files and output
     if !json_output {
-        for path in filtered_paths {
+        for (path, _) in filtered {
             let rel_path = path.strip_prefix(&root).unwrap_or(&path);
             println!("{}", rel_path.display());
         }
     } else {
-        let mem_files: Vec<MemFile> = filtered_paths
-            .filter_map(|path| {
-                let mf = to_mem_file(&path, &mem_path, &root)?;
-                Some(if frontmatter {
-                    enrich_frontmatter(mf, &path)
-                } else {
-                    mf
-                })
+        let mem_files: Vec<MemFile> = filtered
+            .into_iter()
+            .filter_map(|(path, cached_fm)| {
+                let mut mf = to_mem_file(&path, &mem_path, &root)?;
+                if frontmatter {
+                    // Reuse already-parsed frontmatter; skip the second file read.
+                    mf.frontmatter = cached_fm.and_then(|v| {
+                        if v.is_null() { None } else { Some(v) }
+                    });
+                }
+                Some(mf)
             })
             .collect();
         println!("{}", serde_json::to_string_pretty(&mem_files)?);
@@ -343,13 +364,6 @@ fn extract_frontmatter_yaml(path: &Path) -> Option<String> {
     }
 
     None // Exceeded line budget — treat as malformed
-}
-
-fn enrich_frontmatter(mut mem_file: MemFile, path: &Path) -> MemFile {
-    if let Some(yaml_str) = extract_frontmatter_yaml(path) {
-        mem_file.frontmatter = serde_yaml::from_str::<serde_json::Value>(&yaml_str).ok();
-    }
-    mem_file
 }
 
 fn collect_files(dir: &Path) -> Result<Vec<PathBuf>> {

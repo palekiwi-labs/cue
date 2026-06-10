@@ -2,9 +2,13 @@ use crate::commands::list::Filter;
 use clap::{Parser, Subcommand};
 
 fn parse_frontmatter_field(s: &str) -> Result<(String, String), String> {
-    s.split_once('=')
-        .map(|(k, v)| (k.to_string(), v.to_string()))
-        .ok_or_else(|| format!("Expected key=value, got '{}'", s))
+    let (k, v) = s
+        .split_once('=')
+        .ok_or_else(|| format!("Expected key=value, got '{}'", s))?;
+    if k.is_empty() {
+        return Err(format!("Frontmatter key cannot be empty in '{}'", s));
+    }
+    Ok((k.to_string(), v.to_string()))
 }
 
 #[derive(Parser)]
@@ -151,7 +155,7 @@ pub enum LogCommands {
         #[arg(long)]
         open: Vec<String>,
         /// Read entry data from a JSON file
-        #[arg(short = 'f', long, conflicts_with_all = &["title", "body", "found", "decided", "open"])]
+        #[arg(long, conflicts_with_all = &["title", "body", "found", "decided", "open"])]
         file: Option<String>,
     },
     /// List log entries
