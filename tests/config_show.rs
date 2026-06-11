@@ -1,6 +1,5 @@
 mod helpers;
 
-use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
@@ -16,7 +15,7 @@ fn test_config_show_json() -> anyhow::Result<()> {
         r#"{"dir_name": ".custom-mem"}"#,
     )?;
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-branch")
         .arg("config")

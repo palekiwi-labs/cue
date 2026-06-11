@@ -1,6 +1,5 @@
 mod helpers;
 
-use assert_cmd::Command;
 use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
@@ -11,7 +10,7 @@ fn test_add_from_file() -> anyhow::Result<()> {
     helpers::setup_git_repo(temp.path());
 
     // Initialize mem
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -23,7 +22,7 @@ fn test_add_from_file() -> anyhow::Result<()> {
     fs::write(&source_file, "content from file")?;
 
     // Add from file with --root (stable anchor document)
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -51,7 +50,7 @@ fn test_add_clipboard_conflicts() -> anyhow::Result<()> {
     helpers::setup_git_repo(temp.path());
 
     // Conflict with inline content
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .arg("add")
         .arg("index.md")
@@ -62,7 +61,7 @@ fn test_add_clipboard_conflicts() -> anyhow::Result<()> {
         .stderr(predicate::str::contains("cannot be used with"));
 
     // Conflict with --file
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .arg("add")
         .arg("index.md")
@@ -81,7 +80,7 @@ fn test_add_clipboard_unsupported_format() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .arg("add")
         .arg("file.webp")
@@ -99,7 +98,7 @@ fn test_add_conflict_file_and_inline() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .arg("add")
         .arg("index.md")
@@ -121,7 +120,7 @@ fn test_add_spec_default() -> anyhow::Result<()> {
     helpers::setup_git_repo(temp.path());
 
     // Initialize mem
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -129,7 +128,7 @@ fn test_add_spec_default() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // Add a root spec document (stable anchor)
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -156,7 +155,7 @@ fn test_add_no_content_empty_file() -> anyhow::Result<()> {
     helpers::setup_git_repo(temp.path());
 
     // Initialize mem
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -164,7 +163,7 @@ fn test_add_no_content_empty_file() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // Add a file without content using --root
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -191,7 +190,7 @@ fn test_add_type_trace_nested_by_default() -> anyhow::Result<()> {
     helpers::setup_git_repo(temp.path());
 
     // Initialize mem
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -199,7 +198,7 @@ fn test_add_type_trace_nested_by_default() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // Add a trace file without --root: saved under trace/<ts>-<hash>/ by default
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -241,7 +240,7 @@ fn test_add_type_trace_with_root() -> anyhow::Result<()> {
     helpers::setup_git_repo(temp.path());
 
     // Initialize mem
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -249,7 +248,7 @@ fn test_add_type_trace_with_root() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // Add a trace file WITH --root: saved flat at trace/<filename>
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -277,7 +276,7 @@ fn test_add_nested_by_default_for_any_type() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -285,7 +284,7 @@ fn test_add_nested_by_default_for_any_type() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // spec type: default saves nested under ts-hash
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -327,14 +326,14 @@ fn test_add_unknown_type_rejected() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("init");
     cmd.assert().success();
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -365,7 +364,7 @@ fn test_add_custom_type_via_config() -> anyhow::Result<()> {
         r#"{"artifact_types": ["spec", "trace", "tmp", "custom"]}"#,
     )?;
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -373,7 +372,7 @@ fn test_add_custom_type_via_config() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // --root saves flat at custom/<filename>
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -400,7 +399,7 @@ fn test_add_type_tmp_nested_by_default() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -408,7 +407,7 @@ fn test_add_type_tmp_nested_by_default() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // tmp without --root saves nested by default
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -448,7 +447,7 @@ fn test_add_type_tmp_with_root() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -456,7 +455,7 @@ fn test_add_type_tmp_with_root() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // tmp with --root saves flat
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -489,14 +488,14 @@ fn test_add_type_ref() -> anyhow::Result<()> {
         r#"{"artifact_types": ["spec", "trace", "tmp", "ref"]}"#,
     )?;
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("init");
     cmd.assert().success();
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -529,14 +528,14 @@ fn test_add_type_bin() -> anyhow::Result<()> {
         r#"{"artifact_types": ["spec", "trace", "tmp", "bin"]}"#,
     )?;
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("init");
     cmd.assert().success();
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -569,14 +568,14 @@ fn test_add_type_doc() -> anyhow::Result<()> {
         r#"{"artifact_types": ["spec", "trace", "tmp", "doc"]}"#,
     )?;
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
         .arg("init");
     cmd.assert().success();
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -603,7 +602,7 @@ fn test_add_force_overwrite() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -611,7 +610,7 @@ fn test_add_force_overwrite() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // 1. Create file at root
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -622,7 +621,7 @@ fn test_add_force_overwrite() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // 2. Try overwrite without force
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -635,7 +634,7 @@ fn test_add_force_overwrite() -> anyhow::Result<()> {
     );
 
     // 3. Overwrite with force
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -664,7 +663,7 @@ fn test_add_with_slashed_branch_name() -> anyhow::Result<()> {
         .output()?;
 
     // Initialize mem
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -672,7 +671,7 @@ fn test_add_with_slashed_branch_name() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // Add a root file
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -702,7 +701,7 @@ fn test_add_with_explicit_branch() -> anyhow::Result<()> {
     helpers::setup_git_repo(temp.path());
 
     // Initialize mem
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -710,7 +709,7 @@ fn test_add_with_explicit_branch() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // Add a root file to a DIFFERENT branch than current (main)
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -743,7 +742,7 @@ fn test_add_with_explicit_branch_short() -> anyhow::Result<()> {
     helpers::setup_git_repo(temp.path());
 
     // Initialize mem
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -751,7 +750,7 @@ fn test_add_with_explicit_branch_short() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // Add a root file using short flag -b
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -773,11 +772,209 @@ fn test_add_with_explicit_branch_short() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_add_with_single_frontmatter_field() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body text")
+        .arg("-f")
+        .arg("status=todo");
+    cmd.assert().success();
+
+    let file_path = temp.path().join(".test-mem/main/spec/note.md");
+    let content = fs::read_to_string(file_path)?;
+    assert!(content.starts_with("---\n"), "File should start with ---");
+    assert!(
+        content.contains("status: todo"),
+        "File should contain 'status: todo'"
+    );
+    assert!(
+        content.contains("body text"),
+        "File should contain the body"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_with_multiple_frontmatter_fields() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body text")
+        .arg("-f")
+        .arg("title=Hello")
+        .arg("-f")
+        .arg("priority=high");
+    cmd.assert().success();
+
+    let file_path = temp.path().join(".test-mem/main/spec/note.md");
+    let content = fs::read_to_string(file_path)?;
+    assert!(content.starts_with("---\n"), "File should start with ---");
+    assert!(
+        content.contains("title: Hello"),
+        "File should contain 'title: Hello'"
+    );
+    assert!(
+        content.contains("priority: high"),
+        "File should contain 'priority: high'"
+    );
+    assert!(
+        content.contains("body text"),
+        "File should contain the body"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_type_coercion() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("")
+        .arg("-f")
+        .arg("done=true")
+        .arg("-f")
+        .arg("count=3");
+    cmd.assert().success();
+
+    let file_path = temp.path().join(".test-mem/main/spec/note.md");
+    let content = fs::read_to_string(file_path)?;
+    // Booleans and integers must not be quoted in YAML output
+    assert!(
+        content.contains("done: true"),
+        "bool should be unquoted: got:\n{}",
+        content
+    );
+    assert!(
+        content.contains("count: 3"),
+        "integer should be unquoted: got:\n{}",
+        content
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_roundtrip_with_list() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("init");
+    cmd.assert().success();
+
+    // Create artifact with frontmatter
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("content")
+        .arg("-f")
+        .arg("status=active");
+    cmd.assert().success();
+
+    // List with --frontmatter --json and check the parsed field
+    let output = helpers::mem_cmd()
+        .current_dir(temp.path())
+        .env("MEM_BRANCH_NAME", "test-mem")
+        .env("MEM_DIR_NAME", ".test-mem")
+        .arg("list")
+        .arg("--frontmatter")
+        .arg("--json")
+        .output()?;
+    assert!(output.status.success());
+
+    let json: serde_json::Value = serde_json::from_slice(&output.stdout)?;
+    let artifacts = json.as_array().expect("Expected JSON array");
+    let note = artifacts
+        .iter()
+        .find(|a| a["name"].as_str() == Some("note.md"))
+        .expect("note.md not found in list output");
+
+    assert_eq!(
+        note["frontmatter"]["status"].as_str(),
+        Some("active"),
+        "frontmatter.status should be 'active'"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_invalid_format_rejected() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    let mut cmd = helpers::mem_cmd();
+    cmd.current_dir(temp.path())
+        .arg("add")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("no-equals-sign");
+    cmd.assert()
+        .failure()
+        .stderr(predicate::str::contains("Expected key=value"));
+
+    Ok(())
+}
+
+#[test]
 fn test_add_rejects_path_traversal() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -785,7 +982,7 @@ fn test_add_rejects_path_traversal() -> anyhow::Result<()> {
     cmd.assert().success();
 
     // Absolute path
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")
@@ -797,7 +994,7 @@ fn test_add_rejects_path_traversal() -> anyhow::Result<()> {
         .stderr(predicate::str::contains("absolute paths are not allowed"));
 
     // Parent dir
-    let mut cmd = Command::cargo_bin("mem")?;
+    let mut cmd = helpers::mem_cmd();
     cmd.current_dir(temp.path())
         .env("MEM_BRANCH_NAME", "test-mem")
         .env("MEM_DIR_NAME", ".test-mem")

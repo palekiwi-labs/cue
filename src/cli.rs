@@ -1,4 +1,15 @@
+use crate::commands::list::Filter;
 use clap::{Parser, Subcommand};
+
+fn parse_frontmatter_field(s: &str) -> Result<(String, String), String> {
+    let (k, v) = s
+        .split_once('=')
+        .ok_or_else(|| format!("Expected key=value, got '{}'", s))?;
+    if k.is_empty() {
+        return Err(format!("Frontmatter key cannot be empty in '{}'", s));
+    }
+    Ok((k.to_string(), v.to_string()))
+}
 
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
@@ -20,11 +31,14 @@ pub enum Commands {
         #[arg(conflicts_with_all = &["file", "clipboard"])]
         content: Option<String>,
         /// Read content from a file (recommended for AI agents to avoid escaping)
-        #[arg(short = 'f', long = "file", conflicts_with_all = &["content", "clipboard"])]
+        #[arg(long = "file", conflicts_with_all = &["content", "clipboard"])]
         file: Option<String>,
         /// Read content from system clipboard
         #[arg(short = 'c', long = "clipboard", conflicts_with_all = &["content", "file"])]
         clipboard: bool,
+        /// Frontmatter fields to prepend to the artifact (repeatable, KEY=VALUE format)
+        #[arg(short = 'f', long = "frontmatter", value_name = "KEY=VALUE", value_parser = parse_frontmatter_field)]
+        frontmatter: Vec<(String, String)>,
         /// Type of artifact (must be in configured artifact_types)
         #[arg(short = 't', long = "type", default_value = "spec")]
         mem_type: String,
@@ -56,6 +70,21 @@ pub enum Commands {
         /// Output as JSON
         #[arg(short = 'j', long)]
         json: bool,
+        /// Parse and include YAML frontmatter in output (implies --json)
+        #[arg(long)]
+        frontmatter: bool,
+        /// Filter by frontmatter field (repeatable, ANDed)
+        ///
+        /// Syntax: KEY[OP]VALUE where OP is =, !=, or ~= (substring match).
+        /// Dot notation is supported for nested keys: meta.status=done
+        ///
+        /// Examples:
+        ///   --filter status=todo
+        ///   --filter "status!=done"
+        ///   --filter "title~=report"
+        ///   --filter status=active --filter priority=high
+        #[arg(long = "filter", value_name = "EXPR", verbatim_doc_comment)]
+        filters: Vec<Filter>,
     },
     /// Manage project log (add entries)
     Log {
@@ -126,7 +155,7 @@ pub enum LogCommands {
         #[arg(long)]
         open: Vec<String>,
         /// Read entry data from a JSON file
-        #[arg(short = 'f', long, conflicts_with_all = &["title", "body", "found", "decided", "open"])]
+        #[arg(long, conflicts_with_all = &["title", "body", "found", "decided", "open"])]
         file: Option<String>,
     },
     /// List log entries

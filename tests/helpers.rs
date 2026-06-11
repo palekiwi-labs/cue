@@ -42,6 +42,19 @@ impl TestEnv {
     }
 }
 
+/// Returns a `mem` command fully isolated from the host environment:
+/// - `MEM_CONFIG_DIR` points to the system temp dir (no global mem.json)
+/// - `MEM_ARTIFACT_TYPES` and `MEM_IGNORED_TYPES` are removed so project
+///   mem.json and compiled-in defaults remain authoritative.
+#[allow(dead_code)]
+pub fn mem_cmd() -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("mem").expect("Failed to find mem binary");
+    cmd.env("MEM_CONFIG_DIR", std::env::temp_dir())
+        .env_remove("MEM_ARTIFACT_TYPES")
+        .env_remove("MEM_IGNORED_TYPES");
+    cmd
+}
+
 pub fn setup_git_repo(dir: &Path) {
     Command::new("git")
         .args(["init", "-b", "main"])

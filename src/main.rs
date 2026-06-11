@@ -23,6 +23,7 @@ fn main() -> anyhow::Result<()> {
             content,
             file,
             clipboard,
+            frontmatter,
             mem_type,
             root,
             force,
@@ -47,12 +48,15 @@ fn main() -> anyhow::Result<()> {
 
             commands::add::handle(
                 &cwd,
-                &filename,
-                resolved_content,
-                mem_type,
-                root,
-                force,
-                branch,
+                commands::add::AddOptions {
+                    filename,
+                    content: resolved_content,
+                    frontmatter,
+                    mem_type,
+                    save_at_root: root,
+                    force,
+                    branch_name: branch,
+                },
             )?;
         }
         Commands::List {
@@ -61,8 +65,21 @@ fn main() -> anyhow::Result<()> {
             mem_type,
             include_gitignored,
             json,
+            frontmatter,
+            filters,
         } => {
-            commands::list::handle(&cwd, branch, all, mem_type, include_gitignored, json)?;
+            commands::list::handle(
+                &cwd,
+                commands::list::ListOptions {
+                    branch_name: branch,
+                    all,
+                    mem_type,
+                    include_gitignored,
+                    json,
+                    frontmatter,
+                    filters,
+                },
+            )?;
         }
         Commands::Log { command } => {
             commands::log::handle(&cwd, command)?;
