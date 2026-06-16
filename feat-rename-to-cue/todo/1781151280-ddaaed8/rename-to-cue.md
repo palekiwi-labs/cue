@@ -1,6 +1,6 @@
 ---
 title: Rename to cue
-status: open
+status: complete
 priority: 0
 ---
 
