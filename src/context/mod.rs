@@ -17,8 +17,8 @@ pub struct ResolvedContext {
     pub instructions: Option<String>,
 }
 
-pub fn context_json_path(root: &Path, branch_dir: &str) -> PathBuf {
-    root.join(".mem").join(branch_dir).join("context.json")
+pub fn context_json_path(root: &Path, branch_dir: &str, dir_name: &str) -> PathBuf {
+    root.join(dir_name).join(branch_dir).join("context.json")
 }
 
 pub fn load_context_config(path: &Path) -> anyhow::Result<ContextConfig> {
@@ -34,6 +34,7 @@ pub fn parse_artifact_path(
     raw: &str,
     current_branch_dir: &str,
     git_root: &Path,
+    dir_name: &str,
 ) -> anyhow::Result<PathBuf> {
     let (branch, rest) = if let Some(stripped) = raw.strip_prefix('@') {
         // Cross-branch reference
@@ -60,12 +61,12 @@ pub fn parse_artifact_path(
         );
     }
 
-    let full_path = git_root.join(".mem").join(branch).join(rest_path);
+    let full_path = git_root.join(dir_name).join(branch).join(rest_path);
 
     // Security check: ensure the path is within git_root
     // We use components to avoid canonicalization (which requires file to exist)
     // for just the path calculation, but for the actual check we should be careful.
-    // Actually, we can just check if it's within .mem
+    // Actually, we can just check if it's within the artifact dir
 
     Ok(full_path)
 }
@@ -74,6 +75,7 @@ pub fn resolve_profile(
     branch_dir: &str,
     profile_name: &str,
     git_root: &Path,
+    dir_name: &str,
     visited: &mut HashSet<(String, String)>,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let key = (branch_dir.to_string(), profile_name.to_string());
@@ -86,7 +88,7 @@ pub fn resolve_profile(
     }
     visited.insert(key.clone());
 
-    let config_path = context_json_path(git_root, branch_dir);
+    let config_path = context_json_path(git_root, branch_dir, dir_name);
     let config = match load_context_config(&config_path) {
         Ok(c) => c,
         Err(_) => {
@@ -123,12 +125,12 @@ pub fn resolve_profile(
             }
         };
 
-        let inc_paths = resolve_profile(&inc_branch, &inc_profile, git_root, visited)?;
+        let inc_paths = resolve_profile(&inc_branch, &inc_profile, git_root, dir_name, visited)?;
         accumulator.extend(inc_paths);
     }
 
     for art in &profile.artifacts {
-        let path = parse_artifact_path(art, branch_dir, git_root)?;
+        let path = parse_artifact_path(art, branch_dir, git_root, dir_name)?;
 
         if art.contains('*') || art.contains('?') || art.contains('[') {
             let pattern = path.to_string_lossy();
@@ -169,10 +171,17 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
     let sanitized_branch = sanitize_branch_name(&branch);
     let git_root = get_git_root(cwd)?;
     let canonical_git_root = git_root.canonicalize()?;
-    let _config = Config::load(&git_root)?;
+    let config = Config::load(&git_root)?;
+    let dir_name = &config.dir_name;
 
     let mut visited = HashSet::new();
-    let paths = resolve_profile(&sanitized_branch, profile_name, &git_root, &mut visited)?;
+    let paths = resolve_profile(
+        &sanitized_branch,
+        profile_name,
+        &git_root,
+        dir_name,
+        &mut visited,
+    )?;
 
     let mut artifacts = Vec::new();
     for path in paths {
@@ -207,7 +216,7 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
         });
     }
 
-    let context_path = context_json_path(&git_root, &sanitized_branch);
+    let context_path = context_json_path(&git_root, &sanitized_branch, dir_name);
     let context_config = load_context_config(&context_path)?;
     let profile_obj = context_config.get(profile_name).ok_or_else(|| {
         anyhow::anyhow!(
@@ -229,7 +238,8 @@ pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
     let git_root = get_git_root(cwd)?;
     let branch = get_current_branch(cwd)?;
     let sanitized_branch = sanitize_branch_name(&branch);
-    let config_path = context_json_path(&git_root, &sanitized_branch);
+    let config = Config::load(&git_root)?;
+    let config_path = context_json_path(&git_root, &sanitized_branch, &config.dir_name);
 
     if config_path.exists() && !force {
         anyhow::bail!(
@@ -238,7 +248,6 @@ pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
         );
     }
 
-    let config = Config::load(&git_root)?;
     let context_config = if !config.context.is_empty() {
         // Use template from config
         config.context.clone()
@@ -307,58 +316,58 @@ mod tests {
         assert!(config.contains_key("default"));
     }
 
+    const DIR: &str = ".cue";
+
     #[test]
     fn test_parse_artifact_path() {
         let root = Path::new("/repo");
         let current = "feat-ctx";
 
         // Current branch with ./
-        let path = parse_artifact_path("./spec/index.md", current, root).unwrap();
-        assert_eq!(path, root.join(".mem").join(current).join("spec/index.md"));
+        let path = parse_artifact_path("./spec/index.md", current, root, DIR).unwrap();
+        assert_eq!(path, root.join(DIR).join(current).join("spec/index.md"));
 
         // Current branch without prefix
-        let path = parse_artifact_path("spec/plan.md", current, root).unwrap();
-        assert_eq!(path, root.join(".mem").join(current).join("spec/plan.md"));
+        let path = parse_artifact_path("spec/plan.md", current, root, DIR).unwrap();
+        assert_eq!(path, root.join(DIR).join(current).join("spec/plan.md"));
 
         // Current branch with parent traversal (allowed now)
-        let path = parse_artifact_path("../master/spec/index.md", current, root).unwrap();
+        let path = parse_artifact_path("../master/spec/index.md", current, root, DIR).unwrap();
         assert_eq!(
             path,
-            root.join(".mem")
-                .join(current)
-                .join("../master/spec/index.md")
+            root.join(DIR).join(current).join("../master/spec/index.md")
         );
 
         // Cross branch
-        let path = parse_artifact_path("@other:spec/plan.md", current, root).unwrap();
-        assert_eq!(path, root.join(".mem").join("other").join("spec/plan.md"));
+        let path = parse_artifact_path("@other:spec/plan.md", current, root, DIR).unwrap();
+        assert_eq!(path, root.join(DIR).join("other").join("spec/plan.md"));
 
         // Cross branch with colon in branch name (This will now fail or split differently)
         // Since git doesn't allow colons, we don't need to support them.
         // But let's see how our split_once handles it.
-        let path = parse_artifact_path("@feat:context:spec/index.md", current, root).unwrap();
+        let path = parse_artifact_path("@feat:context:spec/index.md", current, root, DIR).unwrap();
         assert_eq!(
             path,
-            root.join(".mem").join("feat").join("context:spec/index.md")
+            root.join(DIR).join("feat").join("context:spec/index.md")
         );
 
         // Cross branch without path
-        let path = parse_artifact_path("@other", current, root).unwrap();
-        assert_eq!(path, root.join(".mem").join("other").join(""));
+        let path = parse_artifact_path("@other", current, root, DIR).unwrap();
+        assert_eq!(path, root.join(DIR).join("other").join(""));
 
         // Failures
-        assert!(parse_artifact_path("/absolute.md", current, root).is_err());
-        assert!(parse_artifact_path("@other:/etc/passwd", current, root).is_err());
+        assert!(parse_artifact_path("/absolute.md", current, root, DIR).is_err());
+        assert!(parse_artifact_path("@other:/etc/passwd", current, root, DIR).is_err());
 
         // Cross-branch reference with slash (now supported via sanitization)
-        let path = parse_artifact_path("@branch/with/slash:spec.md", current, root).unwrap();
+        let path = parse_artifact_path("@branch/with/slash:spec.md", current, root, DIR).unwrap();
         assert_eq!(
             path,
-            root.join(".mem").join("branch-with-slash").join("spec.md")
+            root.join(DIR).join("branch-with-slash").join("spec.md")
         );
 
         // Valid path containing ".." as part of filename
-        assert!(parse_artifact_path("./spec/my..file.md", current, root).is_ok());
+        assert!(parse_artifact_path("./spec/my..file.md", current, root, DIR).is_ok());
     }
 
     #[test]
@@ -366,9 +375,9 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
 
-        let branch_a = root.join(".mem").join("A");
-        let branch_b = root.join(".mem").join("B");
-        let branch_feat = root.join(".mem").join("feat-test");
+        let branch_a = root.join(DIR).join("A");
+        let branch_b = root.join(DIR).join("B");
+        let branch_feat = root.join(DIR).join("feat-test");
         std::fs::create_dir_all(&branch_a).unwrap();
         std::fs::create_dir_all(&branch_b).unwrap();
         std::fs::create_dir_all(&branch_feat).unwrap();
@@ -402,7 +411,7 @@ mod tests {
         std::fs::write(branch_feat.join("feat.md"), "feat").unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited).unwrap();
+        let res = resolve_profile("A", "default", root, DIR, &mut visited).unwrap();
 
         // Accumulator: [b-default, b-brief, b-default (deduped), feat]
         // Final: [b-default, b-brief, feat]
@@ -418,8 +427,8 @@ mod tests {
         let root = temp.path();
 
         // Setup Cycle: A -> B -> A
-        let branch_a = root.join(".mem").join("A");
-        let branch_b = root.join(".mem").join("B");
+        let branch_a = root.join(DIR).join("A");
+        let branch_b = root.join(DIR).join("B");
         std::fs::create_dir_all(&branch_a).unwrap();
         std::fs::create_dir_all(&branch_b).unwrap();
 
@@ -435,7 +444,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited);
+        let res = resolve_profile("A", "default", root, DIR, &mut visited);
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("Cycle detected"));
     }
@@ -446,10 +455,10 @@ mod tests {
         let root = temp.path();
 
         // Setup Diamond: A -> [B, C], B -> D, C -> D
-        let branch_a = root.join(".mem").join("A");
-        let branch_b = root.join(".mem").join("B");
-        let branch_c = root.join(".mem").join("C");
-        let branch_d = root.join(".mem").join("D");
+        let branch_a = root.join(DIR).join("A");
+        let branch_b = root.join(DIR).join("B");
+        let branch_c = root.join(DIR).join("C");
+        let branch_d = root.join(DIR).join("D");
         std::fs::create_dir_all(&branch_a).unwrap();
         std::fs::create_dir_all(&branch_b).unwrap();
         std::fs::create_dir_all(&branch_c).unwrap();
@@ -477,7 +486,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited).unwrap();
+        let res = resolve_profile("A", "default", root, DIR, &mut visited).unwrap();
 
         // Deduplication should ensure D appears once, and DFS ordering
         // Accumulator: [D, B, D, C] -> Deduplicated: [D, B, C]
@@ -492,7 +501,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
 
-        let branch_a = root.join(".mem").join("A");
+        let branch_a = root.join(DIR).join("A");
         let spec_a = branch_a.join("spec");
         std::fs::create_dir_all(&spec_a).unwrap();
 
@@ -505,7 +514,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited).unwrap();
+        let res = resolve_profile("A", "default", root, DIR, &mut visited).unwrap();
 
         assert_eq!(res.len(), 2);
         let mut paths: Vec<_> = res
@@ -521,7 +530,7 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
 
-        let branch_a = root.join(".mem").join("A");
+        let branch_a = root.join(DIR).join("A");
         let spec_a = branch_a.join("spec");
         let sub_dir = spec_a.join("notes");
         std::fs::create_dir_all(&sub_dir).unwrap();
@@ -535,7 +544,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, &mut visited).unwrap();
+        let res = resolve_profile("A", "default", root, DIR, &mut visited).unwrap();
 
         // Should include 1.md and 2.md, but NOT the 'notes' directory
         assert_eq!(res.len(), 2);

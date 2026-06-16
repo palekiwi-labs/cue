@@ -13,7 +13,7 @@ fn test_context_init_empty_by_default() -> anyhow::Result<()> {
     env.command().arg("init").assert().success();
 
     // Create some spec files (these should NOT be auto-discovered)
-    let spec_dir = env.root().join(".mem").join("main").join("spec");
+    let spec_dir = env.root().join(".cue").join("main").join("spec");
     fs::create_dir_all(&spec_dir)?;
     fs::write(spec_dir.join("index.md"), "# Index")?;
     fs::write(spec_dir.join("plan.md"), "# Plan")?;
@@ -24,10 +24,10 @@ fn test_context_init_empty_by_default() -> anyhow::Result<()> {
         .arg("init")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Created .mem/main/context.json"));
+        .stdout(predicate::str::contains("Created .cue/main/context.json"));
 
     // Verify content: artifacts should be empty even though spec files exist
-    let context_json = env.root().join(".mem").join("main").join("context.json");
+    let context_json = env.root().join(".cue").join("main").join("context.json");
     let content = fs::read_to_string(context_json)?;
     let v: serde_json::Value = serde_json::from_str(&content)?;
 
@@ -46,7 +46,7 @@ fn test_context_init_force_overwrites() -> anyhow::Result<()> {
     // Initialize mem
     env.command().arg("init").assert().success();
 
-    let context_json = env.root().join(".mem").join("main").join("context.json");
+    let context_json = env.root().join(".cue").join("main").join("context.json");
     fs::create_dir_all(context_json.parent().unwrap())?;
     fs::write(&context_json, "{}")?;
 
@@ -77,8 +77,8 @@ fn test_context_init_with_template() -> anyhow::Result<()> {
     let env = TestEnv::new();
     helpers::setup_git_repo(env.root());
 
-    // Create mem.json with context template
-    let mem_json = env.root().join("mem.json");
+    // Create cue.json with context template
+    let mem_json = env.root().join("cue.json");
     fs::write(
         &mem_json,
         r#"{
@@ -97,7 +97,7 @@ fn test_context_init_with_template() -> anyhow::Result<()> {
     env.command().arg("context").arg("init").assert().success();
 
     // Verify content matches template
-    let context_json = env.root().join(".mem").join("main").join("context.json");
+    let context_json = env.root().join(".cue").join("main").join("context.json");
     let content = fs::read_to_string(context_json)?;
     let v: serde_json::Value = serde_json::from_str(&content)?;
 

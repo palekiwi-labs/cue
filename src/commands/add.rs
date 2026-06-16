@@ -9,7 +9,7 @@ pub struct AddOptions {
     pub filename: String,
     pub content: Vec<u8>,
     pub frontmatter: Vec<(String, String)>,
-    pub mem_type: String,
+    pub cue_type: String,
     pub save_at_root: bool,
     pub force: bool,
     pub branch_name: Option<String>,
@@ -20,7 +20,7 @@ pub fn handle(cwd: &Path, opts: AddOptions) -> Result<()> {
         filename,
         content,
         frontmatter,
-        mem_type,
+        cue_type,
         save_at_root,
         force,
         branch_name,
@@ -34,20 +34,20 @@ pub fn handle(cwd: &Path, opts: AddOptions) -> Result<()> {
     // 3. Load config
     let config = Config::load(&root)?;
 
-    // 4. Check if .mem exists
-    let mem_path = root.join(&config.dir_name);
-    if !mem_path.exists() {
+    // 4. Check if .cue exists
+    let cue_path = root.join(&config.dir_name);
+    if !cue_path.exists() {
         bail!(
-            "{} directory does not exist. Run `mem init` first.",
+            "{} directory does not exist. Run `cue init` first.",
             config.dir_name
         );
     }
 
     // 5. Validate artifact type
-    if !config.artifact_types.contains(&mem_type) {
+    if !config.artifact_types.contains(&cue_type) {
         bail!(
             "Unknown artifact type '{}'. Valid types: {}",
-            mem_type,
+            cue_type,
             config.artifact_types.join(", ")
         );
     }
@@ -62,7 +62,7 @@ pub fn handle(cwd: &Path, opts: AddOptions) -> Result<()> {
     let branch_dir = branch.replace(['/', '\\'], "-");
 
     // 7. Resolve destination directory
-    let type_dir = mem_path.join(&branch_dir).join(&mem_type);
+    let type_dir = cue_path.join(&branch_dir).join(&cue_type);
     let dest_dir = if save_at_root {
         type_dir
     } else {

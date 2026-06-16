@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
@@ -66,10 +66,10 @@ pub fn handle(
 
     // 4. Resolve path
     let config = Config::load(&root)?;
-    let mem_path = root.join(&config.dir_name);
-    if !mem_path.exists() {
+    let cue_path = root.join(&config.dir_name);
+    if !cue_path.exists() {
         bail!(
-            "{} directory does not exist. Run `mem init` first.",
+            "{} directory does not exist. Run `cue init` first.",
             config.dir_name
         );
     }
@@ -78,7 +78,7 @@ pub fn handle(
         .context("Could not determine current branch. Have you made your first commit yet?")?;
     let branch_dir = branch.replace(['/', '\\'], "-");
 
-    let log_file_path = mem_path.join(&branch_dir).join("spec").join("log.md");
+    let log_file_path = cue_path.join(&branch_dir).join("spec").join("log.md");
 
     // 6. Open file and get metadata (to check if it's new) before building markdown
     if let Some(parent) = log_file_path.parent() {

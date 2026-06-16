@@ -29,9 +29,9 @@ impl TestEnv {
 
     #[allow(dead_code)]
     pub fn command(&self) -> assert_cmd::Command {
-        let mut cmd = assert_cmd::Command::cargo_bin("mem").expect("Failed to find mem binary");
-        cmd.env("MEM_CONFIG_DIR", &self.config_dir);
-        // Isolate from user's git config if necessary, but for now we focus on mem config
+        let mut cmd = assert_cmd::Command::cargo_bin("cue").expect("Failed to find cue binary");
+        cmd.env("CUE_CONFIG_DIR", &self.config_dir);
+        // Isolate from user's git config if necessary, but for now we focus on cue config
         cmd.current_dir(self.temp_dir.path());
         cmd
     }
@@ -42,16 +42,16 @@ impl TestEnv {
     }
 }
 
-/// Returns a `mem` command fully isolated from the host environment:
-/// - `MEM_CONFIG_DIR` points to the system temp dir (no global mem.json)
-/// - `MEM_ARTIFACT_TYPES` and `MEM_IGNORED_TYPES` are removed so project
-///   mem.json and compiled-in defaults remain authoritative.
+/// Returns a `cue` command fully isolated from the host environment:
+/// - `CUE_CONFIG_DIR` points to the system temp dir (no global cue.json)
+/// - `CUE_ARTIFACT_TYPES` and `CUE_IGNORED_TYPES` are removed so project
+///   cue.json and compiled-in defaults remain authoritative.
 #[allow(dead_code)]
-pub fn mem_cmd() -> assert_cmd::Command {
-    let mut cmd = assert_cmd::Command::cargo_bin("mem").expect("Failed to find mem binary");
-    cmd.env("MEM_CONFIG_DIR", std::env::temp_dir())
-        .env_remove("MEM_ARTIFACT_TYPES")
-        .env_remove("MEM_IGNORED_TYPES");
+pub fn cue_cmd() -> assert_cmd::Command {
+    let mut cmd = assert_cmd::Command::cargo_bin("cue").expect("Failed to find cue binary");
+    cmd.env("CUE_CONFIG_DIR", std::env::temp_dir())
+        .env_remove("CUE_ARTIFACT_TYPES")
+        .env_remove("CUE_IGNORED_TYPES");
     cmd
 }
 

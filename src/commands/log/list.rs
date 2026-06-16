@@ -14,9 +14,9 @@ pub fn handle(cwd: &Path, branch_name: Option<String>) -> Result<()> {
     // 3. Load config
     let config = Config::load(&root)?;
 
-    // 4. Check if .mem exists
-    let mem_path = root.join(&config.dir_name);
-    if !mem_path.exists() {
+    // 4. Check if .cue exists
+    let cue_path = root.join(&config.dir_name);
+    if !cue_path.exists() {
         return Ok(()); // Silently exit
     }
 
@@ -29,7 +29,7 @@ pub fn handle(cwd: &Path, branch_name: Option<String>) -> Result<()> {
     };
     let branch_dir = branch.replace(['/', '\\'], "-");
 
-    let log_file_path = mem_path.join(&branch_dir).join("spec").join("log.md");
+    let log_file_path = cue_path.join(&branch_dir).join("spec").join("log.md");
 
     match fs::read_to_string(&log_file_path) {
         Ok(content) => print!("{}", content),
