@@ -1,4 +1,4 @@
-use crate::commands::list::Filter;
+use crate::list::Filter;
 use clap::{Parser, Subcommand};
 
 fn parse_frontmatter_field(s: &str) -> Result<(String, String), String> {

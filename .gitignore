@@ -30,5 +30,6 @@ result
 
 .direnv
 .envrc
-.mem
+.ref
+.cue
 tags
