@@ -23,7 +23,7 @@ When starting a new agent session:
 
 ### Context Profile
 
-A named collection of artifacts, an optional git diff, and optional references to
+A named collection of artifacts, optional instructions, and optional references to
 profiles on other branches. Profiles are defined in `context.json` and identified by
 name. The `default` profile is used when no name is specified.
 
@@ -37,7 +37,15 @@ Stored in the `mem` worktree alongside all other branch artifacts.
 
 `include` references are resolved recursively (DFS), prepended to the current
 profile's artifacts. This ordering reflects LLM recency bias: base context appears
-early in the stream, current working context appears later, and the diff appears last.
+early in the stream, current working context appears later, and the instructions
+appear last.
+
+### Instructions
+
+An optional `instructions` field can be added to a profile to provide behavioral
+prompts to the agent (e.g. "Load git-commit skill"). Instructions appear
+at the very end of the stream. Instructions are NOT cumulative — only
+the instructions from the top-level profile are rendered.
 
 ## Commands
 
@@ -61,7 +69,6 @@ early in the stream, current working context appears later, and the diff appears
       "./spec/log.md",
       "@1234-new-feature-db-migration:spec/plan.md"
     ],
-    "diff": "main...HEAD",
     "include": [
       "@1234-new-feature-db-migration",
       "@some-other-branch:brief"
@@ -71,7 +78,8 @@ early in the stream, current working context appears later, and the diff appears
     "artifacts": [
       "./spec/index.md",
       "./spec/plan.md"
-    ]
+    ],
+    "instructions": "Please summarize these files."
   }
 }
 ```
@@ -79,10 +87,10 @@ early in the stream, current working context appears later, and the diff appears
 ### Fields
 
 - **`artifacts`**: Ordered list of artifact paths. Two notations supported (see below).
-- **`diff`**: Raw string passed verbatim to `git diff`. Omit for no diff.
-  Examples: `"HEAD"`, `"main...HEAD"`, `"--staged"`, `"origin/main"`.
 - **`include`**: Ordered list of profiles from other branches to prepend.
   Resolved recursively with cycle detection.
+- **`instructions`**: Optional string containing specific instructions for the agent.
+  Rendered last in the stream.
 
 ## Path Notation
 
@@ -90,11 +98,12 @@ early in the stream, current working context appears later, and the diff appears
 |-----------------------------------|------------------------------------------------------|
 | `./spec/index.md`                 | `.mem/<current-branch>/spec/index.md`                |
 | `@branch-name:spec/plan.md`       | `.mem/branch-name/spec/plan.md`                      |
-| `@branch-name` (in `include`)     | `default` profile of `.mem/branch-name/context.json` |
-| `@branch-name:brief` (in `include`) | `brief` profile of `.mem/branch-name/context.json` |
+| `branch-name` (in `include`)      | `default` profile of `.mem/branch-name/context.json` |
+| `branch-name:brief` (in `include`) | `brief` profile of `.mem/branch-name/context.json` |
+| `@branch-name` (in `include`)     | Supported for backward compatibility                 |
 
-Branch names in the sigil follow the same sanitisation as the rest of `mem`
-(slashes and backslashes replaced with dashes).
+Branch names in the sigil follow the same sanitisation as
+the rest of `mem` (slashes and backslashes replaced with dashes).
 
 ## Include Resolution Algorithm
 
@@ -103,16 +112,16 @@ Resolution is depth-first. For a profile P on branch B:
 1. If `(B, P)` is already in the visited set → error: cycle detected
 2. Add `(B, P)` to the visited set
 3. For each entry in `P.include`:
-   - Parse `@target-branch` (implies `:default`) or `@target-branch:target-profile`
+   - Parse `target-branch` (implies `:default`) or `target-branch:target-profile`
    - Recursively resolve `(target-branch, target-profile)` → produces ordered artifact list
    - Append those paths to the accumulator (deepest dependency resolved first)
 4. Append `P.artifacts` to the accumulator
 5. Deduplicate the full list: first occurrence of each path wins
 
 **Output ordering** (LLM recency bias aware):
-1. Artifacts from included profiles (base/upstream context — appears early)
+1. Artifacts from included profiles (upstream context — appears early)
 2. Current profile's own artifacts (current working context)
-3. `<diff>` block last (most immediate; benefits from recency bias)
+3. `<instructions>` block last (Phase 12 addition)
 
 ## `mem context render` Output Format
 
@@ -129,14 +138,13 @@ repository root.
 ...file content...
 </artifact>
 
-<diff args="main...HEAD">
-diff --git a/src/main.rs b/src/main.rs
-...
-</diff>
+<instructions>
+Please summarize these files.
+</instructions>
 ```
 
 - **stdout**: Artifact content only — pipe-clean for `mem context render | ai-tool`
-- **stderr**: Warnings for missing artifacts, cycle errors, git diff failures
+- **stderr**: Warnings for missing artifacts, cycle errors
 
 ### Missing Artifacts
 
@@ -146,34 +154,19 @@ that artifact.
 
 ## Security Model
 
-- `./...` paths: reject any `..` path components (same rule as `mem add`)
-- `@branch:path` paths: branch component must match a sanitized name (no raw slashes,
-  no `..`); path component independently rejects `..` components
-- No shell expansion or command substitution in any path or diff value
+- `./...` paths: reject any absolute path components
+- `@branch:path` paths: branch component must match a sanitized name (no raw slashes); 
+  path component independently rejects absolute components
+- No shell expansion or command substitution in any path value
 
 ## `mem.json` Additions
 
-Two new optional fields in the project/global config:
-
-```json
-{
-  "diff_exclude_paths": ["Cargo.lock", "*.lock"],
-  "base_branch_cmd": "gh pr view --json baseRefName --jq '.baseRefName'"
-}
-```
-
-- **`diff_exclude_paths`**: Glob patterns excluded from all git diff output produced
-  by `mem context render`. Applied project-wide, not per-profile.
-- **`base_branch_cmd`**: Shell command returning the base branch name. Reserved for
-  future tooling. Does not affect `context.json` — `diff` values are always explicit
-  git ref strings.
-
-## Out of Scope for v1
-
-- **Token counting** (`mem context render --tokens`): Deferred pending tokenizer crate
-  evaluation (`tiktoken-rs`). Will report per-artifact and total counts to stderr.
-- **Glob patterns** in artifact paths (e.g. `"./spec/*.md"`)
 - **`exclude` array** for overriding artifacts from included profiles
-- **Per-profile diff path filtering** (currently project-wide only via `mem.json`)
 - **Line ranges** for large artifacts (e.g. `@branch:doc/huge.md#L100-200`)
 - **CLI add/remove helpers** for context.json (direct JSON editing for v1; TUI planned)
+
+## Feature: Glob Support
+
+Artifact paths in `context.json` support standard glob patterns (e.g., `./spec/**/*.md`, `@branch:doc/*.md`).
+Globs are expanded at render time. Any matched paths that are directories are automatically skipped.
+Boundary checks (ensuring artifacts are within the git repository) apply to each expanded path.

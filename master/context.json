@@ -1,0 +1,9 @@
+{
+  "default": {
+    "artifacts": [
+      "./spec/index.md"
+    ],
+    "diff": null,
+    "include": []
+  }
+}

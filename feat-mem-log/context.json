@@ -1,0 +1,17 @@
+{
+  "default": {
+    "artifacts": [
+      "./spec/log.md",
+      "./spec/plan.md",
+    ],
+    "diff": null,
+    "include": []
+  },
+  "brief": {
+    "artifacts": [
+      "@fix-mem-add-stdout:spec/index.md"
+    ],
+    "diff": null,
+    "include": []
+  }
+}

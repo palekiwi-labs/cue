@@ -121,5 +121,35 @@ Define the data model shared by all subcommands.
 - [ ] Audit all error messages for consistency with existing `mem` style (`anyhow::bail!`)
 - [ ] Confirm stdout is pipe-clean throughout (no debug output from render)
 - [ ] Confirm all stderr warnings have consistent prefix style
-- [ ] Run full test suite: `cargo test`
-- [ ] Log progress: `mem log add`
+- [x] Run full test suite: `cargo test`
+- [x] Log progress: `mem log add`
+
+## Phase 12 — Agent Instructions Support
+
+- [x] Add `instructions: Option<String>` to `ContextProfile` in `src/config.rs`
+- [x] Add `instructions: Option<String>` to `ResolvedContext` in `src/context/mod.rs`
+- [x] Update `gather_context` to extract instructions from the top-level profile
+- [x] Update `handle_render` in `src/commands/context.rs` to output `<instructions>` block
+- [x] Unit test: verify deserialization of `instructions`
+- [x] Integration test: verify `render` output includes instructions
+- [x] Update spec documentation
+
+## Phase 13 — Remove `@base` Sigil (Simplification)
+
+- [ ] Remove `resolve_base_branch_name` from `src/context/mod.rs`
+- [ ] Remove `MEM_BASE_BRANCH_FILE` handling
+- [ ] Update `parse_artifact_path` to remove `@base` resolution and `base_branch` param
+- [ ] Update `resolve_profile` to remove `base_branch` propagation
+- [ ] Update `gather_context` to remove `base_branch` handling
+- [ ] Remove `--base` flag from `ContextCommands::Render` in `src/cli.rs`
+- [ ] Update all unit and integration tests to remove `@base` usage
+
+## Phase 14 — Remove `diff` Feature (Simplification)
+
+- [ ] Remove `diff` field from `ContextProfile` in `src/config.rs`
+- [ ] Remove `diff_exclude_paths` from `Config` struct in `src/config.rs`
+- [ ] Remove `diff` field from `ResolvedContext` in `src/context/mod.rs`
+- [ ] Remove git diff execution logic from `gather_context`
+- [ ] Remove `<diff>` block rendering from `handle_render` in `src/commands/context.rs`
+- [ ] Update `init_context` to not include `diff` field in generated profiles
+- [ ] Update all tests to remove `diff` expectations
