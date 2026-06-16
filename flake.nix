@@ -31,7 +31,7 @@
           buildInputs = [];
 
           meta = with pkgs.lib; {
-            description = "A new Rust project";
+            description = "cue: a file-based memory system for agentic workflows";
             license = licenses.mit;
             maintainers = [ ];
           };
@@ -51,7 +51,6 @@
             ];
 
             shellHook = ''
-              echo "Rust development environment ready!"
               echo "Rust version: $(rustc --version)"
             '';
           };
