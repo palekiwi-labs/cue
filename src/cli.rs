@@ -41,7 +41,7 @@ pub enum Commands {
         frontmatter: Vec<(String, String)>,
         /// Type of artifact (must be in configured artifact_types)
         #[arg(short = 't', long = "type", default_value = "spec")]
-        mem_type: String,
+        cue_type: String,
         /// Save artifact at the root of the type directory, not under a <timestamp>-<hash> subdir
         #[arg(long)]
         root: bool,
@@ -63,7 +63,7 @@ pub enum Commands {
         all: bool,
         /// Filter by artifact type
         #[arg(short = 't', long = "type")]
-        mem_type: Option<String>,
+        cue_type: Option<String>,
         /// Include ignored artifact types (e.g. tmp)
         #[arg(short = 'i', long)]
         include_gitignored: bool,
@@ -96,7 +96,7 @@ pub enum Commands {
         #[command(subcommand)]
         command: ContextCommands,
     },
-    /// Manage mem configuration
+    /// Manage cue configuration
     Config {
         #[command(subcommand)]
         command: ConfigCommands,

@@ -11,13 +11,13 @@ fn test_config_show_json() -> anyhow::Result<()> {
 
     // Create a project-specific config
     fs::write(
-        temp.path().join("mem.json"),
+        temp.path().join("cue.json"),
         r#"{"dir_name": ".custom-mem"}"#,
     )?;
 
-    let mut cmd = helpers::mem_cmd();
+    let mut cmd = helpers::cue_cmd();
     cmd.current_dir(temp.path())
-        .env("MEM_BRANCH_NAME", "test-branch")
+        .env("CUE_BRANCH_NAME", "test-branch")
         .arg("config")
         .arg("show");
 

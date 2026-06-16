@@ -12,7 +12,7 @@ fn test_context_show_and_profiles() -> anyhow::Result<()> {
     // Initialize mem
     env.command().arg("init").assert().success();
 
-    let context_json = env.root().join(".mem").join("main").join("context.json");
+    let context_json = env.root().join(".cue").join("main").join("context.json");
     fs::create_dir_all(context_json.parent().unwrap())?;
     fs::write(
         &context_json,

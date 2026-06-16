@@ -12,7 +12,7 @@ fn test_context_path_current() -> anyhow::Result<()> {
     // Initialize mem
     env.command().arg("init").assert().success();
 
-    let context_json = env.root().join(".mem").join("main").join("context.json");
+    let context_json = env.root().join(".cue").join("main").join("context.json");
     fs::create_dir_all(context_json.parent().unwrap())?;
     fs::write(&context_json, "{}")?;
 
@@ -35,8 +35,8 @@ fn test_context_path_all() -> anyhow::Result<()> {
     // Initialize mem
     env.command().arg("init").assert().success();
 
-    let context_main = env.root().join(".mem").join("main").join("context.json");
-    let context_feat = env.root().join(".mem").join("feat").join("context.json");
+    let context_main = env.root().join(".cue").join("main").join("context.json");
+    let context_feat = env.root().join(".cue").join("feat").join("context.json");
 
     fs::create_dir_all(context_main.parent().unwrap())?;
     fs::create_dir_all(context_feat.parent().unwrap())?;

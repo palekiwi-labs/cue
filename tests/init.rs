@@ -9,10 +9,10 @@ fn test_init_fresh_repo() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
     helpers::setup_git_repo(temp.path());
 
-    let mut cmd = helpers::mem_cmd();
+    let mut cmd = helpers::cue_cmd();
     cmd.current_dir(temp.path())
-        .env("MEM_BRANCH_NAME", "test-mem")
-        .env("MEM_DIR_NAME", ".test-mem")
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
         .arg("init");
 
     cmd.assert()
@@ -38,14 +38,14 @@ fn test_init_gitignore_respects_config() -> anyhow::Result<()> {
 
     // Configure custom ignored types
     fs::write(
-        temp.path().join("mem.json"),
+        temp.path().join("cue.json"),
         r#"{"ignored_types": ["tmp", "ref"]}"#,
     )?;
 
-    let mut cmd = helpers::mem_cmd();
+    let mut cmd = helpers::cue_cmd();
     cmd.current_dir(temp.path())
-        .env("MEM_BRANCH_NAME", "test-mem")
-        .env("MEM_DIR_NAME", ".test-mem")
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
         .arg("init");
     cmd.assert().success();
 
@@ -64,7 +64,7 @@ fn test_init_gitignore_respects_config() -> anyhow::Result<()> {
 fn test_init_not_a_git_repo() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
 
-    let mut cmd = helpers::mem_cmd();
+    let mut cmd = helpers::cue_cmd();
     cmd.current_dir(temp.path()).arg("init");
 
     cmd.assert()
@@ -80,18 +80,18 @@ fn test_init_already_initialized() -> anyhow::Result<()> {
     helpers::setup_git_repo(temp.path());
 
     // First init
-    let mut cmd = helpers::mem_cmd();
+    let mut cmd = helpers::cue_cmd();
     cmd.current_dir(temp.path())
-        .env("MEM_BRANCH_NAME", "test-mem")
-        .env("MEM_DIR_NAME", ".test-mem")
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
         .arg("init");
     cmd.assert().success();
 
     // Second init
-    let mut cmd = helpers::mem_cmd();
+    let mut cmd = helpers::cue_cmd();
     cmd.current_dir(temp.path())
-        .env("MEM_BRANCH_NAME", "test-mem")
-        .env("MEM_DIR_NAME", ".test-mem")
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
         .arg("init");
 
     cmd.assert().success().stdout(predicate::str::contains(
@@ -115,10 +115,10 @@ fn test_init_local_branch_exists() -> anyhow::Result<()> {
         .current_dir(temp.path())
         .output()?;
 
-    let mut cmd = helpers::mem_cmd();
+    let mut cmd = helpers::cue_cmd();
     cmd.current_dir(temp.path())
-        .env("MEM_BRANCH_NAME", "test-mem")
-        .env("MEM_DIR_NAME", ".test-mem")
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
         .arg("init");
 
     cmd.assert().success();
@@ -159,10 +159,10 @@ fn test_init_remote_branch_exists() -> anyhow::Result<()> {
         .current_dir(temp_local.path())
         .output()?;
 
-    let mut cmd = helpers::mem_cmd();
+    let mut cmd = helpers::cue_cmd();
     cmd.current_dir(temp_local.path())
-        .env("MEM_BRANCH_NAME", "test-mem")
-        .env("MEM_DIR_NAME", ".test-mem")
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
         .arg("init");
 
     cmd.assert()

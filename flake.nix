@@ -1,5 +1,5 @@
 {
-  description = "mem: a file-based memory system for agentic workflows";
+  description = "cue: a file-based memory system for agentic workflows";
 
   inputs = {
     nixpkgs.url = "github:NixOS/nixpkgs/nixos-unstable";
@@ -18,7 +18,7 @@
       in
       {
         packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "mem";
+          pname = "cue";
           version = "0.1.0";
           src = pkgs.lib.cleanSource ./.;
 
@@ -31,7 +31,7 @@
           buildInputs = [];
 
           meta = with pkgs.lib; {
-            description = "A new Rust project";
+            description = "cue: a file-based memory system for agentic workflows";
             license = licenses.mit;
             maintainers = [ ];
           };
@@ -39,7 +39,7 @@
 
         devShells.default = pkgs.mkShell
           {
-            name = "mem";
+            name = "cue";
             buildInputs = [
               rustToolchain
               pkgs.git
@@ -51,7 +51,6 @@
             ];
 
             shellHook = ''
-              echo "Rust development environment ready!"
               echo "Rust version: $(rustc --version)"
             '';
           };

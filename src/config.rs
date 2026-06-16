@@ -1,6 +1,6 @@
 use figment::{
-    Figment,
     providers::{Env, Format, Json, Serialized},
+    Figment,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -33,8 +33,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            branch_name: "mem".into(),
-            dir_name: ".mem".into(),
+            branch_name: "cue".into(),
+            dir_name: ".cue".into(),
             artifact_types: vec!["spec".into(), "trace".into(), "tmp".into()],
             ignored_types: vec!["tmp".into()],
             context: HashMap::new(),
@@ -46,18 +46,18 @@ impl Config {
     pub fn load(project_root: &Path) -> anyhow::Result<Self> {
         let mut builder = Figment::from(Serialized::defaults(Config::default()));
 
-        if let Ok(config_dir) = std::env::var("MEM_CONFIG_DIR") {
-            let global_config = Path::new(&config_dir).join("mem.json");
+        if let Ok(config_dir) = std::env::var("CUE_CONFIG_DIR") {
+            let global_config = Path::new(&config_dir).join("cue.json");
             builder = builder.merge(Json::file(global_config));
         } else if let Some(home) = dirs::home_dir() {
-            let global_config = home.join(".config/mem/mem.json");
+            let global_config = home.join(".config/cue/cue.json");
             builder = builder.merge(Json::file(global_config));
         }
 
-        let project_config = project_root.join("mem.json");
+        let project_config = project_root.join("cue.json");
         let config = builder
             .merge(Json::file(project_config))
-            .merge(Env::prefixed("MEM_").split("__"))
+            .merge(Env::prefixed("CUE_").split("__"))
             .extract()?;
 
         Ok(config)
@@ -86,11 +86,11 @@ mod tests {
         let dir = tempdir().unwrap();
 
         let config_json = r#"{"artifact_types": ["spec", "trace", "tmp", "doc", "custom"]}"#;
-        std::fs::write(dir.path().join("mem.json"), config_json).unwrap();
+        std::fs::write(dir.path().join("cue.json"), config_json).unwrap();
 
-        // Unset MEM_ARTIFACT_TYPES so host environment cannot override the JSON config
+        // Unset CUE_ARTIFACT_TYPES so host environment cannot override the JSON config
         let config =
-            temp_env::with_var_unset("MEM_ARTIFACT_TYPES", || Config::load(dir.path()).unwrap());
+            temp_env::with_var_unset("CUE_ARTIFACT_TYPES", || Config::load(dir.path()).unwrap());
         assert_eq!(
             config.artifact_types,
             vec!["spec", "trace", "tmp", "doc", "custom"]
@@ -103,11 +103,11 @@ mod tests {
         let dir = tempdir().unwrap();
 
         let config_json = r#"{"ignored_types": ["tmp", "ref"]}"#;
-        std::fs::write(dir.path().join("mem.json"), config_json).unwrap();
+        std::fs::write(dir.path().join("cue.json"), config_json).unwrap();
 
-        // Unset MEM_IGNORED_TYPES so host environment cannot override the JSON config
+        // Unset CUE_IGNORED_TYPES so host environment cannot override the JSON config
         let config =
-            temp_env::with_var_unset("MEM_IGNORED_TYPES", || Config::load(dir.path()).unwrap());
+            temp_env::with_var_unset("CUE_IGNORED_TYPES", || Config::load(dir.path()).unwrap());
         assert_eq!(config.ignored_types, vec!["tmp", "ref"]);
     }
 
@@ -117,9 +117,9 @@ mod tests {
         let dir = tempdir().unwrap();
 
         // Set a nested environment variable
-        // MEM_CONTEXT__DEFAULT__INSTRUCTIONS maps to context["default"].instructions
+        // CUE_CONTEXT__DEFAULT__INSTRUCTIONS maps to context["default"].instructions
         unsafe {
-            std::env::set_var("MEM_CONTEXT__DEFAULT__INSTRUCTIONS", "env instructions");
+            std::env::set_var("CUE_CONTEXT__DEFAULT__INSTRUCTIONS", "env instructions");
         }
 
         let config = Config::load(dir.path()).unwrap();
@@ -135,7 +135,7 @@ mod tests {
 
         // Clean up
         unsafe {
-            std::env::remove_var("MEM_CONTEXT__DEFAULT__INSTRUCTIONS");
+            std::env::remove_var("CUE_CONTEXT__DEFAULT__INSTRUCTIONS");
         }
     }
 }

@@ -1,4 +1,5 @@
 use crate::cli::ContextCommands;
+use crate::config::Config;
 use crate::context::{context_json_path, gather_context, init_context, load_context_config};
 use crate::git::{get_current_branch, get_git_root, sanitize_branch_name};
 use std::path::Path;
@@ -23,21 +24,23 @@ fn handle_init(cwd: &Path, force: bool) -> anyhow::Result<()> {
 
 fn handle_show(cwd: &Path) -> anyhow::Result<()> {
     let git_root = get_git_root(cwd)?;
+    let config = Config::load(&git_root)?;
     let branch = get_current_branch(cwd)?;
     let sanitized_branch = sanitize_branch_name(&branch);
-    let config_path = context_json_path(&git_root, &sanitized_branch);
+    let config_path = context_json_path(&git_root, &sanitized_branch, &config.dir_name);
 
-    let config = load_context_config(&config_path)?;
-    println!("{}", serde_json::to_string_pretty(&config)?);
+    let context_config = load_context_config(&config_path)?;
+    println!("{}", serde_json::to_string_pretty(&context_config)?);
 
     Ok(())
 }
 
 fn handle_profiles(cwd: &Path) -> anyhow::Result<()> {
     let git_root = get_git_root(cwd)?;
+    let config = Config::load(&git_root)?;
     let branch = get_current_branch(cwd)?;
     let sanitized_branch = sanitize_branch_name(&branch);
-    let config_path = context_json_path(&git_root, &sanitized_branch);
+    let config_path = context_json_path(&git_root, &sanitized_branch, &config.dir_name);
 
     let config = load_context_config(&config_path)?;
     let mut names: Vec<_> = config.keys().collect();
@@ -76,15 +79,16 @@ fn handle_render(cwd: &Path, profile: Option<String>) -> anyhow::Result<()> {
 
 fn handle_path(cwd: &Path, all: bool) -> anyhow::Result<()> {
     let git_root = get_git_root(cwd)?;
+    let config = Config::load(&git_root)?;
 
     if all {
-        let mem_dir = git_root.join(".mem");
-        if !mem_dir.exists() {
+        let cue_dir = git_root.join(&config.dir_name);
+        if !cue_dir.exists() {
             return Ok(());
         }
 
         let mut paths = Vec::new();
-        for entry in std::fs::read_dir(mem_dir)? {
+        for entry in std::fs::read_dir(cue_dir)? {
             let entry = entry?;
             if entry.file_type()?.is_dir() {
                 let context_file = entry.path().join("context.json");
@@ -100,7 +104,7 @@ fn handle_path(cwd: &Path, all: bool) -> anyhow::Result<()> {
     } else {
         let branch = get_current_branch(cwd)?;
         let sanitized_branch = sanitize_branch_name(&branch);
-        let config_path = context_json_path(&git_root, &sanitized_branch);
+        let config_path = context_json_path(&git_root, &sanitized_branch, &config.dir_name);
         if config_path.exists() {
             println!("{}", config_path.display());
         } else {
