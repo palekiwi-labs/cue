@@ -413,6 +413,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "cuelib"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "diff"
 version = "0.1.13"
 source = "registry+https://github.com/rust-lang/crates.io-index"
