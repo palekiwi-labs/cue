@@ -101,6 +101,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: ConfigCommands,
     },
+    /// Manage registered projects in the project store
+    Project {
+        #[command(subcommand)]
+        command: ProjectCommands,
+    },
 }
 
 #[derive(Subcommand)]
@@ -164,4 +169,25 @@ pub enum LogCommands {
         #[arg(long)]
         branch: Option<String>,
     },
+}
+
+#[derive(Subcommand)]
+pub enum ProjectCommands {
+    /// Register a path in the project store (defaults to cwd)
+    Add {
+        /// Path to register (defaults to current directory)
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Remove a path or key from the project store
+    Remove {
+        /// Path to remove (defaults to current directory)
+        #[arg(long, conflicts_with = "key")]
+        path: Option<String>,
+        /// Remove all paths for this project key
+        #[arg(long, conflicts_with = "path")]
+        key: Option<String>,
+    },
+    /// List all registered projects
+    List,
 }
