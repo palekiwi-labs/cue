@@ -22,3 +22,15 @@ Rewrote .cue/feat-cueban/spec/index.md to reflect the full design discussion. Pr
 - **Decided:** cueban --type flag kept as forward-compat hook (default: todo)
 - **Decided:** TDD throughout: 8 implementation slices, each starts with failing tests
 
+## [173152e-dirty] Workspace member renames (curtain, cuelib, acuity)
+
+Renamed workspace members across all spec and plan artifacts:
+- cue-lib -> cuelib
+- cueban -> curtain
+- Added acuity as the name for the future observability hub.
+Updated all Rust namespace references (e.g. cuelib::artifact) and CLI command names accordingly.
+
+- **Decided:** Crate name: cuelib (no hyphen)
+- **Decided:** TUI name: curtain
+- **Decided:** Observability hub name: acuity
+

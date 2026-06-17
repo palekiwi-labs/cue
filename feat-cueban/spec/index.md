@@ -1,12 +1,12 @@
-# Cueban
+# Curtain
 
-`cueban` is a TUI kanban dashboard for `cue` artifacts, built as a separate
+`curtain` is a TUI kanban dashboard for `cue` artifacts, built as a separate
 crate in the `cue` workspace.
 
 ## Purpose
 
 The `cue` framework stores artifacts (specs, plans, todos, logs) as plain files
-in a git worktree. `cueban` makes those artifacts actionable by presenting them
+in a git worktree. `curtain` makes those artifacts actionable by presenting them
 as a kanban board that spans one or many projects simultaneously.
 
 The initial focus is `todo` artifacts, because these map most naturally to a
@@ -15,18 +15,21 @@ and the architecture should not preclude it.
 
 ## Workspace structure
 
-`cueban` lives alongside `cue` and `cue-lib` in a Cargo workspace:
+`curtain` lives alongside `cue` and `cuelib` in a Cargo workspace:
 
 ```
 cue/           (workspace root)
   cue/         (CLI binary)
-  cue-lib/     (shared library)
-  cueban/      (TUI binary)
+  cuelib/      (shared library)
+  curtain/     (TUI binary)
 ```
 
-`cue-lib` contains all shared logic: config loading, git utilities, artifact
+`cuelib` contains all shared logic: config loading, git utilities, artifact
 discovery, frontmatter parsing, and the project registry. Both `cue` and
-`cueban` depend on `cue-lib`; they do not depend on each other.
+`curtain` depend on `cuelib`; they do not depend on each other.
+
+`acuity` is a future planned workspace member that will act as an observability
+hub, feeding live notifications to `curtain`.
 
 ## Artifact types and status vocabulary
 
@@ -90,7 +93,7 @@ Project registration can also be managed explicitly:
 - `cue project remove --key <key>` — removes all paths for a key.
 - `cue project list` — lists all registered projects and their paths.
 
-## `cueban` — kanban board
+## `curtain` — kanban board
 
 ### Data model
 
@@ -128,7 +131,7 @@ distinguish the origin of each item when viewing across multiple projects.
 
 ### Project filter
 
-Rather than a binary toggle between current and global, `cueban` provides a
+Rather than a binary toggle between current and global, `curtain` provides a
 **cyclic project filter**. Pressing `Tab` cycles through:
 
 ```
@@ -149,14 +152,14 @@ The active filter is shown in the status bar.
 | `e` | Open selected artifact in `$EDITOR` |
 | `q` / `Esc` | Quit |
 
-`cueban` is not an editor. The `e` binding hands off to the user's `$EDITOR`
+`curtain` is not an editor. The `e` binding hands off to the user's `$EDITOR`
 (falling back to `vi`) so that artifact bodies can be updated without leaving
 the workflow.
 
 ### CLI
 
 ```
-cueban [--all | --path <path>] [--type <type>]
+curtain [--all | --path <path>] [--type <type>]
 ```
 
 - Default: loads the project rooted at the current working directory.
@@ -170,11 +173,11 @@ Development follows TDD: each unit of work starts with failing tests and is
 driven to green before moving on. The slices in order are:
 
 0. Convert to Cargo workspace (no new tests; all existing tests must stay green)
-1. `cue-lib`: status constants and canonical artifact types
-2. `cue-lib`: extract `config`, `git`, `artifact` modules from `cue`
-3. `cue-lib`: project registry (`ProjectStore`, `derive_project_key`)
+1. `cuelib`: status constants and canonical artifact types
+2. `cuelib`: extract `config`, `git`, `artifact` modules from `cue`
+3. `cuelib`: project registry (`ProjectStore`, `derive_project_key`)
 4. `cue`: `cue project add/remove/list` subcommands
 5. `cue`: `cue init` registers the project in the store
-6. `cueban`: data loading (`load_todos`, `group_by_kanban_status`)
-7. `cueban`: `App` state logic (filter cycling, column visibility)
-8. `cueban`: TUI rendering with ratatui
+6. `curtain`: data loading (`load_todos`, `group_by_kanban_status`)
+7. `curtain`: `App` state logic (filter cycling, column visibility)
+8. `curtain`: TUI rendering with ratatui
