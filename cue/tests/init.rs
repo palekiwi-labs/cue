@@ -4,6 +4,12 @@ use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 
+fn cue_cmd_with_data_dir(data_dir: &TempDir) -> assert_cmd::Command {
+    let mut cmd = helpers::cue_cmd();
+    cmd.env("CUE_DATA_DIR", data_dir.path());
+    cmd
+}
+
 #[test]
 fn test_init_fresh_repo() -> anyhow::Result<()> {
     let temp = TempDir::new()?;
@@ -125,6 +131,67 @@ fn test_init_local_branch_exists() -> anyhow::Result<()> {
 
     let mem_dir = temp.path().join(".test-mem");
     assert!(mem_dir.exists());
+
+    Ok(())
+}
+
+#[test]
+fn test_init_registers_project_in_store() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let data = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    cue_cmd_with_data_dir(&data)
+        .current_dir(temp.path())
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    let store_path = data.path().join("projects.json");
+    assert!(
+        store_path.exists(),
+        "projects.json should be created by init"
+    );
+
+    let content = fs::read_to_string(&store_path)?;
+    assert!(
+        content.contains(temp.path().to_str().unwrap()),
+        "store should contain the project path"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_init_twice_does_not_duplicate_entry() -> anyhow::Result<()> {
+    let temp = TempDir::new()?;
+    let data = TempDir::new()?;
+    helpers::setup_git_repo(temp.path());
+
+    // First init
+    cue_cmd_with_data_dir(&data)
+        .current_dir(temp.path())
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // Second init — already initialized, but store registration must be idempotent
+    cue_cmd_with_data_dir(&data)
+        .current_dir(temp.path())
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(data.path().join("projects.json"))?;
+    let path_str = temp.path().to_str().unwrap();
+    let count = content.matches(path_str).count();
+    assert_eq!(count, 1, "path should appear exactly once in store");
 
     Ok(())
 }

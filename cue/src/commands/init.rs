@@ -14,6 +14,14 @@ pub fn handle(cwd: &Path) -> Result<()> {
     // 3. Load config
     let config = Config::load(&root)?;
 
-    // 4. Delegate to domain module
-    init::init(&root, &config)
+    // 4. Delegate to domain module (idempotent — ok if already initialized)
+    init::init(&root, &config)?;
+
+    // 5. Register project in store (idempotent — add_path is a no-op if present)
+    let key = cuelib::project::derive_project_key(&root);
+    let mut store = cuelib::project::ProjectStore::load()?;
+    store.add_path(key, &root);
+    store.save()?;
+
+    Ok(())
 }
