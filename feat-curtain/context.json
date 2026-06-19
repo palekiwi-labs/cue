@@ -3,7 +3,7 @@
     "artifacts": [
       "./spec/index.md",
       "./spec/log.md",
-      "./plan/index.md"
+      "./plan/*.md"
     ],
     "include": [],
     "instructions": null

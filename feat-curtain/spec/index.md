@@ -5,13 +5,15 @@ crate in the `cue` workspace.
 
 ## Purpose
 
-The `cue` framework stores artifacts (specs, plans, todos, logs) as plain files
+The `cue` framework stores artifacts (specs, plans, tasks, logs) as plain files
 in a git worktree. `curtain` makes those artifacts actionable by presenting them
 as a kanban board that spans one or many projects simultaneously.
 
-The initial focus is `todo` artifacts, because these map most naturally to a
-kanban layout. Support for other artifact types (e.g. `plan`) is not ruled out
-and the architecture should not preclude it.
+The initial focus is `task` artifacts — the primary unit of tracked work in the
+`cue` protocol. Tasks live exclusively on the `master` branch under
+`.cue/master/task/`, making them the natural fit for a global kanban view across
+all registered projects. Support for other artifact types is not ruled out and
+the architecture should not preclude it.
 
 ## Workspace structure
 
@@ -36,23 +38,24 @@ hub, feeding live notifications to `curtain`.
 The canonical set of artifact types supported out of the box:
 
 ```
-spec  plan  trace  doc  todo  bin  tmp  ref
+spec  plan  trace  doc  todo  bin  tmp  ref  task
 ```
 
 Default ignored types (not listed or committed by default): `tmp`, `bin`.
 
-The canonical todo status values, in kanban column order:
+The canonical task status values, in kanban column order:
 
 ```
 open  →  in-progress  →  complete
 ```
 
-Additional statuses (`closed`, `archived`) are valid in frontmatter but are
-silently hidden in the kanban view — they do not appear in any column.
+The additional status `closed` is valid in frontmatter but is silently hidden
+in the kanban view — it does not appear in any column. Tasks do not use
+`archived`; that status is reserved for `todo` artifacts only.
 
 ## Project registry
 
-`cue` needs a way to discover todos across multiple projects. The registry is a
+`cue` needs a way to discover tasks across multiple projects. The registry is a
 JSON file stored at:
 
 ```
@@ -97,14 +100,19 @@ Project registration can also be managed explicitly:
 
 ### Data model
 
-Each card on the board represents one `todo` artifact and carries:
+Each card on the board represents one `task` artifact and carries:
 
 - **title** — from frontmatter; falls back to filename if absent
 - **status** — from frontmatter; determines which column the card appears in
-- **priority** — optional integer from frontmatter
+- **priority** — from frontmatter (`critical | high | normal | low`)
 - **project key** — e.g. `github:org/repo`
-- **branch** — the cue branch the artifact belongs to (e.g. `main`, `feat-x`)
+- **branch** — the working feature branch from the `branch:` frontmatter field
+  (set when the task transitions to `in-progress`; empty string otherwise)
 - **path** — absolute path to the file on disk
+
+Tasks always live at `.cue/master/task/` within each registered project root.
+`curtain` scans `<project-root>/.cue/master/task/**/*.md` for each project
+registered in the project store.
 
 ### Board layout
 
@@ -126,8 +134,10 @@ Each card displays two lines:
 └──────────────────────────────┘
 ```
 
-The project key and branch are always visible on the card so the user can
-distinguish the origin of each item when viewing across multiple projects.
+The project key and working branch are always visible on the card so the user
+can distinguish the origin of each item when viewing across multiple projects.
+When `branch:` is empty (task not yet in-progress), the second line shows only
+the project key.
 
 ### Project filter
 
@@ -165,19 +175,20 @@ curtain [--all | --path <path>] [--type <type>]
 - Default: loads the project rooted at the current working directory.
 - `--all`: loads all projects registered in the project store.
 - `--path <path>`: loads a specific project directory.
-- `--type <type>`: artifact type to display (default: `todo`).
+- `--type <type>`: artifact type to display (default: `task`).
 
 ## Implementation approach
 
 Development follows TDD: each unit of work starts with failing tests and is
 driven to green before moving on. The slices in order are:
 
-0. Convert to Cargo workspace (no new tests; all existing tests must stay green)
-1. `cuelib`: status constants and canonical artifact types
-2. `cuelib`: extract `config`, `git`, `artifact` modules from `cue`
-3. `cuelib`: project registry (`ProjectStore`, `derive_project_key`)
-4. `cue`: `cue project add/remove/list` subcommands
+0. Convert to Cargo workspace (no new tests; all existing tests must stay green) [DONE]
+1. `cuelib`: status constants and canonical artifact types [DONE]
+2. `cuelib`: extract `config`, `git`, `artifact` modules from `cue` [DONE]
+3. `cuelib`: project registry (`ProjectStore`, `derive_project_key`) [DONE]
+4. `cue`: `cue project add/remove/list` subcommands [DONE]
+4a. `cuelib`: add `task` to `CANONICAL_TYPES`; add `TaskStatus` enum
 5. `cue`: `cue init` registers the project in the store
-6. `curtain`: data loading (`load_todos`, `group_by_kanban_status`)
-7. `curtain`: `App` state logic (filter cycling, column visibility)
-8. `curtain`: TUI rendering with ratatui
+6–8. `curtain`: data loading, App state, TUI rendering — deferred to a separate
+   curtain design plan pending ratatui architecture review informed by the
+   kanban reference project analysis (`.cue/feat-curtain/doc/`).
