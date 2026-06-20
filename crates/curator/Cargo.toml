@@ -1,0 +1,8 @@
+[package]
+name = "curator"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+cuelib = { path = "../cuelib" }
+acuity-api = { path = "../acuity-api" }
