@@ -80,3 +80,80 @@ Committed 3e2d075. Added `cue project add/remove/list` subcommands. `add` is ide
 - **Found:** clap derive macros; TUI launches when no subcommand + stdin.is_terminal(); config loaded from TOML before TUI start
 - **Found:** Strict workspace layering: domain <- persistence traits <- service <- tui <- cli; TUI never touches persistence directly
 
+## [2de5bc1] Slice 4a + Slice 5: task type, TaskStatus, cue init registration
+
+Two commits on feat/curtain (383cd0a, 2de5bc1).
+
+Slice 4a: added 'task' as the ninth canonical artifact type in cuelib::artifact::CANONICAL_TYPES. Added TaskStatus enum (Open, InProgress, Complete, Closed) with FromStr, as_str(), is_kanban_visible(). Tasks do not use 'archived' — that status is todo-only. Four new tests added to cuelib.
+
+Slice 5: cue init now unconditionally calls ProjectStore::add_path + save after the worktree setup step. The call is idempotent because add_path is a no-op for already-present paths. Two new integration tests confirm registration on first init and no-duplication on second init.
+
+Full workspace: 158 tests, all green. Clippy clean.
+
+- **Found:** init::init early-return (already initialized) still propagates Ok(()) through the ? operator, so the registration code in commands/init.rs::handle always runs — no restructuring was needed
+- **Decided:** task is the primary kanban artifact type; todo is for deferred/informal notes only
+- **Decided:** TaskStatus has no Archived variant — that is reserved for TodoStatus only
+- **Decided:** init registration is unconditional (runs even when already-initialized path is returned) — idempotency is handled by add_path
+- **Decided:** Slices 6-8 (curtain TUI) are deferred to a separate design plan pending ratatui architecture review
+
+## [7dffc98] fix(cuelib): treat empty projects.json as empty store
+
+Fixed a crash in ProjectStore::load() that occurred when projects.json existed but was empty. Added a unit test to verify that an empty file is treated as an empty store.
+
+- **Found:** ProjectStore::load() panicked with 'EOF while parsing a value' on empty files
+- **Decided:** Treat empty projects.json as empty store instead of failing with EOF error
+
+## [1341ad8] fix(tests): add data_dir isolation to TestEnv
+
+Extended TestEnv struct in cue/tests/helpers.rs to include data_dir and set CUE_DATA_DIR in the command() method. This ensures that any test using TestEnv is correctly isolated from the host's project registry. Verified by running context_*.rs tests.
+
+- **Found:** Context tests were leaking to the host's project registry because TestEnv didn't set CUE_DATA_DIR
+- **Decided:** Extend TestEnv to handle data_dir isolation instead of using global helpers
+
+## [36549e9] Commit 1: fix empty projects.json crash in ProjectStore::load()
+
+Committed 36549e9. Added empty-file guard in cuelib/src/project.rs:load(). The function already handled a missing file but called serde_json::from_str on an empty string, causing 'EOF while parsing a value'. Guard added after read_to_string: if data.trim().is_empty() return Ok(Self::default()). TDD: wrote failing test first (load_returns_empty_when_file_is_empty), then added guard. 29 cuelib tests green.
+
+- **Decided:** Empty or whitespace-only projects.json is treated identically to a missing file — returns an empty store. Self-healing: next save() will write valid JSON.
+
+## [15acb00] Commit 2: extend TestEnv with data_dir, fix context_*.rs leak
+
+Committed 15acb00. Added data_dir: PathBuf field to TestEnv (subdir data/ of temp_dir). TestEnv::command() now sets CUE_DATA_DIR and also removes CUE_ARTIFACT_TYPES/CUE_IGNORED_TYPES, aligning it with cue_cmd() isolation policy. This closes the leak for 46 call sites in context_init.rs, context_path.rs, context_render.rs, context_show.rs. All 10 context tests pass. cue_cmd() still exists for the remaining migration (Commit 3).
+
+- **Decided:** TestEnv is documented as the single authoritative isolation boundary
+- **Decided:** data_dir is temp_dir/data/ subdir — same TempDir owns both, guaranteeing RAII cleanup
+
+## [d404000] Commit 3: refactor(tests): unify on TestEnv, remove cue_cmd()
+
+Completed the final commit of the fix-test-isolation plan. Migrated all integration test files (add.rs, list.rs, log.rs, config_show.rs, init.rs, project.rs) from helpers::cue_cmd() to helpers::TestEnv. Deleted cue_cmd() from helpers.rs. All 159 tests pass, clippy clean. Commits 1 (36549e9) and 2 (15acb00) were already in history; only Commit 3 was needed.
+
+- **Found:** Commits 1 and 2 from the plan (fix empty projects.json, extend TestEnv with data_dir) were already in git history (36549e9, 15acb00) but the working tree had an older version of helpers.rs — restored with git checkout HEAD
+- **Found:** list.rs contained 1303 lines with 84+ cue_cmd() call sites — the largest migration file
+- **Decided:** All integration tests now use TestEnv as the single authoritative isolation boundary — config_dir, data_dir, and env-var removal (CUE_ARTIFACT_TYPES, CUE_IGNORED_TYPES) are all handled in TestEnv::command()
+- **Decided:** setup_filter_repo() helper in list.rs was updated to accept &TestEnv instead of &TempDir
+- **Decided:** cue_cmd() deleted; no remaining call sites
+
+## [d404000] Refactor: Move crates to crates/ directory
+
+- **Decided:** Move workspace crates to crates/ subdirectory for better scalability and cleanliness.
+
+## [4efa490] Refactor: Crates moved to crates/ directory completed
+
+- **Found:** Relative path dependencies between crates were preserved as expected.
+- **Decided:** Workspace structure transitioned to crates/ pattern.
+
+## [ae59d67] Remove Archived status from TodoStatus
+
+Removed the `Archived` status from `TodoStatus` to make it symmetric with `TaskStatus`. Following Opus's advice, we've decided that `archived` is an orthogonal visibility flag rather than a lifecycle status. Since the curtain TUI doesn't render todos yet, the clutter problem is not yet observable, and `Closed` already serves the purpose of hiding artifacts from the board.
+
+- Removed `TodoStatus::Archived` and updated methods.
+- Updated unit tests to verify `archived` is now an invalid status for both tasks and todos.
+- Updated spec to remove mention of `archived`.
+- Closed the related todo artifact.
+
+- **Found:** TodoStatus and TaskStatus were asymmetric because of the Archived variant
+- **Found:** Archived was behaviorally identical to Closed (hidden from kanban)
+- **Decided:** Remove Archived as a status value for all artifacts
+- **Decided:** Treat archived as an orthogonal visibility flag if needed in the future
+- **Decided:** Maintain symmetry between TaskStatus and TodoStatus lifecycle states
+

@@ -1,5 +1,5 @@
 ---
-status: in-progress
+status: complete
 ---
 # Implementation Plan: Slices 0-8 (curtain feature branch)
 
@@ -44,18 +44,18 @@ starts with failing tests and is committed at GREEN. Slice 0 has no new tests
   - [x] Wire up CLI + handlers in `cue`
   - [x] Commit: `feat(cue): add project subcommands`
 
-- [ ] Slice 4a: `cuelib` — add `task` to canonical types; add `TaskStatus` enum
-  - [ ] Add `"task"` to `CANONICAL_TYPES` (9 types); update len assertion in tests
-  - [ ] Add `TaskStatus` enum (`Open`, `InProgress`, `Complete`, `Closed`) with
+- [x] Slice 4a: `cuelib` — add `task` to canonical types; add `TaskStatus` enum [DONE]
+  - [x] Add `"task"` to `CANONICAL_TYPES` (9 types); update len assertion in tests
+  - [x] Add `TaskStatus` enum (`Open`, `InProgress`, `Complete`, `Closed`) with
         `FromStr`, `as_str()`, `is_kanban_visible()`
-  - [ ] Add tests mirroring existing `TodoStatus` tests
-  - [ ] Commit: `feat(cuelib): add task type and TaskStatus enum`
+  - [x] Add tests mirroring existing `TodoStatus` tests
+  - [x] Commit: `feat(cuelib): add task type and TaskStatus enum`
 
-- [ ] Slice 5: `cue` — `cue init` registers project in store
-  - [ ] Write failing tests: `init_registers_project_in_store`,
+- [x] Slice 5: `cue` — `cue init` registers project in store [DONE]
+  - [x] Write failing tests: `init_registers_project_in_store`,
         `init_twice_does_not_duplicate_entry`
-  - [ ] Update `commands/init.rs::handle` to call `ProjectStore::add_path` + `save`
-  - [ ] Commit: `feat(cue): register project on init`
+  - [x] Update `commands/init.rs::handle` to call `ProjectStore::add_path` + `save`
+  - [x] Commit: `feat(cue): register project on init`
 
 - [ ] Slices 6–8: `curtain` — DEFERRED
   Moved to a separate curtain design plan. Architecture to be designed based on

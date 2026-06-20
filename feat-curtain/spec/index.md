@@ -21,9 +21,10 @@ the architecture should not preclude it.
 
 ```
 cue/           (workspace root)
-  cue/         (CLI binary)
-  cuelib/      (shared library)
-  curtain/     (TUI binary)
+  crates/
+    cue/       (CLI binary)
+    cuelib/    (shared library)
+    curtain/   (TUI binary)
 ```
 
 `cuelib` contains all shared logic: config loading, git utilities, artifact
@@ -50,8 +51,7 @@ open  →  in-progress  →  complete
 ```
 
 The additional status `closed` is valid in frontmatter but is silently hidden
-in the kanban view — it does not appear in any column. Tasks do not use
-`archived`; that status is reserved for `todo` artifacts only.
+in the kanban view — it does not appear in any column.
 
 ## Project registry
 
