@@ -1,0 +1,8 @@
+[package]
+name = "acuity"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+acuity-schema = { path = "../acuity-schema" }
+acuity-api = { path = "../acuity-api" }
