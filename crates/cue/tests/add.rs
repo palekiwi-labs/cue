@@ -959,13 +959,12 @@ fn test_add_frontmatter_colon_in_string_value() -> anyhow::Result<()> {
     );
 
     // AC #2: round-trip — YAML parse of the frontmatter must yield strings
-    let fm_end = raw.find("---\n").and_then(|_| {
-        let after = &raw[4..];
-        after.find("---\n").map(|i| i + 4)
-    });
-    let fm_str = fm_end
-        .map(|end| &raw[4..end])
-        .expect("frontmatter not found");
+    let fm_start = raw.find("---\n").map(|i| i + 4);
+    let fm_end = fm_start.and_then(|start| raw[start..].find("---\n").map(|i| start + i));
+    let fm_str = match (fm_start, fm_end) {
+        (Some(start), Some(end)) => &raw[start..end],
+        _ => panic!("frontmatter delimiters not found in:\n{}", raw),
+    };
     let parsed: serde_yaml::Value =
         serde_yaml::from_str(fm_str).expect("frontmatter must be valid YAML");
 

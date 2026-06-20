@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
@@ -103,14 +103,14 @@ pub fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
     let mut map = serde_yaml::Mapping::new();
     for (k, v) in fields {
         // Parse the raw string to allow scalar type coercion (bool, int,
-        // float). However, if the parse yields a Mapping or Sequence the user
-        // supplied a plain string that happens to contain YAML-significant
-        // characters (e.g. ": "). Force it back to a String so that
-        // serde_yaml will emit it as a properly quoted scalar.
+        // float). However, if the parse yields a collection type (Mapping,
+        // Sequence, or Tagged) the user supplied a plain string that happens
+        // to contain YAML collection syntax. Force it back to a String so
+        // that serde_yaml will emit it as a properly quoted scalar.
         let yaml_val: serde_yaml::Value = match serde_yaml::from_str(v) {
-            Ok(serde_yaml::Value::Mapping(_)) | Ok(serde_yaml::Value::Sequence(_)) => {
-                serde_yaml::Value::String(v.clone())
-            }
+            Ok(serde_yaml::Value::Mapping(_))
+            | Ok(serde_yaml::Value::Sequence(_))
+            | Ok(serde_yaml::Value::Tagged(_)) => serde_yaml::Value::String(v.clone()),
             Ok(val) => val,
             Err(_) => serde_yaml::Value::String(v.clone()),
         };
