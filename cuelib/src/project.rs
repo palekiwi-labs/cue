@@ -84,6 +84,9 @@ impl ProjectStore {
         }
         let data = std::fs::read_to_string(&path)
             .with_context(|| format!("Failed to read {}", path.display()))?;
+        if data.trim().is_empty() {
+            return Ok(Self::default());
+        }
         let store = serde_json::from_str(&data)
             .with_context(|| format!("Failed to parse {}", path.display()))?;
         Ok(store)
@@ -267,6 +270,20 @@ mod tests {
     fn load_returns_empty_when_file_absent() {
         let dir = TempDir::new().unwrap();
         temp_env::with_var("CUE_DATA_DIR", Some(data_dir_path(&dir)), || {
+            let store = ProjectStore::load().unwrap();
+            assert!(store.entries().is_empty());
+        });
+    }
+
+    #[test]
+    fn load_returns_empty_when_file_is_empty() {
+        let dir = TempDir::new().unwrap();
+        temp_env::with_var("CUE_DATA_DIR", Some(data_dir_path(&dir)), || {
+            let path = store_path();
+            if let Some(parent) = path.parent() {
+                std::fs::create_dir_all(parent).unwrap();
+            }
+            std::fs::write(&path, "").unwrap();
             let store = ProjectStore::load().unwrap();
             assert!(store.entries().is_empty());
         });
