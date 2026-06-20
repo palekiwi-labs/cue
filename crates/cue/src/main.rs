@@ -95,6 +95,9 @@ fn main() -> anyhow::Result<()> {
         Commands::Config { command } => {
             commands::config::handle(&cwd, command)?;
         }
+        Commands::Project { command } => {
+            commands::project::handle(&cwd, command)?;
+        }
     }
 
     Ok(())

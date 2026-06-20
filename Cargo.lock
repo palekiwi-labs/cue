@@ -399,6 +399,7 @@ dependencies = [
  "arboard",
  "assert_cmd",
  "clap",
+ "cuelib",
  "dirs",
  "figment",
  "glob",
@@ -408,6 +409,19 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "temp-env",
+ "tempfile",
+]
+
+[[package]]
+name = "cuelib"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "dirs",
+ "figment",
+ "serde",
+ "serde_json",
  "temp-env",
  "tempfile",
 ]

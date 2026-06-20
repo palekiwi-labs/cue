@@ -88,7 +88,7 @@ mod tests {
         let config_json = r#"{"artifact_types": ["spec", "trace", "tmp", "doc", "custom"]}"#;
         std::fs::write(dir.path().join("cue.json"), config_json).unwrap();
 
-        // Unset CUE_ARTIFACT_TYPES so host environment cannot override the JSON config
+        // Unset CUE_ARTIFACT_TYPES so host env cannot override the JSON config
         let config =
             temp_env::with_var_unset("CUE_ARTIFACT_TYPES", || Config::load(dir.path()).unwrap());
         assert_eq!(
@@ -105,7 +105,7 @@ mod tests {
         let config_json = r#"{"ignored_types": ["tmp", "ref"]}"#;
         std::fs::write(dir.path().join("cue.json"), config_json).unwrap();
 
-        // Unset CUE_IGNORED_TYPES so host environment cannot override the JSON config
+        // Unset CUE_IGNORED_TYPES so host env cannot override the JSON config
         let config =
             temp_env::with_var_unset("CUE_IGNORED_TYPES", || Config::load(dir.path()).unwrap());
         assert_eq!(config.ignored_types, vec!["tmp", "ref"]);
@@ -116,7 +116,6 @@ mod tests {
         use tempfile::tempdir;
         let dir = tempdir().unwrap();
 
-        // Set a nested environment variable
         // CUE_CONTEXT__DEFAULT__INSTRUCTIONS maps to context["default"].instructions
         unsafe {
             std::env::set_var("CUE_CONTEXT__DEFAULT__INSTRUCTIONS", "env instructions");

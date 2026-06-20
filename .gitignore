@@ -28,6 +28,7 @@ __pycache__/
 #.idea/
 result
 
+.agents
 .direnv
 .envrc
 .ref

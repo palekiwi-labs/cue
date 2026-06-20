@@ -2,46 +2,42 @@ mod helpers;
 
 use predicates::prelude::*;
 use std::fs;
-use tempfile::TempDir;
 
 #[test]
 fn test_log_add_basic() -> anyhow::Result<()> {
-    let temp = TempDir::new()?;
-    helpers::setup_git_repo(temp.path());
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
 
     // Initialize mem
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init");
-    cmd.assert().success();
+        .arg("init")
+        .assert()
+        .success();
 
     // Add a log entry
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("log")
         .arg("add")
         .arg("--title")
-        .arg("Test Title");
-
-    cmd.assert()
+        .arg("Test Title")
+        .assert()
         .success()
         .stdout(predicate::str::diff(".test-mem/main/spec/log.md\n"));
 
-    let log_path = temp.path().join(".test-mem/main/spec/log.md");
+    let log_path = env.root().join(".test-mem/main/spec/log.md");
     let content = fs::read_to_string(&log_path)?;
 
     assert!(content.contains("# Project Log"));
     assert!(content.contains("Test Title"));
 
     // Add another log entry with dirty tree
-    fs::write(temp.path().join("dirty.txt"), "dirty")?;
+    fs::write(env.root().join("dirty.txt"), "dirty")?;
 
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("log")
@@ -53,9 +49,9 @@ fn test_log_add_basic() -> anyhow::Result<()> {
         .arg("--found")
         .arg("Found something")
         .arg("--decided")
-        .arg("Decided something");
-
-    cmd.assert().success();
+        .arg("Decided something")
+        .assert()
+        .success();
 
     let content = fs::read_to_string(&log_path)?;
     assert!(content.contains("-dirty] Dirty Entry"));
@@ -68,37 +64,36 @@ fn test_log_add_basic() -> anyhow::Result<()> {
 
 #[test]
 fn test_log_add_from_file() -> anyhow::Result<()> {
-    let temp = TempDir::new()?;
-    helpers::setup_git_repo(temp.path());
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
 
     // Initialize mem
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init");
-    cmd.assert().success();
+        .arg("init")
+        .assert()
+        .success();
 
     let json_content = r#"{
         "title": "JSON Title",
         "body": "JSON Body",
         "open": ["Question 1", "Question 2"]
     }"#;
-    let json_path = temp.path().join("log.json");
+    let json_path = env.root().join("log.json");
     fs::write(&json_path, json_content)?;
 
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("log")
         .arg("add")
         .arg("--file")
-        .arg(&json_path);
+        .arg(&json_path)
+        .assert()
+        .success();
 
-    cmd.assert().success();
-
-    let log_path = temp.path().join(".test-mem/main/spec/log.md");
+    let log_path = env.root().join(".test-mem/main/spec/log.md");
     let content = fs::read_to_string(&log_path)?;
 
     assert!(content.contains("JSON Title"));
@@ -111,41 +106,37 @@ fn test_log_add_from_file() -> anyhow::Result<()> {
 
 #[test]
 fn test_log_add_validation() -> anyhow::Result<()> {
-    let temp = TempDir::new()?;
-    helpers::setup_git_repo(temp.path());
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
 
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init");
-    cmd.assert().success();
+        .arg("init")
+        .assert()
+        .success();
 
     // Empty title
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("log")
         .arg("add")
         .arg("--title")
-        .arg("   ");
-
-    cmd.assert()
+        .arg("   ")
+        .assert()
         .failure()
         .stderr(predicate::str::contains("Title cannot be empty"));
 
     // Missing title
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("log")
         .arg("add")
         .arg("--body")
-        .arg("Some body");
-
-    cmd.assert()
+        .arg("Some body")
+        .assert()
         .failure()
         .stderr(predicate::str::contains("The --title argument is required"));
 
@@ -154,55 +145,55 @@ fn test_log_add_validation() -> anyhow::Result<()> {
 
 #[test]
 fn test_log_list() -> anyhow::Result<()> {
-    let temp = TempDir::new()?;
-    helpers::setup_git_repo(temp.path());
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
 
     // 1. Uninitialized
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("log")
-        .arg("list");
-    cmd.assert().success().stdout(predicate::str::is_empty());
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
 
     // Initialize mem
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init");
-    cmd.assert().success();
+        .arg("init")
+        .assert()
+        .success();
 
     // 2. Initialized but no log
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("log")
-        .arg("list");
-    cmd.assert().success().stdout(predicate::str::is_empty());
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::is_empty());
 
     // Add entry
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("log")
         .arg("add")
         .arg("--title")
-        .arg("My Title");
-    cmd.assert().success();
+        .arg("My Title")
+        .assert()
+        .success();
 
     // 3. Has log
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("log")
-        .arg("list");
-
-    cmd.assert()
+        .arg("list")
+        .assert()
         .success()
         .stdout(predicate::str::contains("# Project Log"))
         .stdout(predicate::str::contains("My Title"));

@@ -1,4 +1,4 @@
-use anyhow::{Context, anyhow};
+use anyhow::{anyhow, Context};
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -140,4 +140,9 @@ pub fn is_working_tree_dirty(cwd: &Path) -> anyhow::Result<bool> {
 
 pub fn sanitize_branch_name(branch: &str) -> String {
     branch.replace(['/', '\\'], "-")
+}
+
+/// Derive the remote URL for `origin`, if configured.
+pub fn get_remote_url(root: &Path) -> Option<String> {
+    run_git(["remote", "get-url", "origin"], root).ok()
 }

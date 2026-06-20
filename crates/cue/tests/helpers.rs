@@ -2,10 +2,15 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
+/// The single authoritative test isolation boundary. All integration tests
+/// MUST spawn the `cue` binary via `TestEnv::command()`. Never use a raw
+/// `assert_cmd::Command` directly — doing so risks leaking into the
+/// developer's real config and data directories.
 #[allow(dead_code)]
 pub struct TestEnv {
     pub temp_dir: TempDir,
     pub config_dir: PathBuf,
+    pub data_dir: PathBuf,
 }
 
 impl Default for TestEnv {
@@ -19,20 +24,28 @@ impl TestEnv {
     pub fn new() -> Self {
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let config_dir = temp_dir.path().join("config");
-        std::fs::create_dir(&config_dir).expect("Failed to create config dir");
+        let data_dir = temp_dir.path().join("data");
+        std::fs::create_dir_all(&config_dir).expect("Failed to create config dir");
+        std::fs::create_dir_all(&data_dir).expect("Failed to create data dir");
 
         Self {
             temp_dir,
             config_dir,
+            data_dir,
         }
     }
 
+    /// Returns a fully isolated `cue` command. Config and data store
+    /// directories are scoped to this `TestEnv`'s `TempDir` and are
+    /// cleaned up automatically on drop.
     #[allow(dead_code)]
     pub fn command(&self) -> assert_cmd::Command {
         let mut cmd = assert_cmd::Command::cargo_bin("cue").expect("Failed to find cue binary");
-        cmd.env("CUE_CONFIG_DIR", &self.config_dir);
-        // Isolate from user's git config if necessary, but for now we focus on cue config
-        cmd.current_dir(self.temp_dir.path());
+        cmd.env("CUE_CONFIG_DIR", &self.config_dir)
+            .env("CUE_DATA_DIR", &self.data_dir)
+            .env_remove("CUE_ARTIFACT_TYPES")
+            .env_remove("CUE_IGNORED_TYPES")
+            .current_dir(self.temp_dir.path());
         cmd
     }
 
@@ -40,19 +53,6 @@ impl TestEnv {
     pub fn root(&self) -> &Path {
         self.temp_dir.path()
     }
-}
-
-/// Returns a `cue` command fully isolated from the host environment:
-/// - `CUE_CONFIG_DIR` points to the system temp dir (no global cue.json)
-/// - `CUE_ARTIFACT_TYPES` and `CUE_IGNORED_TYPES` are removed so project
-///   cue.json and compiled-in defaults remain authoritative.
-#[allow(dead_code)]
-pub fn cue_cmd() -> assert_cmd::Command {
-    let mut cmd = assert_cmd::Command::cargo_bin("cue").expect("Failed to find cue binary");
-    cmd.env("CUE_CONFIG_DIR", std::env::temp_dir())
-        .env_remove("CUE_ARTIFACT_TYPES")
-        .env_remove("CUE_IGNORED_TYPES");
-    cmd
 }
 
 pub fn setup_git_repo(dir: &Path) {
