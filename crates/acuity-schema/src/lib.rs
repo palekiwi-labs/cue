@@ -9,7 +9,7 @@ use ts_rs::TS;
 /// this crate) into a single `types.ts` file rather than per-type files.
 /// This is the intended distribution artifact for `cue-plugins`.
 #[derive(Debug, Serialize, Deserialize, TS)]
-#[ts(export, export_to = "types.ts")]
+#[ts(export_to = "types.ts")]
 pub struct Placeholder {
     pub name: String,
 }
