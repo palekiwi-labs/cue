@@ -14,8 +14,6 @@ pub enum TodoStatus {
     Complete,
     /// Hidden in the kanban view.
     Closed,
-    /// Hidden in the kanban view.
-    Archived,
 }
 
 impl TodoStatus {
@@ -31,7 +29,6 @@ impl TodoStatus {
             Self::InProgress => "in-progress",
             Self::Complete => "complete",
             Self::Closed => "closed",
-            Self::Archived => "archived",
         }
     }
 }
@@ -45,7 +42,6 @@ impl std::str::FromStr for TodoStatus {
             "in-progress" => Ok(Self::InProgress),
             "complete" => Ok(Self::Complete),
             "closed" => Ok(Self::Closed),
-            "archived" => Ok(Self::Archived),
             _ => Err(()),
         }
     }
@@ -119,7 +115,6 @@ mod tests {
         assert!(TodoStatus::InProgress.is_kanban_visible());
         assert!(TodoStatus::Complete.is_kanban_visible());
         assert!(!TodoStatus::Closed.is_kanban_visible());
-        assert!(!TodoStatus::Archived.is_kanban_visible());
     }
 
     #[test]
@@ -130,7 +125,6 @@ mod tests {
             ("in-progress", TodoStatus::InProgress),
             ("complete", TodoStatus::Complete),
             ("closed", TodoStatus::Closed),
-            ("archived", TodoStatus::Archived),
         ] {
             let parsed = TodoStatus::from_str(s).unwrap();
             assert_eq!(&parsed, expected);
@@ -179,9 +173,10 @@ mod tests {
     }
 
     #[test]
-    fn task_status_archived_is_not_valid() {
-        // `archived` is a todo-only status; tasks must reject it
+    fn status_archived_is_invalid() {
+        // `archived` is not a status; it should be an orthogonal flag if ever implemented.
         use std::str::FromStr;
         assert!(TaskStatus::from_str("archived").is_err());
+        assert!(TodoStatus::from_str("archived").is_err());
     }
 }
