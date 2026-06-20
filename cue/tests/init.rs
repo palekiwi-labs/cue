@@ -4,28 +4,20 @@ use predicates::prelude::*;
 use std::fs;
 use tempfile::TempDir;
 
-fn cue_cmd_with_data_dir(data_dir: &TempDir) -> assert_cmd::Command {
-    let mut cmd = helpers::cue_cmd();
-    cmd.env("CUE_DATA_DIR", data_dir.path());
-    cmd
-}
-
 #[test]
 fn test_init_fresh_repo() -> anyhow::Result<()> {
-    let temp = TempDir::new()?;
-    helpers::setup_git_repo(temp.path());
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
 
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init");
-
-    cmd.assert()
+        .arg("init")
+        .assert()
         .success()
         .stdout(predicate::str::contains("Initialized .test-mem/ directory"));
 
-    let mem_dir = temp.path().join(".test-mem");
+    let mem_dir = env.root().join(".test-mem");
     assert!(mem_dir.exists());
     assert!(mem_dir.join(".gitignore").exists());
     assert!(mem_dir.join(".rgignore").exists());
@@ -39,27 +31,27 @@ fn test_init_fresh_repo() -> anyhow::Result<()> {
 
 #[test]
 fn test_init_gitignore_respects_config() -> anyhow::Result<()> {
-    let temp = TempDir::new()?;
-    helpers::setup_git_repo(temp.path());
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
 
     // Configure custom ignored types
     fs::write(
-        temp.path().join("cue.json"),
+        env.root().join("cue.json"),
         r#"{"ignored_types": ["tmp", "ref"]}"#,
     )?;
 
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init");
-    cmd.assert().success();
+        .arg("init")
+        .assert()
+        .success();
 
-    let gitignore = fs::read_to_string(temp.path().join(".test-mem/.gitignore"))?;
+    let gitignore = fs::read_to_string(env.root().join(".test-mem/.gitignore"))?;
     assert!(gitignore.contains("*/tmp/"));
     assert!(gitignore.contains("*/ref/"));
 
-    let rgignore = fs::read_to_string(temp.path().join(".test-mem/.rgignore"))?;
+    let rgignore = fs::read_to_string(env.root().join(".test-mem/.rgignore"))?;
     assert!(rgignore.contains("!*/tmp/"));
     assert!(rgignore.contains("!*/ref/"));
 
@@ -68,12 +60,11 @@ fn test_init_gitignore_respects_config() -> anyhow::Result<()> {
 
 #[test]
 fn test_init_not_a_git_repo() -> anyhow::Result<()> {
-    let temp = TempDir::new()?;
+    let env = helpers::TestEnv::new();
 
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path()).arg("init");
-
-    cmd.assert()
+    env.command()
+        .arg("init")
+        .assert()
         .failure()
         .stderr(predicate::str::contains("Not in a git repository"));
 
@@ -82,54 +73,50 @@ fn test_init_not_a_git_repo() -> anyhow::Result<()> {
 
 #[test]
 fn test_init_already_initialized() -> anyhow::Result<()> {
-    let temp = TempDir::new()?;
-    helpers::setup_git_repo(temp.path());
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
 
     // First init
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init");
-    cmd.assert().success();
+        .arg("init")
+        .assert()
+        .success();
 
     // Second init
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init");
-
-    cmd.assert().success().stdout(predicate::str::contains(
-        ".test-mem/ directory already exists. Already initialized?",
-    ));
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            ".test-mem/ directory already exists. Already initialized?",
+        ));
 
     Ok(())
 }
 
 #[test]
 fn test_init_local_branch_exists() -> anyhow::Result<()> {
-    let temp = TempDir::new()?;
-    helpers::setup_git_repo(temp.path());
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
 
     // Create a local branch but don't leave it checked out in a worktree
-    // Note: In a fresh repo, main is checked out.
-    // If we create test-mem, it becomes the new branch.
-    // We should create it and then switch back to main.
     std::process::Command::new("git")
         .args(["branch", "test-mem"])
-        .current_dir(temp.path())
+        .current_dir(env.root())
         .output()?;
 
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init");
+        .arg("init")
+        .assert()
+        .success();
 
-    cmd.assert().success();
-
-    let mem_dir = temp.path().join(".test-mem");
+    let mem_dir = env.root().join(".test-mem");
     assert!(mem_dir.exists());
 
     Ok(())
@@ -137,19 +124,17 @@ fn test_init_local_branch_exists() -> anyhow::Result<()> {
 
 #[test]
 fn test_init_registers_project_in_store() -> anyhow::Result<()> {
-    let temp = TempDir::new()?;
-    let data = TempDir::new()?;
-    helpers::setup_git_repo(temp.path());
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
 
-    cue_cmd_with_data_dir(&data)
-        .current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("init")
         .assert()
         .success();
 
-    let store_path = data.path().join("projects.json");
+    let store_path = env.data_dir.join("projects.json");
     assert!(
         store_path.exists(),
         "projects.json should be created by init"
@@ -157,7 +142,7 @@ fn test_init_registers_project_in_store() -> anyhow::Result<()> {
 
     let content = fs::read_to_string(&store_path)?;
     assert!(
-        content.contains(temp.path().to_str().unwrap()),
+        content.contains(env.root().to_str().unwrap()),
         "store should contain the project path"
     );
 
@@ -166,13 +151,11 @@ fn test_init_registers_project_in_store() -> anyhow::Result<()> {
 
 #[test]
 fn test_init_twice_does_not_duplicate_entry() -> anyhow::Result<()> {
-    let temp = TempDir::new()?;
-    let data = TempDir::new()?;
-    helpers::setup_git_repo(temp.path());
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
 
     // First init
-    cue_cmd_with_data_dir(&data)
-        .current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("init")
@@ -180,16 +163,15 @@ fn test_init_twice_does_not_duplicate_entry() -> anyhow::Result<()> {
         .success();
 
     // Second init — already initialized, but store registration must be idempotent
-    cue_cmd_with_data_dir(&data)
-        .current_dir(temp.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("init")
         .assert()
         .success();
 
-    let content = fs::read_to_string(data.path().join("projects.json"))?;
-    let path_str = temp.path().to_str().unwrap();
+    let content = fs::read_to_string(env.data_dir.join("projects.json"))?;
+    let path_str = env.root().to_str().unwrap();
     let count = content.matches(path_str).count();
     assert_eq!(count, 1, "path should appear exactly once in store");
 
@@ -198,51 +180,49 @@ fn test_init_twice_does_not_duplicate_entry() -> anyhow::Result<()> {
 
 #[test]
 fn test_init_remote_branch_exists() -> anyhow::Result<()> {
-    let temp_local = TempDir::new()?;
+    let env = helpers::TestEnv::new();
     let temp_remote = TempDir::new()?;
 
-    helpers::setup_git_repo(temp_local.path());
-    helpers::setup_remote(temp_local.path(), temp_remote.path());
+    helpers::setup_git_repo(env.root());
+    helpers::setup_remote(env.root(), temp_remote.path());
 
     // Create and push branch
     std::process::Command::new("git")
         .args(["checkout", "-b", "test-mem"])
-        .current_dir(temp_local.path())
+        .current_dir(env.root())
         .output()?;
 
     std::process::Command::new("git")
         .args(["push", "origin", "test-mem"])
-        .current_dir(temp_local.path())
+        .current_dir(env.root())
         .output()?;
 
     // Delete local branch to simulate "remote only"
     std::process::Command::new("git")
         .args(["checkout", "main"])
-        .current_dir(temp_local.path())
+        .current_dir(env.root())
         .output()?;
 
     std::process::Command::new("git")
         .args(["branch", "-D", "test-mem"])
-        .current_dir(temp_local.path())
+        .current_dir(env.root())
         .output()?;
 
-    let mut cmd = helpers::cue_cmd();
-    cmd.current_dir(temp_local.path())
+    env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init");
-
-    cmd.assert()
+        .arg("init")
+        .assert()
         .success()
         .stdout(predicate::str::contains("Found test-mem branch on remote"));
 
-    let mem_dir = temp_local.path().join(".test-mem");
+    let mem_dir = env.root().join(".test-mem");
     assert!(mem_dir.exists());
 
     // Verify upstream tracking
     let output = std::process::Command::new("git")
         .args(["config", "branch.test-mem.remote"])
-        .current_dir(mem_dir)
+        .current_dir(&mem_dir)
         .output()?;
     assert_eq!(String::from_utf8_lossy(&output.stdout).trim(), "origin");
 

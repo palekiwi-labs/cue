@@ -55,19 +55,6 @@ impl TestEnv {
     }
 }
 
-/// Returns a `cue` command fully isolated from the host environment:
-/// - `CUE_CONFIG_DIR` points to the system temp dir (no global cue.json)
-/// - `CUE_ARTIFACT_TYPES` and `CUE_IGNORED_TYPES` are removed so project
-///   cue.json and compiled-in defaults remain authoritative.
-#[allow(dead_code)]
-pub fn cue_cmd() -> assert_cmd::Command {
-    let mut cmd = assert_cmd::Command::cargo_bin("cue").expect("Failed to find cue binary");
-    cmd.env("CUE_CONFIG_DIR", std::env::temp_dir())
-        .env_remove("CUE_ARTIFACT_TYPES")
-        .env_remove("CUE_IGNORED_TYPES");
-    cmd
-}
-
 pub fn setup_git_repo(dir: &Path) {
     Command::new("git")
         .args(["init", "-b", "main"])
