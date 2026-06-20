@@ -1,9 +1,8 @@
 ---
-title: 
-  fix: quote title values containing colons in task frontmatter
+title: "fix: quote title values containing colons in task frontmatter"
 status: complete
 priority: high
-branch: fix/title-yaml-quoting
+branch: "fix/title-yaml-quoting"
 ---
 # fix: quote title values containing colons in task frontmatter
 
