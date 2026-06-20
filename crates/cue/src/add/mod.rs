@@ -102,8 +102,18 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
 pub fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
     let mut map = serde_yaml::Mapping::new();
     for (k, v) in fields {
-        let yaml_val: serde_yaml::Value =
-            serde_yaml::from_str(v).unwrap_or_else(|_| serde_yaml::Value::String(v.clone()));
+        // Parse the raw string to allow scalar type coercion (bool, int,
+        // float). However, if the parse yields a collection type (Mapping,
+        // Sequence, or Tagged) the user supplied a plain string that happens
+        // to contain YAML collection syntax. Force it back to a String so
+        // that serde_yaml will emit it as a properly quoted scalar.
+        let yaml_val: serde_yaml::Value = match serde_yaml::from_str(v) {
+            Ok(serde_yaml::Value::Mapping(_))
+            | Ok(serde_yaml::Value::Sequence(_))
+            | Ok(serde_yaml::Value::Tagged(_)) => serde_yaml::Value::String(v.clone()),
+            Ok(val) => val,
+            Err(_) => serde_yaml::Value::String(v.clone()),
+        };
         map.insert(serde_yaml::Value::String(k.clone()), yaml_val);
     }
     let yaml_str =
