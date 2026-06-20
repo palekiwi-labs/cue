@@ -1,6 +1,6 @@
 [workspace]
 members = [
-    "cue",
-    "cuelib",
+    "crates/cue",
+    "crates/cuelib",
 ]
 resolver = "2"
