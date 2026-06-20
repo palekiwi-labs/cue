@@ -6,6 +6,11 @@
       "source": "~/.cargo/",
       "target": "~/.cargo/",
       "type": "bind"
+    },
+    "cue-plugins": {
+      "source": "/home/pl/code/palekiwi-labs/cue-plugins",
+      "target": "/home/pl/code/palekiwi-labs/cue-plugins",
+      "type": "bind"
     }
   }
 }
