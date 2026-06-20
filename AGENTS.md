@@ -1,5 +1,7 @@
 # Agent Context: cue
 
+<important>always load the "cue" skill first</important>
+
 This repository is the home of the `cue` CLI tool and protocol—a system designed to manage **Agent Memory** and ensure cross-session continuity.
 
 ## Purpose
