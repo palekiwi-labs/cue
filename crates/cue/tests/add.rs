@@ -916,6 +916,76 @@ fn test_add_frontmatter_roundtrip_with_list() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_add_frontmatter_colon_in_string_value() -> anyhow::Result<()> {
+    // A title containing ": " must be written as a quoted YAML string, not
+    // parsed as a mapping. Covers AC #1 and #2 of fix-title-yaml-quoting.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body text")
+        .arg("-f")
+        .arg("title=foo: bar baz")
+        .arg("-f")
+        .arg("branch=feature/foo: wip")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(&file_path)?;
+
+    // AC #1: the raw file must contain a quoted string, not a bare mapping
+    assert!(
+        !raw.contains("title:\n") && !raw.contains("title: foo:"),
+        "title must not be written as an unquoted mapping; got:\n{}",
+        raw
+    );
+    assert!(
+        !raw.contains("branch:\n") && !raw.contains("branch: feature/foo:"),
+        "branch must not be written as an unquoted mapping; got:\n{}",
+        raw
+    );
+
+    // AC #2: round-trip — YAML parse of the frontmatter must yield strings
+    let fm_end = raw.find("---\n").and_then(|_| {
+        let after = &raw[4..];
+        after.find("---\n").map(|i| i + 4)
+    });
+    let fm_str = fm_end
+        .map(|end| &raw[4..end])
+        .expect("frontmatter not found");
+    let parsed: serde_yaml::Value =
+        serde_yaml::from_str(fm_str).expect("frontmatter must be valid YAML");
+
+    assert_eq!(
+        parsed["title"].as_str(),
+        Some("foo: bar baz"),
+        "title must round-trip as a string; got: {:?}",
+        parsed["title"]
+    );
+    assert_eq!(
+        parsed["branch"].as_str(),
+        Some("feature/foo: wip"),
+        "branch must round-trip as a string; got: {:?}",
+        parsed["branch"]
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_add_frontmatter_invalid_format_rejected() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
