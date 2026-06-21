@@ -1,18 +1,17 @@
 use axum::body::Body;
-use std::sync::Arc;
 use tower::ServiceExt;
 
 use crate::{AppState, make_app};
 
-fn test_state() -> Arc<AppState> {
-    Arc::new(AppState {
+fn test_state() -> AppState {
+    AppState {
         config: crate::config::Config {
-            gotify_host: "localhost:80".into(),
+            gotify_url: "http://localhost:80".into(),
             port: 0,
         },
         gotify_token: "test-token".into(),
         http: reqwest::Client::new(),
-    })
+    }
 }
 
 async fn send_request(
