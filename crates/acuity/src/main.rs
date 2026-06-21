@@ -2,6 +2,8 @@
 // Phase 1 stateless MVP: receives session.idle events, forwards to Gotify.
 
 mod config;
+#[cfg(test)]
+mod tests;
 
 use std::path::Path;
 use std::sync::Arc;
@@ -21,6 +23,12 @@ struct AppState {
     config: config::Config,
     gotify_token: String,
     http: reqwest::Client,
+}
+
+fn make_app(state: Arc<AppState>) -> Router {
+    Router::new()
+        .route("/events", post(handle_event))
+        .with_state(state)
 }
 
 #[tokio::main]
@@ -47,9 +55,7 @@ async fn main() -> anyhow::Result<()> {
         http: reqwest::Client::new(),
     });
 
-    let app = Router::new()
-        .route("/events", post(handle_event))
-        .with_state(state);
+    let app = make_app(state);
 
     let addr = format!("0.0.0.0:{}", cfg.port);
     info!("acuity listening on {}", addr);
