@@ -9,8 +9,8 @@ Gotify notification server.
 
 ## NixOS module
 
-The flake exposes a NixOS module at `nixosModules.default` (also aliased as
-`nixosModules.acuity`). Import it into your system configuration to run
+The flake exposes a NixOS module at `nixosModules.acuity`. Import it into your
+system configuration to run
 `acuity` as a managed systemd service:
 
 ```nix
@@ -24,7 +24,7 @@ The flake exposes a NixOS module at `nixosModules.default` (also aliased as
     nixosConfigurations.my-host = nixpkgs.lib.nixosSystem {
       system = "x86_64-linux";
       modules = [
-        cue.nixosModules.default
+        cue.nixosModules.acuity
         {
           services.acuity = {
             enable = true;

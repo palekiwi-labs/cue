@@ -1,9 +1,8 @@
 # NixOS module for the acuity service.
 #
-# Consumed via the flake's `nixosModules.default` (also aliased as
-# `nixosModules.acuity`) output. The flake passes its own `self` reference into
-# this module so the default `package` option can reference the workspace build
-# without any consumer wiring.
+# Consumed via the flake's `nixosModules.acuity` output. The flake passes its
+# own `self` reference into this module so the default `package` option can
+# reference the workspace build without any consumer wiring.
 #
 # acuity is env-driven (no CLI flags), so service configuration is injected via
 # `environment` and `EnvironmentFile`, not ExecStart arguments.

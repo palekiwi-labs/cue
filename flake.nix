@@ -56,7 +56,6 @@
           };
       }))
     // {
-      nixosModules.default = import ./nixos/module.nix self;
-      nixosModules.acuity = import ./nixos/module.nix self;
+      nixosModules.acuity = import ./nixos/acuity.nix self;
     };
 }
