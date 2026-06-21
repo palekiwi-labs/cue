@@ -130,9 +130,9 @@ pub fn extract_frontmatter_yaml(path: &Path) -> Option<String> {
     let mut reader = BufReader::new(file);
     let mut line = String::new();
 
-    // First line must be exactly "---"
+    // First line must be exactly "---" (no leading or trailing whitespace)
     reader.read_line(&mut line).ok()?;
-    if line.trim_end() != "---" {
+    if line.trim() != "---" {
         return None;
     }
 
@@ -143,7 +143,7 @@ pub fn extract_frontmatter_yaml(path: &Path) -> Option<String> {
         if n == 0 {
             return None; // EOF before closing fence — malformed
         }
-        if line.trim_end() == "---" {
+        if line.trim() == "---" {
             return Some(yaml);
         }
         yaml.push_str(&line);
@@ -185,10 +185,7 @@ pub struct ArtifactMeta {
 /// not exist.
 pub fn read_artifacts(root: &Path, branch: &str, artifact_type: &str) -> Result<Vec<ArtifactMeta>> {
     let dir = root.join(".cue").join(branch).join(artifact_type);
-    if !dir.exists() {
-        return Ok(vec![]);
-    }
-
+    // collect_files already guards with is_dir(); delegate rather than duplicating.
     let mut files = collect_files(&dir)?;
     files.sort();
 
