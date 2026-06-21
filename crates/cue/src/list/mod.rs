@@ -1,13 +1,10 @@
 use crate::config::Config;
 use crate::git;
 use anyhow::Result;
+use cuelib::artifact::{collect_files, extract_frontmatter_yaml};
 use serde::Serialize;
-use std::fs;
-use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
-
-const FRONTMATTER_MAX_LINES: usize = 64;
 
 // ── Frontmatter filter ───────────────────────────────────────────────────────
 
@@ -313,51 +310,6 @@ pub fn to_cue_file(path: &Path, cue_path: &Path, root: &Path) -> Option<CueFile>
     }
 
     Some(cue_file)
-}
-
-pub fn extract_frontmatter_yaml(path: &Path) -> Option<String> {
-    let file = fs::File::open(path).ok()?;
-    let mut reader = BufReader::new(file);
-    let mut line = String::new();
-
-    // First line must be exactly "---"
-    reader.read_line(&mut line).ok()?;
-    if line.trim_end() != "---" {
-        return None;
-    }
-
-    let mut yaml = String::new();
-    for _ in 0..FRONTMATTER_MAX_LINES {
-        line.clear();
-        let n = reader.read_line(&mut line).ok()?;
-        if n == 0 {
-            return None; // EOF before closing fence -- malformed
-        }
-        if line.trim_end() == "---" {
-            return Some(yaml);
-        }
-        yaml.push_str(&line);
-    }
-
-    None // Exceeded line budget -- treat as malformed
-}
-
-pub fn collect_files(dir: &Path) -> Result<Vec<PathBuf>> {
-    if !dir.is_dir() {
-        return Ok(vec![]);
-    }
-
-    fs::read_dir(dir)?
-        .map(|entry| -> Result<Vec<PathBuf>> {
-            let path = entry?.path();
-            if path.is_dir() {
-                collect_files(&path)
-            } else {
-                Ok(vec![path])
-            }
-        })
-        .collect::<Result<Vec<_>>>()
-        .map(|v| v.into_iter().flatten().collect())
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────
