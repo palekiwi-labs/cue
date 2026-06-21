@@ -1,6 +1,7 @@
 {
   "default": {
     "artifacts": [
+      "spec/log.md",
       "plan/index.md"
     ],
     "diff": null,

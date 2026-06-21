@@ -1,7 +1,8 @@
 ---
 title: "acuity stateless MVP: session.idle -> Gotify"
-status: open
+status: in-progress
 priority: normal
+branch: "feat/acuity-mvp"
 ---
 # acuity stateless MVP: session.idle -> Gotify
 
