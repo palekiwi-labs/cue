@@ -10,8 +10,8 @@
     };
   };
 
-  outputs = { nixpkgs, fenix, flake-utils, ... }:
-    flake-utils.lib.eachDefaultSystem (system:
+  outputs = { self, nixpkgs, fenix, flake-utils, ... }:
+    (flake-utils.lib.eachDefaultSystem (system:
       let
         pkgs = nixpkgs.legacyPackages.${system};
         rustToolchain = fenix.packages.${system}.stable.toolchain;
@@ -54,5 +54,9 @@
               echo "Rust version: $(rustc --version)"
             '';
           };
-      });
+      }))
+    // {
+      nixosModules.default = import ./nixos/module.nix self;
+      nixosModules.acuity = import ./nixos/module.nix self;
+    };
 }
