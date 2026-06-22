@@ -30,19 +30,33 @@ struct Cli {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let root = cli
-        .root
-        .unwrap_or_else(|| env::current_dir().expect("cannot read cwd"));
+    let root = match cli.root {
+        Some(p) => p,
+        None => env::current_dir()?,
+    };
 
     let tasks = read_artifacts(&root, &cli.branch, "task")?;
+
+    // Install a panic hook that restores the terminal before printing the
+    // panic message, so the backtrace is readable and the shell is not left
+    // in raw mode.
+    let default_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = tui::restore();
+        default_hook(info);
+    }));
 
     let mut app = App::new(tasks);
     let mut terminal = tui::init()?;
 
-    let result = run(&mut terminal, &mut app);
+    let run_result = run(&mut terminal, &mut app);
 
-    tui::restore()?;
-    result
+    // Always restore the terminal, even if run() returned an error.
+    // Preserve and return the run error if restore succeeds.
+    let restore_result = tui::restore();
+    run_result?;
+    restore_result?;
+    Ok(())
 }
 
 fn run(terminal: &mut tui::Tui, app: &mut App) -> Result<()> {
@@ -56,10 +70,6 @@ fn run(terminal: &mut tui::Tui, app: &mut App) -> Result<()> {
             Action::Left => app.move_left(),
             Action::Right => app.move_right(),
             Action::None => {}
-        }
-
-        if app.should_quit {
-            break;
         }
     }
     Ok(())

@@ -1,4 +1,4 @@
-use cuelib::artifact::ArtifactMeta;
+use cuelib::artifact::{ArtifactMeta, TaskStatus};
 
 /// Which kanban column is currently active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,24 +50,25 @@ pub struct App {
     pub sel_open: usize,
     pub sel_in_progress: usize,
     pub sel_complete: usize,
-
-    /// Whether the TUI should exit on the next tick.
-    pub should_quit: bool,
 }
 
 impl App {
+    /// Classify `tasks` into kanban columns using the typed `TaskStatus` from
+    /// `cuelib`. Tasks whose status parses as `Closed`, or whose status field
+    /// is absent / unrecognised, are silently excluded (they are not kanban-
+    /// visible by definition).
     pub fn new(tasks: Vec<ArtifactMeta>) -> Self {
         let mut open = Vec::new();
         let mut in_progress = Vec::new();
         let mut complete = Vec::new();
 
         for task in tasks {
-            match task.status_raw.as_deref() {
-                Some("open") => open.push(task),
-                Some("in-progress") => in_progress.push(task),
-                Some("complete") => complete.push(task),
-                // closed or unrecognised — skip
-                _ => {}
+            match task.status::<TaskStatus>() {
+                Some(TaskStatus::Open) => open.push(task),
+                Some(TaskStatus::InProgress) => in_progress.push(task),
+                Some(TaskStatus::Complete) => complete.push(task),
+                // Closed or unrecognised — not kanban-visible.
+                Some(TaskStatus::Closed) | None => {}
             }
         }
 
@@ -79,7 +80,6 @@ impl App {
             sel_open: 0,
             sel_in_progress: 0,
             sel_complete: 0,
-            should_quit: false,
         }
     }
 
