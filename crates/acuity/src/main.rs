@@ -1,13 +1,14 @@
 // acuity: observability server for the cue ecosystem.
-// Phase 1 stateless MVP: receives session.idle events, forwards to Gotify.
+// Phase 3: 4-event model, SQLite persistence, optional Gotify notifications.
 
 mod config;
+mod db;
 #[cfg(test)]
 mod tests;
 
 use std::path::Path;
 
-use acuity_schema::{SCHEMA_VERSION, SessionIdle};
+use acuity_schema::{AcuityEvent, SCHEMA_VERSION};
 use axum::{
     Router,
     extract::{DefaultBodyLimit, State},
@@ -15,19 +16,46 @@ use axum::{
     routing::post,
 };
 use serde_json::json;
+use sqlx::SqlitePool;
 use tracing::{error, info};
 
 #[derive(Clone)]
 struct AppState {
     config: config::Config,
-    gotify_token: String,
+    /// `None` means Gotify notifications are disabled.
+    gotify_token: Option<String>,
     http: reqwest::Client,
+    db: SqlitePool,
+}
+
+/// Resolve the path to the SQLite events database.
+///
+/// Resolution order:
+/// 1. `$ACUITY_DATA_DIR/acuity/events.db` if the env var is set.
+/// 2. `<platform data dir>/acuity/events.db` (via `dirs::data_dir()`).
+/// 3. `.local/share/acuity/events.db` relative to `$HOME` as last resort.
+fn resolve_db_path() -> std::path::PathBuf {
+    if let Ok(data_dir) = std::env::var("ACUITY_DATA_DIR") {
+        return std::path::PathBuf::from(data_dir)
+            .join("acuity")
+            .join("events.db");
+    }
+    dirs::data_dir()
+        .unwrap_or_else(|| {
+            std::env::var("HOME")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| std::path::PathBuf::from("."))
+                .join(".local")
+                .join("share")
+        })
+        .join("acuity")
+        .join("events.db")
 }
 
 fn make_app(state: AppState) -> Router {
     Router::new()
         .route("/events", post(handle_event))
-        .layer(DefaultBodyLimit::max(16 * 1024))
+        .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state)
 }
 
@@ -42,20 +70,31 @@ async fn main() -> anyhow::Result<()> {
 
     let cfg = config::Config::load()?;
 
-    // ACUITY_GOTIFY_TOKEN is intentionally read here, not via figment Config.
-    // See config.rs for the rationale (kept out of Config to avoid a silent
-    // duplicate read from the ACUITY_ env layer).
-    let gotify_token = std::env::var("ACUITY_GOTIFY_TOKEN").map_err(|_| {
-        anyhow::anyhow!(
-            "ACUITY_GOTIFY_TOKEN environment variable is required but not set"
-        )
-    })?;
+    // ACUITY_GOTIFY_TOKEN is optional: presence enables notifications.
+    let gotify_token = std::env::var("ACUITY_GOTIFY_TOKEN").ok();
+    match &gotify_token {
+        Some(_) => info!("Gotify notifications enabled"),
+        None => info!("Gotify token not set, notifications disabled"),
+    }
+    if gotify_token.is_some()
+        && cfg.gotify_url == config::Config::default().gotify_url
+    {
+        tracing::warn!(
+            "ACUITY_GOTIFY_TOKEN is set but gotify_url is still the default; \
+             notifications will likely fail"
+        );
+    }
+
+    let db_path = resolve_db_path();
+    info!("opening database at {}", db_path.display());
+    let db = db::connect(&db_path).await?;
 
     let port = cfg.port;
     let state = AppState {
         config: cfg,
         gotify_token,
         http: reqwest::Client::new(),
+        db,
     };
 
     let app = make_app(state);
@@ -83,6 +122,40 @@ fn basename(path: &str) -> &str {
         .unwrap_or(trimmed)
 }
 
+/// Send a fire-and-forget Gotify notification. Errors are logged, never
+/// propagated — a Gotify failure must never affect the HTTP response.
+async fn notify_gotify(
+    http: reqwest::Client,
+    url: String,
+    token: String,
+    title: String,
+    message: String,
+) {
+    let payload = json!({
+        "title": title,
+        "message": message,
+        "priority": 5,
+    });
+
+    match http
+        .post(&url)
+        .header("X-Gotify-Key", token)
+        .json(&payload)
+        .send()
+        .await
+    {
+        Ok(resp) if resp.status().is_success() => {
+            info!("forwarded session.idle to Gotify");
+        }
+        Ok(resp) => {
+            error!("Gotify returned unexpected status: {}", resp.status());
+        }
+        Err(err) => {
+            error!("failed to reach Gotify: {}", err);
+        }
+    }
+}
+
 async fn handle_event(
     State(state): State<AppState>,
     headers: HeaderMap,
@@ -97,7 +170,8 @@ async fn handle_event(
         Some(v) => v,
         None => {
             error!(
-                "rejected event: missing or non-numeric X-Acuity-Schema header (expected {})",
+                "rejected event: missing or non-numeric X-Acuity-Schema \
+                 header (expected {})",
                 SCHEMA_VERSION
             );
             return StatusCode::BAD_REQUEST;
@@ -111,8 +185,8 @@ async fn handle_event(
         return StatusCode::BAD_REQUEST;
     }
 
-    // 2. Deserialize body as SessionIdle
-    let event: SessionIdle = match serde_json::from_slice(&body) {
+    // 2. Deserialize body as AcuityEvent (discriminated union)
+    let event: AcuityEvent = match serde_json::from_slice(&body) {
         Ok(e) => e,
         Err(err) => {
             error!("rejected event: malformed body: {}", err);
@@ -120,52 +194,45 @@ async fn handle_event(
         }
     };
 
-    // 3. Compose Gotify payload
-    let title = basename(&event.project_dir);
+    // 3. Timestamp (server-side, seconds precision, UTC, Z suffix)
+    let received_at = chrono::Utc::now()
+        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
 
-    let message = format!(
-        "Idle: {}",
-        event
-            .session_title
-            .as_deref()
-            .unwrap_or(&event.session_id)
-    );
+    // 4. Payload = raw request bytes (faithful copy, not re-serialized)
+    let payload = String::from_utf8_lossy(&body).into_owned();
 
-    let payload = json!({
-        "title": title,
-        "message": message,
-        "priority": 5,
-    });
-
-    // 4. Forward to Gotify (token as X-Gotify-Key header, never in URL)
-    let url = format!("{}/message", state.config.gotify_url);
-
-    match state
-        .http
-        .post(&url)
-        .header("X-Gotify-Key", &state.gotify_token)
-        .json(&payload)
-        .send()
-        .await
-    {
-        Ok(resp) if resp.status().is_success() => {
+    // 5. Persist to SQLite — failure returns 500
+    match db::insert_event(&state.db, &event, &received_at, &payload).await {
+        Ok(seq) => {
             info!(
-                session_id = %event.session_id,
-                project_dir = %event.project_dir,
-                "forwarded session.idle"
+                seq,
+                event_type = event.event_type(),
+                session_id = event.session_id(),
+                "persisted event"
             );
-            StatusCode::OK
-        }
-        Ok(resp) => {
-            error!(
-                "gotify returned unexpected status: {}",
-                resp.status()
-            );
-            StatusCode::BAD_GATEWAY
         }
         Err(err) => {
-            error!("failed to reach gotify: {}", err);
-            StatusCode::BAD_GATEWAY
+            error!("failed to persist event: {}", err);
+            return StatusCode::INTERNAL_SERVER_ERROR;
         }
     }
+
+    // 6. Optional Gotify notification: only for SessionIdle, only when token
+    //    is configured. Fire-and-forget via tokio::spawn.
+    if let AcuityEvent::SessionIdle(ref idle) = event
+        && let Some(token) = state.gotify_token.clone()
+    {
+        let http = state.http.clone();
+        let url = format!("{}/message", state.config.gotify_url);
+        let title = basename(&idle.project_dir).to_owned();
+        let message = format!(
+            "Idle: {}",
+            idle.session_title.as_deref().unwrap_or(&idle.session_id)
+        );
+        tokio::spawn(async move {
+            notify_gotify(http, url, token, title, message).await;
+        });
+    }
+
+    StatusCode::OK
 }
