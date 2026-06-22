@@ -48,6 +48,8 @@
               pkgs.cargo-watch
               pkgs.cargo-edit
               pkgs.cargo-nextest
+
+              pkgs.sqlite
             ];
 
             shellHook = ''
