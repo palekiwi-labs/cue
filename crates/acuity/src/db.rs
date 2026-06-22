@@ -3,6 +3,7 @@
 use std::path::Path;
 
 use acuity_schema::AcuityEvent;
+use chrono::{DateTime, SecondsFormat, Utc};
 use sqlx::{SqlitePool, sqlite::SqliteConnectOptions};
 
 /// DDL executed once at startup to ensure the events table and its indexes
@@ -43,21 +44,24 @@ pub async fn connect(path: &Path) -> anyhow::Result<SqlitePool> {
 
 /// Insert one `AcuityEvent` row and return its `rowid` / `seq`.
 ///
-/// `received_at` must be an ISO-8601 UTC string with seconds precision and a
-/// `Z` suffix (e.g. `"2026-06-22T10:00:00Z"`).
+/// `received_at` is formatted to an ISO-8601 UTC string with seconds
+/// precision and a `Z` suffix (e.g. `"2026-06-22T10:00:00Z"`) inside
+/// this function — the type enforces correct format at the call boundary.
 /// `payload` must be the raw request body bytes cast to UTF-8 — a faithful
 /// copy of the wire bytes, **not** a re-serialization of the deserialized enum.
 pub async fn insert_event(
     pool: &SqlitePool,
     event: &AcuityEvent,
-    received_at: &str,
+    received_at: DateTime<Utc>,
     payload: &str,
 ) -> sqlx::Result<i64> {
+    let received_at_str =
+        received_at.to_rfc3339_opts(SecondsFormat::Secs, true);
     let result = sqlx::query(
         "INSERT INTO events (received_at, event_type, session_id, turn_id, payload)
          VALUES (?, ?, ?, ?, ?)",
     )
-    .bind(received_at)
+    .bind(received_at_str)
     .bind(event.event_type())
     .bind(event.session_id())
     .bind(event.turn_id())
@@ -103,16 +107,20 @@ mod tests {
     };
     use serde_json::json;
 
-    const TS: &str = "2026-06-22T10:00:00Z";
+    fn test_ts() -> DateTime<Utc> {
+        "2026-06-22T10:00:00Z"
+            .parse::<DateTime<Utc>>()
+            .expect("fixed test timestamp must parse")
+    }
 
     // --- helpers ---
 
     async fn fetch_row(
         pool: &SqlitePool,
         seq: i64,
-    ) -> (String, String, Option<String>, String) {
+    ) -> (String, String, Option<String>, String, String) {
         sqlx::query(
-            "SELECT event_type, session_id, turn_id, payload \
+            "SELECT event_type, session_id, turn_id, payload, received_at \
              FROM events WHERE seq = ?",
         )
         .bind(seq)
@@ -122,6 +130,7 @@ mod tests {
                 row.get::<String, _>("session_id"),
                 row.get::<Option<String>, _>("turn_id"),
                 row.get::<String, _>("payload"),
+                row.get::<String, _>("received_at"),
             )
         })
         .fetch_one(pool)
@@ -141,14 +150,16 @@ mod tests {
         });
         let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/home/pl/code","session_title":"hack"}"#;
 
-        let seq = insert_event(&pool, &ev, TS, raw).await.unwrap();
-        let (event_type, session_id, turn_id, payload) =
+        let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
+        let (event_type, session_id, turn_id, payload, received_at) =
             fetch_row(&pool, seq).await;
 
         assert_eq!(event_type, "session_idle");
         assert_eq!(session_id, "s1");
         assert!(turn_id.is_none(), "turn_id must be NULL for SessionIdle");
         assert_eq!(payload, raw);
+        // ISO-8601 UTC with seconds precision and Z suffix
+        assert_eq!(received_at, "2026-06-22T10:00:00Z");
     }
 
     #[tokio::test]
@@ -162,8 +173,8 @@ mod tests {
         });
         let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","input_tokens":120,"output_tokens":340}"#;
 
-        let seq = insert_event(&pool, &ev, TS, raw).await.unwrap();
-        let (event_type, session_id, turn_id, _payload) =
+        let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
+        let (event_type, session_id, turn_id, _payload, _received_at) =
             fetch_row(&pool, seq).await;
 
         assert_eq!(event_type, "agent_turn_completed");
@@ -183,8 +194,8 @@ mod tests {
         });
         let raw = r#"{"type":"tool_call_requested","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"read","args":{"path":"/x","limit":50}}"#;
 
-        let seq = insert_event(&pool, &ev, TS, raw).await.unwrap();
-        let (event_type, session_id, turn_id, payload) =
+        let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
+        let (event_type, session_id, turn_id, payload, _received_at) =
             fetch_row(&pool, seq).await;
 
         assert_eq!(event_type, "tool_call_requested");
@@ -206,8 +217,8 @@ mod tests {
         });
         let raw = r#"{"type":"tool_call_completed","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"bash","is_error":true,"error_text":"command not found: fd"}"#;
 
-        let seq = insert_event(&pool, &ev, TS, raw).await.unwrap();
-        let (event_type, _session_id, turn_id, payload) =
+        let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
+        let (event_type, _session_id, turn_id, payload, _received_at) =
             fetch_row(&pool, seq).await;
 
         assert_eq!(event_type, "tool_call_completed");

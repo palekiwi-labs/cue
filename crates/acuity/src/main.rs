@@ -194,15 +194,17 @@ async fn handle_event(
         }
     };
 
-    // 3. Timestamp (server-side, seconds precision, UTC, Z suffix)
-    let received_at = chrono::Utc::now()
-        .to_rfc3339_opts(chrono::SecondsFormat::Secs, true);
+    // 3. Timestamp (server-side). Formatting to ISO-8601 Z is done inside
+    //    db::insert_event, which accepts DateTime<Utc> to enforce format.
+    let received_at = chrono::Utc::now();
 
-    // 4. Payload = raw request bytes (faithful copy, not re-serialized)
-    let payload = String::from_utf8_lossy(&body).into_owned();
+    // 4. Payload = raw request bytes (faithful copy, not re-serialized).
+    //    serde_json::from_slice already validated UTF-8, so unwrap is safe.
+    let payload =
+        String::from_utf8(body.to_vec()).expect("serde_json validated UTF-8");
 
     // 5. Persist to SQLite — failure returns 500
-    match db::insert_event(&state.db, &event, &received_at, &payload).await {
+    match db::insert_event(&state.db, &event, received_at, &payload).await {
         Ok(seq) => {
             info!(
                 seq,
