@@ -64,4 +64,3 @@ Phase 2 is officially complete. `curator` now provides a stable, terminal-native
 - **Decided:** Merge feat/curator-mvp to master.
 - **Decided:** Mark roadmap task `curator-artifact-kanban.md` as complete.
 
-

@@ -1,28 +1,52 @@
 ---
 title: "acuity: full event model + SQLite persistence"
-status: open
+status: in-progress
 priority: normal
+branch: "feat/acuity-full-event-model"
 ---
 # acuity: full event model + SQLite persistence
 
-Extend `acuity-schema` with all three lifecycle event types
-(session.idle, tool-call-requested, tool-call-completed) and the ingest
-envelope (`seq`, `received_at`). Regenerate `types.ts`. Add SQLite persistence
-to `acuity`'s POST ingest handler.
+Extend `acuity-schema` with a 4-event harness-agnostic discriminated union
+(`SessionIdle`, `AgentTurnCompleted`, `ToolCallRequested`, `ToolCallCompleted`),
+add SQLite persistence via `sqlx` to `acuity`'s POST ingest handler, and refactor
+Gotify notification to be fully optional and fire-and-forget.
 
 Builds on the stateless MVP ingest path from Phase 1 — the POST endpoint and
-header validation are already proven; this phase widens the schema and adds
-storage.
+header validation are already proven; this phase widens the schema, adds
+durable storage, and decouples notification from ingest.
+
+## Design decisions recorded
+
+- 4-event model (not 3): `AgentTurnCompleted` added for activity-feed sub-rows
+  and turn-level token tracking. `AgentTurnStarted` explicitly dropped — no
+  curator view reads a start row; liveness belongs to the Phase 5 SSE stream.
+- Harness-agnostic vocabulary. opencode/pi differences normalised in TypeScript
+  (cue-plugins), not in the Rust schema.
+- `SCHEMA_VERSION` stays at `1` — pre-alpha, no deployed users.
+- `payload` column = raw request bytes (faithful copy). No `deny_unknown_fields`.
+- `received_at` = server-side ISO-8601 UTC (`...Z`, seconds precision). Client
+  timestamps, if needed, go inside `payload` only.
+- `seq` INTEGER PRIMARY KEY AUTOINCREMENT is the future SSE resume cursor.
+- Gotify: presence-based opt-in (`ACUITY_GOTIFY_TOKEN` optional). Persist-first,
+  always-200, fire-and-forget notification via `tokio::spawn`. In-flight
+  notifications dropped on crash — accepted behaviour.
+- Idempotency/dedup deferred to Phase 7 hardening.
 
 ## Source
 
 - spec: `.cue/master/spec/acuity/index.md`
-- roadmap: `.cue/master/trace/1781942441-cef325f/cue-ecosystem-roadmap.md` (Phase 3)
+- roadmap: `.cue/master/plan/index.md` (Phase 3)
+- design session: `.cue/master/plan/1782118406-65dd2bc/phase-3.md`
 
 ## Acceptance Criteria
 
-| #  | Criterion                                                                 | Verify by                                    | Evidence |
-| -- | ------------------------------------------------------------------------- | -------------------------------------------- | -------- |
-| 1  | `curl` POSTs of all three event types are accepted by acuity              | curl each event type, inspect response       |          |
-| 2  | Events land in SQLite with correct `seq` and `received_at` fields         | inspect SQLite after POSTs                   |          |
-| 3  | A wrong `X-Acuity-Schema` version is cleanly rejected                     | send bad-version POST with curl, observe 400 |          |
+| #  | Criterion                                                                          | Verify by                                               | Evidence |
+| -- | ---------------------------------------------------------------------------------- | ------------------------------------------------------- | -------- |
+| 1  | `curl` POSTs of all four event types return 200                                    | curl H1-H4 in the executive plan                        |          |
+| 2  | Events land in SQLite with correct `seq`, `event_type`, `session_id`, `received_at` | `sqlite3` inspect after POSTs (H2)                     |          |
+| 3  | `turn_id` is NULL for `session_idle`, populated for the other three types          | `sqlite3` inspect (H3)                                  |          |
+| 4  | A wrong `X-Acuity-Schema` value returns 400                                        | curl with `X-Acuity-Schema: 2` (H5)                     |          |
+| 5  | An unknown event `type` value returns 422                                           | curl with `"type":"nope"` (H6)                          |          |
+| 6  | Server starts without `ACUITY_GOTIFY_TOKEN` and persists events                    | start without env var, verify log + POST (H7)           |          |
+| 7  | `cargo test` (workspace) green, including persistence and Gotify-disabled tests    | `cargo test --workspace`                                |          |
+| 8  | `types.ts` regenerates with the 4-event discriminated union                        | `cargo run -p acuity-schema --bin codegen` (H8)         |          |
