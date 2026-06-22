@@ -41,3 +41,27 @@ The `acuity` binary is now the primary observability bridge for agentic workflow
 - **Decided:** Close Phase 1 of the acuity roadmap
 - **Decided:** Standardize on named NixOS modules (services.acuity) instead of a generic .default alias
 
+## [3ee4293] Phase 2 complete — curator MVP merged to master
+
+The `feat/curator-mvp` branch has been merged into `master`, successfully closing Phase 2 (Artifact Kanban). 
+
+**Summary of deliverables:**
+1. **`cuelib` Artifact Reader**: Migrated and extended the artifact discovery and frontmatter parsing logic into `cuelib`. Added a typed `ArtifactMeta` reader with support for `TaskStatus` classification.
+2. **`curator` TUI**: A functional three-column kanban board (Open | In Progress | Complete) that renders tasks from the CWD project's `.cue/master/task/` directory.
+3. **TUI Navigation**: Implemented HJKL and Arrow key navigation, per-column scrolling, and active column highlighting with thick borders.
+4. **Robustness & Safety**: Implemented terminal restoration on panic via a custom hook and adopted typed classification for artifacts to eliminate silent data loss from malformed status strings.
+
+**Key Findings & Decisions:**
+- **Found:** `cuelib`’s authoritative status logic (`is_kanban_visible`) can be reused in the TUI to ensure consistent artifact filtering without duplication.
+- **Found:** A panic hook is superior to a simple RAII guard for terminal cleanup as it ensures the terminal is restored *before* the panic backtrace is printed.
+- **Decided:** Retain the flat `App` state for the MVP; structural refactors to an array-based `[ColumnState; 3]` are deferred to later phases.
+- **Decided:** `curator` remains read-only and CWD-only for Phase 2; multi-project support and mutation operations are sequenced for later.
+
+Phase 2 is officially complete. `curator` now provides a stable, terminal-native view of a project's intent and progress.
+
+- **Found:** `ArtifactMeta::status::<T>()` generic accessor simplifies classification across multiple artifact types.
+- **Found:** Removing the unused `event-stream` feature from `crossterm` reduces transitive dependency weight (futures-core) in the `curator` binary.
+- **Decided:** Merge feat/curator-mvp to master.
+- **Decided:** Mark roadmap task `curator-artifact-kanban.md` as complete.
+
+

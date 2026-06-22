@@ -21,3 +21,30 @@ was:
 - to allow frictionless saving of artifacts with the same name, e.g. `review.md`
   that will not conflict with each other because they are in different dirs
 - frontmatter is only availble on markdown files but nested dirs work for anything
+
+## cue context
+
+### inject artifact listing
+
+consider adding a separate field in the `context` config like `list` that when
+enabled would result in injection of a list of the paths of all the artifacts
+on current branch (e.g. under <all-artifacts> tag) in the concatenated context.
+
+###  allow artifact filtering by metadata
+
+consider supporting a syntax in the context such as:
+
+```json
+{
+  "default": {
+    "artifacts": [
+      "plan/*.md:!complete"
+    ],
+    "diff": null,
+    "include": []
+  }
+}
+```
+
+`"plan/*.md:!complete"` would mean: include all plans that have status other than `complete`
+

@@ -81,8 +81,7 @@ shaped only for the CLI.
 
 **Task:** `task/1781965432-d2f3251/curator-artifact-kanban.md`
 
-**Done:** `curator` launches in a real project and shows the actual board.
-`cue` CLI tests still pass.
+**Done:** `curator` launches in a real project and shows the actual board. `cuelib` provides a robust, typed artifact reader with frontmatter parsing. All `cue` CLI tests pass.
 
 ---
 
