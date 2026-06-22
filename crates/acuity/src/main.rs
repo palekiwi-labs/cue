@@ -145,7 +145,7 @@ async fn notify_gotify(
         .await
     {
         Ok(resp) if resp.status().is_success() => {
-            info!("forwarded session.idle to Gotify");
+            info!("forwarded to Gotify: {}", title);
         }
         Ok(resp) => {
             error!("Gotify returned unexpected status: {}", resp.status());
