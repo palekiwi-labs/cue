@@ -16,9 +16,11 @@
         pkgs = nixpkgs.legacyPackages.${system};
         rustToolchain = fenix.packages.${system}.stable.toolchain;
       in
-      {
-        packages.default = pkgs.rustPlatform.buildRustPackage {
-          pname = "cue";
+      let
+        # Shared workspace build: compiles the full Cargo workspace once.
+        # Both the `cue` and `acuity` binaries live in the same derivation.
+        workspaceBuild = pkgs.rustPlatform.buildRustPackage {
+          pname = "cue-workspace";
           version = "0.1.0";
           src = pkgs.lib.cleanSource ./.;
 
@@ -28,12 +30,30 @@
 
           nativeBuildInputs = [ rustToolchain pkgs.git ];
 
-          buildInputs = [];
+          # acuity links against libsqlite3 dynamically (sqlx sqlite feature
+          # without the `bundled` flag).
+          buildInputs = [ pkgs.sqlite ];
 
           meta = with pkgs.lib; {
-            description = "cue: a file-based memory system for agentic workflows";
             license = licenses.mit;
             maintainers = [ ];
+          };
+        };
+      in
+      {
+        # `cue` is the default package (memory / context CLI).
+        packages.default = workspaceBuild // {
+          meta = workspaceBuild.meta // {
+            description = "cue: a file-based memory system for agentic workflows";
+            mainProgram = "cue";
+          };
+        };
+
+        # `acuity` is the observability ingestion server.
+        packages.acuity = workspaceBuild // {
+          meta = workspaceBuild.meta // {
+            description = "acuity: observability ingestion server for the cue ecosystem";
+            mainProgram = "acuity";
           };
         };
 
