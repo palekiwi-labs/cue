@@ -49,3 +49,42 @@ Addressed all accepted findings from the Stage A code review. Commit: 5dcfb97.
 - **Decided:** deny_unknown_fields intentionally absent — documented on AcuityEvent
 - **Decided:** n3 (fixture IDs) and n4 (split session_id test) deferred as low value
 
+## [b6665b5] Phase 3 Stages B-G complete — SQLite persistence + optional Gotify
+
+Commit b6665b5. Implemented all of Stages B through G from phase-3.md in a single session. All 20 acuity tests pass; full workspace (138 tests) green; clippy -D warnings clean.
+
+- **Found:** sqlx Row trait must be imported as `use sqlx::Row as _` when used only in #[cfg(test)] blocks — unused import in production path causes clippy -D warnings failure
+- **Found:** tokio::spawn fire-and-forget Gotify notification races with wiremock server shutdown in tests — fixed with a 50ms sleep before mock verification drop
+- **Found:** Clippy collapsible_if lint fires on nested `if let ... { if let ... { } }` — collapsed to `if let ... && let ... { }` using Rust 2024 let-chains
+- **Found:** LSP showed persistent stale diagnostics from old tests.rs — cargo test and clippy are the ground truth; LSP errors were phantom
+- **Decided:** Row trait import scoped to #[cfg(test)] mod to avoid unused-import warning in production build
+- **Decided:** 50ms sleep in valid_session_idle_forwards_to_gotify test is acceptable — wiremock has no built-in await-spawn API and the window is deterministic
+- **Decided:** Collapsed nested if-let per clippy suggestion using Rust 2024 let-chains syntax (edition 2024 in Cargo.toml)
+- **Open:** Stage H manual curl acceptance tests remain — server start, H1-H7 curl checks against live process with ACUITY_DATA_DIR=/tmp/acuity-phase3
+
+## [241ed82-dirty] Fix TS codegen: add #[ts(export_to)] to inner event structs
+
+Commit 241ed82. Added #[ts(export_to = \"types.ts\"] to SessionIdle, AgentTurnCompleted, ToolCallRequested, ToolCallCompleted. All four structs now inline into types.ts instead of scattering to separate files. serde_json/JsonValue.ts side-file remains unavoidable.
+
+- **Found:** ts-rs 12 export_all() writes each unannotated dependency type to its own .ts file by default
+- **Found:** Adding #[ts(export_to = types.ts)] on inner structs consolidates all type definitions into a single file
+- **Found:** serde_json::Value cannot be redirected to types.ts without a newtype wrapper — accepted
+- **Decided:** Accept the serde_json/JsonValue.ts side-file as unavoidable
+- **Decided:** Do not introduce a newtype wrapper for Value at this stage
+
+## [352b80d-dirty] Type-safe received_at, fix from_utf8_lossy, add received_at DB test
+
+Commit 352b80d. insert_event now accepts DateTime&lt;Utc&gt; instead of &str. from_utf8_lossy replaced with from_utf8().expect() since JSON parse already guarantees UTF-8. fetch_row in tests now returns received_at; insert_session_idle asserts ISO-8601 Z format.
+
+- **Decided:** Accept DateTime&lt;Utc&gt; at insert_event boundary — formatting is an implementation detail of the function
+- **Decided:** Use from_utf8().expect() not from_utf8_lossy — lossy path is unreachable after successful JSON parse
+
+## [fb24715-dirty] Review findings implemented — 4 commits, all 138 tests green
+
+Applied all confirmed review findings from the Flash/Sonnet/Opus review cycle. Four commits: 241ed82 (ts export_to), 352b80d (typed received_at + from_utf8 fix + received_at test), e020af3 (notify_gotify log), fb24715 (flaky test poll loop). Workspace at 138 tests green, clippy -D warnings clean.
+
+- **Found:** Finding 3 (sqlx multi-statement drop) was REFUTED by Opus — sqlx 0.8 SQLite driver iterates all statements via prepare_next tail loop
+- **Found:** Poll loop on mock_server.received_requests() is a clean no-handler-change fix for fire-and-forget test synchronization
+- **Decided:** Do not migrate to sqlx::raw_sql — functionally correct as-is, deprecated path is a style nit only
+- **Decided:** Accept serde_json/JsonValue.ts side-file — cannot redirect without newtype wrapper
+

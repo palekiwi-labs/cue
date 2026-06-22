@@ -1,5 +1,5 @@
 ---
-status: open
+status: complete
 ---
 # Review Response Plan — Stage A
 
@@ -134,18 +134,18 @@ style preference, not a correctness issue. Skip for now.
 
 ## Action Items (Ordered)
 
-- [ ] **R1.** Add `//!` crate-level doc comment to `lib.rs` noting the
+- [x] **R1.** Add `//!` crate-level doc comment to `lib.rs` noting the
       `serde_json` dep is intentional (for `Value`).
-- [ ] **R2.** Add doc comment to `AcuityEvent` noting unknown fields are
+- [x] **R2.** Add doc comment to `AcuityEvent` noting unknown fields are
       silently ignored for forward compatibility.
-- [ ] **R3.** Add doc comment to `ToolCallCompleted` explaining why
+- [x] **R3.** Add doc comment to `ToolCallCompleted` explaining why
       `output` is intentionally absent (raw payload stores it).
-- [ ] **R4.** Add doc comment to `ToolCallRequested.args` noting `Value::Null`
-      is the correct "no args" representation and the key-order footgun.
-- [ ] **R5.** Add doc comment to `SCHEMA_VERSION` clarifying it is an
-      out-of-band wire version indicator, not a serialized event field.
-- [ ] **R6.** Add four raw-wire deserialization tests (one per variant)
-      in `lib.rs` `#[cfg(test)]` mod.
-- [ ] **R7.** `cargo test -p acuity-schema` — green.
-- [ ] **R8.** `cargo clippy -p acuity-schema -- -D warnings` — clean.
-- [ ] **R9.** Commit with message `docs+test(acuity-schema): address Stage A review`.
+- [x] **R4.** Add doc comment to `ToolCallRequested.args` noting `Value::Null`
+   x  is the correct "no args" representation and the key-order footgun.
+- [x] **R5.** Add doc comment to `SCHEMA_VERSION` clarifying it is an
+   x  out-of-band wire version indicator, not a serialized event field.
+- [x] **R6.** Add four raw-wire deserialization tests (one per variant)
+   x  in `lib.rs` `#[cfg(test)]` mod.
+- [x] **R7.** `cargo test -p acuity-schema` — green.
+- [x] **R8.** `cargo clippy -p acuity-schema -- -D warnings` — clean.
+- [x] **R9.** Commit with message `docs+test(acuity-schema): address Stage A review`.
