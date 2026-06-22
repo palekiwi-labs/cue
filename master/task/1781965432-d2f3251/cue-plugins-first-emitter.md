@@ -17,6 +17,7 @@ deferred to Phase 7 hardening.
 - spec: `.cue/master/spec/cue-monorepo/index.md`
 - roadmap: `.cue/master/trace/1781942441-cef325f/cue-ecosystem-roadmap.md` (Phase 4)
 - ref: `.ref/opencode-notifications-server-hook.ts`
+- repo: `~/.config/opencode/plugin/palekiwi-labs/cue-plugins/`
 
 ## Acceptance Criteria
 
