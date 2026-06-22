@@ -11,8 +11,9 @@ pub type Tui = Terminal<CrosstermBackend<Stdout>>;
 /// Initialise the terminal: raw mode + alternate screen.
 pub fn init() -> Result<Tui> {
     enable_raw_mode()?;
-    execute!(io::stdout(), EnterAlternateScreen)?;
-    let backend = CrosstermBackend::new(io::stdout());
+    let mut stdout = io::stdout();
+    execute!(stdout, EnterAlternateScreen)?;
+    let backend = CrosstermBackend::new(stdout);
     let terminal = Terminal::new(backend)?;
     Ok(terminal)
 }

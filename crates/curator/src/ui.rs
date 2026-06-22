@@ -1,7 +1,7 @@
 use crate::app::{App, Column};
 use ratatui::{
     Frame,
-    layout::{Constraint, Direction, Layout},
+    layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, BorderType, Borders, List, ListItem, ListState},
@@ -59,7 +59,7 @@ pub fn render(frame: &mut Frame, app: &App) {
     frame.render_widget(help, help_area);
 }
 
-fn render_column(frame: &mut Frame, app: &App, col: Column, area: ratatui::layout::Rect) {
+fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
     let is_active = app.active_col == col;
     let tasks = app.column_tasks(col);
     let sel = app.column_sel(col);
@@ -89,7 +89,7 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: ratatui::layou
             let colour = priority_colour(task.priority_raw.as_deref());
 
             let line = Line::from(vec![
-                Span::raw(task.title.clone()),
+                Span::raw(task.title.as_str()),
                 Span::raw("  "),
                 Span::styled(format!("[{priority_label}]"), Style::default().fg(colour)),
             ]);
