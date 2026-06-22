@@ -155,10 +155,22 @@ async fn valid_session_idle_forwards_to_gotify() {
     let status = send_request(app, Some("1"), SESSION_IDLE_BODY).await;
     assert_eq!(status, axum::http::StatusCode::OK);
 
-    // The Gotify call is fire-and-forget (tokio::spawn). Give it a brief
-    // window to complete before wiremock verifies on drop.
-    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-    // wiremock verifies the expectation (1 call) on drop
+    // The Gotify call is fire-and-forget (tokio::spawn); the JoinHandle is
+    // dropped inside handle_event and is not accessible here. Poll until
+    // wiremock records the expected request rather than using a fixed sleep.
+    let deadline = std::time::Instant::now()
+        + std::time::Duration::from_millis(500);
+    loop {
+        if mock_server.received_requests().await.map_or(0, |r| r.len()) >= 1 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for Gotify request"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+    }
+    // wiremock verifies the expectation count (1 call) on drop
 }
 
 #[tokio::test]
