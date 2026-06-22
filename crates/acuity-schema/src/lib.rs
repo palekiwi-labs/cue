@@ -1,7 +1,16 @@
+//! `acuity-schema` — wire types for the acuity event stream.
+//!
+//! `serde_json` is a direct dependency (not merely transitive) because
+//! [`ToolCallRequested::args`] requires [`serde_json::Value`] to represent
+//! arbitrary tool arguments without a fixed schema.
+
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use ts_rs::TS;
 
+/// Out-of-band wire version indicator sent in the `X-Acuity-Schema` HTTP
+/// header. This constant is **not** embedded in serialized event payloads;
+/// it is checked by the server before deserialization.
 pub const SCHEMA_VERSION: u8 = 1;
 
 /// Represents an opencode session that has gone idle.
@@ -29,10 +38,23 @@ pub struct ToolCallRequested {
     pub turn_id: String,
     pub tool_call_id: String,
     pub tool_name: String,
+    /// Raw tool arguments as a JSON value.
+    /// Use [`Value::Null`] when the tool takes no arguments.
+    ///
+    /// Note: [`Value::Object`] key order is preserved through
+    /// serialize/deserialize but is not guaranteed stable across independent
+    /// constructions; avoid `PartialEq` comparisons between two independently
+    /// constructed `Value::Object` values if key insertion order may differ.
     pub args: Value,
 }
 
 /// Emitted when a tool call returns a result (or error).
+///
+/// The `output` field is intentionally absent. Tool output (stdout, file
+/// contents, etc.) can be arbitrarily large and is stored verbatim in the
+/// `payload` column of the events table. Consumers that need the raw output
+/// read `payload` directly (e.g. via SQLite JSON functions). Duplicating it
+/// here would bloat the schema type and the in-memory representation.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 pub struct ToolCallCompleted {
     pub session_id: String,
@@ -47,6 +69,10 @@ pub struct ToolCallCompleted {
 ///
 /// The `type` field in the JSON payload is the discriminant, using
 /// snake_case values (e.g. `"session_idle"`, `"agent_turn_completed"`).
+///
+/// Unknown fields are silently ignored to allow forward-compatible evolution
+/// of the plugin schema without requiring a server redeploy. Do **not** add
+/// `#[serde(deny_unknown_fields)]` here.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
 #[serde(tag = "type", rename_all = "snake_case")]
 #[ts(export_to = "types.ts")]
@@ -227,5 +253,53 @@ mod tests {
         assert_eq!(agent_turn_completed().session_id(), "s1");
         assert_eq!(tool_call_requested().session_id(), "s1");
         assert_eq!(tool_call_completed().session_id(), "s1");
+    }
+
+    // --- raw wire-format deserialization (primary Axum handler path) ---
+
+    #[test]
+    fn session_idle_deserializes_from_raw_json() {
+        let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/home/pl/code","session_title":"hack"}"#;
+        let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
+        assert_eq!(ev.event_type(), "session_idle");
+        assert_eq!(ev.session_id(), "s1");
+        assert_eq!(ev.turn_id(), None);
+    }
+
+    #[test]
+    fn agent_turn_completed_deserializes_from_raw_json() {
+        let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","input_tokens":120,"output_tokens":340}"#;
+        let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
+        assert_eq!(ev.event_type(), "agent_turn_completed");
+        assert_eq!(ev.session_id(), "s1");
+        assert_eq!(ev.turn_id(), Some("t1"));
+    }
+
+    #[test]
+    fn tool_call_requested_deserializes_from_raw_json() {
+        let raw = r#"{"type":"tool_call_requested","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"read","args":{"path":"/x","limit":50}}"#;
+        let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
+        assert_eq!(ev.event_type(), "tool_call_requested");
+        assert_eq!(ev.session_id(), "s1");
+        assert_eq!(ev.turn_id(), Some("t1"));
+    }
+
+    #[test]
+    fn tool_call_completed_deserializes_from_raw_json() {
+        let raw = r#"{"type":"tool_call_completed","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"bash","is_error":true,"error_text":"command not found: fd"}"#;
+        let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
+        assert_eq!(ev.event_type(), "tool_call_completed");
+        assert_eq!(ev.session_id(), "s1");
+        assert_eq!(ev.turn_id(), Some("t1"));
+    }
+
+    // --- forward-compat: unknown fields are silently ignored ---
+
+    #[test]
+    fn unknown_fields_are_ignored_on_deserialization() {
+        let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/p","session_title":null,"future_field":"ignored"}"#;
+        let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
+        assert_eq!(ev.event_type(), "session_idle");
+        assert_eq!(ev.session_id(), "s1");
     }
 }
