@@ -23,3 +23,21 @@ The cue ecosystem roadmap was originally saved as a trace artifact during the de
 - **Decided:** flake.nix intentionally left untouched for Phase 0; new crate Nix package outputs deferred until crates are shippable
 - **Decided:** nix build acceptance criteria deferred; will be added as a dedicated tracked task rather than backfilled into existing open tasks
 
+## [4f2fdc4] Acuity MVP Phase 1 merged to master
+
+The `feat/acuity-mvp` branch has been merged into `master`, successfully closing Phase 1 of the acuity roadmap.
+
+**Summary of deliverables:**
+1. **Acuity Stateless MVP**: A Rust-based HTTP server that receives `session.idle` events from the opencode plugin, validates them against a versioned schema (`X-Acuity-Schema`), and forwards notifications to Gotify.
+2. **NixOS Integration**: Added a dedicated NixOS module (`nixos/acuity.nix`) to the workspace flake, allowing the service to be managed via systemd with aggressive security hardening (including `MemoryDenyWriteExecute=true`, verified safe for the `rustls-tls` backend).
+3. **Plugin Support**: Updated `cue-plugins` with the vendored `types.ts` and the `acuity-plugin.ts`, which replaces the legacy notification plugin.
+4. **Verification**: 11 automated tests green, plus live deployment and smoke test on the daily driver host (`pale`).
+
+The `acuity` binary is now the primary observability bridge for agentic workflows in the cue ecosystem. Phase 1 is officially complete.
+
+- **Found:** MemoryDenyWriteExecute=true is safe for rustls-tls in the acuity service profile
+- **Found:** Acuity successfully handles schema versioning and malformed payloads with appropriate HTTP status codes
+- **Decided:** Merge feat/acuity-mvp to master
+- **Decided:** Close Phase 1 of the acuity roadmap
+- **Decided:** Standardize on named NixOS modules (services.acuity) instead of a generic .default alias
+

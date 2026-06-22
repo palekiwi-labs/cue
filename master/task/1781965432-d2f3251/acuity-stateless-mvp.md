@@ -1,8 +1,8 @@
 ---
 title: "acuity stateless MVP: session.idle -> Gotify"
-status: in-progress
+status: complete
 priority: normal
-branch: "feat/acuity-mvp"
+branch: ""
 ---
 # acuity stateless MVP: session.idle -> Gotify
 
@@ -29,8 +29,8 @@ replaces the hand-rolled notifications server in production.
 
 | #  | Criterion                                                                           | Verify by                                         | Evidence |
 | -- | ----------------------------------------------------------------------------------- | ------------------------------------------------- | -------- |
-| 1  | A real `session.idle` POST from the opencode plugin triggers a Gotify notification  | run live agent session, observe Gotify            |          |
-| 2  | The plugin imports the type from the vendored `types.ts`                            | inspect plugin source                             |          |
-| 3  | The POST carries `X-Acuity-Schema: N` and acuity accepts it                        | inspect plugin + acuity logs                      |          |
-| 4  | A deliberately wrong schema version header is cleanly rejected by acuity            | send bad-version POST with curl, observe 400      |          |
-| 5  | Hand-rolled notifications server is decommissioned                                  | human attestation                                 |          |
+| 1  | A real `session.idle` POST from the opencode plugin triggers a Gotify notification  | run live agent session, observe Gotify            | Verified via NixOS module deployment on pale + live agent session |
+| 2  | The plugin imports the type from the vendored `types.ts`                            | inspect plugin source                             | Verified at commit 5a3ea36 (plugin source inspection) |
+| 3  | The POST carries `X-Acuity-Schema: N` and acuity accepts it                        | inspect plugin + acuity logs                      | Verified during smoke test (X-Acuity-Schema: 1 accepted, forwards to Gotify) |
+| 4  | A deliberately wrong schema version header is cleanly rejected by acuity            | send bad-version POST with curl, observe 400      | Verified during smoke test (wrong version rejected with 400) |
+| 5  | Hand-rolled notifications server is decommissioned                                  | human attestation                                 | Plugin decommissioned (Area 4.4); server decommissioned on pale (daily driver) |

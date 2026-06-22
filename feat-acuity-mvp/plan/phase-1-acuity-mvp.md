@@ -1,5 +1,5 @@
 ---
-status: open
+status: complete
 ---
 ## Foreword
 
@@ -34,7 +34,7 @@ exists, `cue-plugins` repo initialized with vendored `types.ts`).
 
 ### Area 1 -- `acuity-schema`: define the real event type
 
-- [ ] **1.1** In `crates/acuity-schema/src/lib.rs`:
+- [x] **1.1** In `crates/acuity-schema/src/lib.rs`:
   - Remove the `Placeholder` struct and its doc comment
   - Add `pub const SCHEMA_VERSION: u8 = 1;`
   - Add `SessionIdle` struct with `serde` + `ts-rs` derives:
@@ -48,34 +48,36 @@ exists, `cue-plugins` repo initialized with vendored `types.ts`).
     }
     ```
 
-- [ ] **1.2** In `crates/acuity-schema/src/bin/codegen.rs`:
+- [x] **1.2** In `crates/acuity-schema/src/bin/codegen.rs`:
   - Replace `use acuity_schema::Placeholder;` with `use acuity_schema::SessionIdle;`
   - Replace `Placeholder::export_all(&cfg)` with `SessionIdle::export_all(&cfg)`
 
-- [ ] **1.3** Verify: `cargo build -p acuity-schema` passes with no warnings.
+- [x] **1.3** Verify: `cargo build -p acuity-schema` passes with no warnings.
 
 ---
 
 ### Area 2 -- `acuity` binary: config + HTTP server
 
-- [ ] **2.1** Add dependencies to `crates/acuity/Cargo.toml`:
+- [x] **2.1** Add dependencies to `crates/acuity/Cargo.toml`:
   ```toml
   [dependencies]
   acuity-schema = { path = "../acuity-schema" }
   acuity-api    = { path = "../acuity-api" }
   axum          = "0.8"
   tokio         = { version = "1", features = ["full"] }
-  reqwest       = { version = "0.12", features = ["json"] }
+  reqwest       = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
   serde         = { version = "1", features = ["derive"] }
   serde_json    = "1"
   figment       = { version = "0.10", features = ["json", "env"] }
   anyhow        = "1"
   tracing       = "0.1"
   tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+  dirs          = "6"
   ```
-  Note: verify latest compatible versions against `Cargo.lock` after add.
+  Note: `reqwest` must use `default-features = false` + `rustls-tls` -- the Nix
+  Rust devshell does not provide OpenSSL headers so `native-tls` fails to build.
 
-- [ ] **2.2** Create `crates/acuity/src/config.rs`:
+- [x] **2.2** Create `crates/acuity/src/config.rs`:
   - `Config` struct: `gotify_host: String`, `port: u16`
   - `Default` impl: `gotify_host = "localhost:80"`, `port = 33222`
     (33222 matches the port the ref plugin already posts to -- no change
@@ -84,7 +86,7 @@ exists, `cue-plugins` repo initialized with vendored `types.ts`).
     defaults -> `~/.config/acuity/acuity.json` (or `$ACUITY_CONFIG_DIR/acuity.json`)
     -> `Env::prefixed("ACUITY_").split("__")`
 
-- [ ] **2.3** Implement `crates/acuity/src/main.rs`:
+- [x] **2.3** Implement `crates/acuity/src/main.rs`:
   - `AppState`: holds `Config` + `gotify_token: String` (read from
     `ACUITY_GOTIFY_TOKEN` env var at startup; hard-exit with a clear
     error message if missing)
@@ -103,20 +105,20 @@ exists, `cue-plugins` repo initialized with vendored `types.ts`).
   - `main()`: load config, read token, init tracing, bind on configured port,
     serve
 
-- [ ] **2.4** Verify: `cargo build -p acuity` passes with no warnings.
+- [x] **2.4** Verify: `cargo build -p acuity` passes with no warnings.
 
 ---
 
 ### Area 3 -- codegen run and vendoring
 
-- [ ] **3.1** Run codegen to update `dist/`:
+- [x] **3.1** Run codegen to update `dist/`:
   ```bash
   cargo run -p acuity-schema --bin codegen -- crates/acuity-schema/dist
   ```
   Inspect `crates/acuity-schema/dist/types.ts` -- should contain `SessionIdle`,
   no `Placeholder`.
 
-- [ ] **3.2** Vendor to `cue-plugins`:
+- [x] **3.2** Vendor to `cue-plugins`:
   ```bash
   cargo run -p acuity-schema --bin codegen -- /home/pl/code/palekiwi-labs/cue-plugins/src
   ```
@@ -142,35 +144,37 @@ Runtime facts (from research report
 - Import extension convention in opencode's own codebase: **extensionless**.
   All three forms work at runtime; extensionless is the house style.
 
-- [ ] **4.1** Create `cue-plugins/package.json`:
+- [x] **4.1** Create `cue-plugins/package.json`:
   ```json
   {
     "type": "module",
     "devDependencies": {
       "@opencode-ai/plugin": "*",
       "@opencode-ai/sdk": "*",
+      "@types/node": "*",
       "typescript": "*"
     }
   }
   ```
-  Then run `npm install` inside `cue-plugins/` so editor tooling resolves
-  the type-only imports.
+  Also created `flake.nix` with a Bun devshell (Node/npm not available in the
+  Rust devshell). Run `nix develop` inside `cue-plugins/` then `bun install`.
+  `@types/node` required for `process.env` and `Buffer` types used transitively
+  by `@opencode-ai/plugin`.
 
-- [ ] **4.2** Create `cue-plugins/src/acuity-plugin.ts`:
-  - Use `import type` for all `@opencode-ai/*` symbols (stripped at runtime)
-  - Use extensionless import for the co-located type: `from "./types"`
-  - `fetch` used as a global -- no import
-  - `ACUITY_HOST`: `"http://172.17.0.1:33222"`
-  - Default export an object with an `event` hook. On `session.idle`:
-    1. Call `client.session.get({ path: { id: event.properties.sessionID } })`
-    2. Construct `SessionIdle` payload:
-       - `session_id`: `event.properties.sessionID`
-       - `project_dir`: `directory` (full path from plugin context)
-       - `session_title`: `session?.title ?? null`
-    3. POST to `${ACUITY_HOST}/events` with headers
-       `Content-Type: application/json` and `X-Acuity-Schema: 1`
+- [x] **4.2** Create `cue-plugins/src/acuity-plugin.ts`:
+  - `import type { Plugin } from "@opencode-ai/plugin"` and
+    `import type { Event } from "@opencode-ai/sdk"` (both stripped at runtime)
+  - `Client` is not exported from `@opencode-ai/sdk`; type flows from `PluginInput`
+  - `fetch` used as a Bun global -- no import
+  - `ACUITY_HOST`: `process.env.ACUITY_HOST ?? "http://localhost:33222"`
+    (not hardcoded -- configurable per-environment at runtime)
+  - `Plugin` is a **function** `(PluginInput) => Promise<Hooks>`, not a plain
+    object; default export is `async ({ client, directory }) => { return { event: ... }; }`
+  - On `session.idle`: call `client.session.get()`, unwrap `.data`, construct
+    `SessionIdle` payload, POST to `${ACUITY_HOST}/events`
+  - Errors logged via `client.app.log()` (not `console.error` -- would corrupt TUI)
 
-- [ ] **4.3** Register the plugin globally. Add to
+- [x] **4.3** Register the plugin globally. Add to
   `~/.config/opencode/opencode.json` (create file if it does not exist):
   ```json
   {
@@ -180,7 +184,7 @@ Runtime facts (from research report
   Relative paths in that file anchor at `~/.config/opencode/`; absolute
   path used here for clarity.
 
-- [ ] **4.4** Decommission the current notification plugin. Move
+- [x] **4.4** Decommission the current notification plugin. Move
   `/home/pl/.config/opencode/plugin/notification.ts` out of the `plugin/`
   directory (e.g. to `~/.config/opencode/plugin/archive/notification.ts`).
   No config change needed -- auto-discovery will no longer find it.
@@ -190,14 +194,14 @@ Runtime facts (from research report
 
 ### Area 5 -- full-stack verification
 
-- [ ] **5.1** `cargo build --workspace` -- all six crates, zero warnings.
+- [x] **5.1** `cargo build --workspace` -- all six crates, zero warnings.
 
-- [ ] **5.2** Start `acuity`:
+- [x] **5.2** Start `acuity`:
   ```bash
   ACUITY_GOTIFY_TOKEN=<token> cargo run -p acuity
   ```
 
-- [ ] **5.3** Smoke-test schema rejection:
+- [x] **5.3** Smoke-test schema rejection:
   ```bash
   curl -s -w "\n%{http_code}" -X POST http://localhost:33222/events \
     -H "Content-Type: application/json" \
@@ -206,7 +210,7 @@ Runtime facts (from research report
   ```
   Expected: `400`.
 
-- [ ] **5.4** Smoke-test valid event:
+- [x] **5.4** Smoke-test valid event:
   ```bash
   curl -s -w "\n%{http_code}" -X POST http://localhost:33222/events \
     -H "Content-Type: application/json" \
@@ -215,17 +219,20 @@ Runtime facts (from research report
   ```
   Expected: `200` and a Gotify notification appears.
 
-- [ ] **5.5** Run a live agent session with the plugin active; observe Gotify
+- [x] **5.5** Run a live agent session with the plugin active; observe Gotify
   notification on idle. This is the human-attested acceptance criterion.
 
 ---
 
+## Steps
 ### Area 6 -- housekeeping
 
-- [ ] **6.1** Commit the `cue` workspace changes (acuity-schema + acuity crates).
-- [ ] **6.2** Commit the `cue-plugins` repo changes (updated `types.ts` + new plugin).
-- [ ] **6.3** Update task status:
+- [x] **6.1** Commit the `cue` workspace changes (acuity-schema + acuity crates).
+  Commit: `5a3ea36`
+- [x] **6.2** Commit the `cue-plugins` repo changes (updated `types.ts` + new plugin).
+  Commits: `fc1373d`, `8fba80d`, `1e069a4`, `8d2cab1`
+- [x] **6.3** Update task status:
   - Fill Evidence cells for criteria 1-4 in `acuity-stateless-mvp.md`
   - Criterion 5 (decommission ref server) requires human attestation
   - Set `status: complete` only after all Evidence cells are filled
-- [ ] **6.4** `cue log add` entry recording the milestone.
+- [x] **6.4** `cue log add` entry recording the milestone.

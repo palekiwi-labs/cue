@@ -1,7 +1,8 @@
 ---
 title: "curator: artifact kanban (read-only)"
-status: open
+status: complete
 priority: normal
+branch: "feat/curator-mvp"
 ---
 # curator: artifact kanban (read-only)
 
@@ -18,6 +19,6 @@ No `acuity` involvement at this stage.
 
 | #  | Criterion                                                              | Verify by                          | Evidence |
 | -- | ---------------------------------------------------------------------- | ---------------------------------- | -------- |
-| 1  | `curator` launches and displays a kanban board across real projects    | run `curator` in a real project    |          |
-| 2  | Tasks, plans, and todos from `.cue/` are visible and correctly grouped | human attestation                  |          |
-| 3  | `cue` CLI tests still pass                                             | `cargo test -p cue`                |          |
+| 1  | `curator` launches and displays a kanban board across real projects    | run `curator` in a real project    | works in cue repo (CWD only for MVP) |
+| 2  | Tasks, plans, and todos from `.cue/` are visible and correctly grouped | human attestation                  | verified visually |
+| 3  | `cue` CLI tests still pass                                             | `cargo test -p cue`                | all tests green |
