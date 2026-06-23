@@ -44,6 +44,14 @@
             maintainers = [ ];
           };
         };
+
+        # Builds only the codegen binary from acuity-schema. Exposed
+        # publicly so consumers (e.g. cue-plugins) can run it directly
+        # against their source tree via a `nix run` script.
+        acuity-schema-codegen = rustPlatform.buildRustPackage (common // {
+          pname = "acuity-schema-codegen";
+          cargoBuildFlags = [ "-p" "acuity-schema" "--bin" "codegen" ];
+        });
       in
       {
         # --- packages ---------------------------------------------------
@@ -88,6 +96,22 @@
             mainProgram = "acuity";
           };
         });
+
+        # `acuity-schema-types` invokes the codegen binary with $out as the
+        # output directory and produces $out/types.ts — the TypeScript
+        # discriminated union for all AcuityEvent variants. This is a
+        # pre-built store artifact useful for CI or inspection. Consumers
+        # that need to write types into their own source tree should use
+        # `acuity-schema-codegen` directly instead.
+        packages.acuity-schema-types = pkgs.runCommand "acuity-schema-types" { } ''
+          mkdir -p $out
+          ${acuity-schema-codegen}/bin/codegen $out
+        '';
+
+        # The codegen binary itself. Consumers run this directly to
+        # generate types.ts into their source tree:
+        #   nix run <cue-flake>#acuity-schema-codegen -- src/
+        packages.acuity-schema-codegen = acuity-schema-codegen;
 
         # --- checks -----------------------------------------------------
 
