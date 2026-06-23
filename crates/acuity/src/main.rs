@@ -1,5 +1,5 @@
 // acuity: observability server for the cue ecosystem.
-// Phase 3: 4-event model, SQLite persistence, optional Gotify notifications.
+// Phase 5: query API + SSE stream added to Phase 3 ingest server.
 
 mod config;
 mod db;
@@ -10,11 +10,13 @@ use std::path::Path;
 
 use acuity_schema::{AcuityEvent, SCHEMA_VERSION};
 use axum::{
-    Router,
-    extract::{DefaultBodyLimit, State},
+    Json, Router,
+    extract::{DefaultBodyLimit, Query, State},
     http::{HeaderMap, StatusCode},
-    routing::post,
+    response::sse::{Event, KeepAlive, Sse},
+    routing::get,
 };
+use serde::Deserialize;
 use serde_json::json;
 use sqlx::SqlitePool;
 use tracing::{error, info};
@@ -54,9 +56,140 @@ fn resolve_db_path() -> std::path::PathBuf {
 
 fn make_app(state: AppState) -> Router {
     Router::new()
-        .route("/events", post(handle_event))
+        .route("/events", get(query_events).post(handle_event))
+        .route("/events/stream", get(sse_handler))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// GET /events — paginated historical query
+// ---------------------------------------------------------------------------
+
+/// Query parameters accepted by `GET /events`.
+#[derive(Debug, Deserialize)]
+struct EventsQuery {
+    /// Exclusive lower bound on `seq`. Defaults to 0 (return all events).
+    #[serde(default)]
+    after: i64,
+    /// Maximum rows to return. Clamped to 1–500 server-side. Default 100.
+    #[serde(default = "default_limit")]
+    limit: i64,
+    session_id: Option<String>,
+    event_type: Option<String>,
+}
+
+fn default_limit() -> i64 {
+    100
+}
+
+async fn query_events(
+    State(state): State<AppState>,
+    Query(params): Query<EventsQuery>,
+) -> Result<Json<acuity_api::EventsPage>, StatusCode> {
+    // Normalise: negative after is harmless but confusing; clamp to 0.
+    let after = params.after.max(0);
+
+    match db::query_events_after(
+        &state.db,
+        after,
+        params.limit,
+        params.session_id.as_deref(),
+        params.event_type.as_deref(),
+    )
+    .await
+    {
+        Ok((events, next_after)) => Ok(Json(acuity_api::EventsPage { events, next_after })),
+        Err(err) => {
+            error!("query_events failed: {}", err);
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GET /events/stream — real-time SSE stream (poll-based)
+// ---------------------------------------------------------------------------
+
+/// Parse the `Last-Event-ID` header as an i64 seq cursor.
+/// Returns 0 (start of stream) on absent or non-numeric values.
+fn parse_last_event_id(headers: &HeaderMap) -> i64 {
+    headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .unwrap_or(0)
+}
+
+/// Rows fetched per SSE drain query.
+const SSE_PAGE_SIZE: i64 = 50;
+
+/// Maximum full pages drained per 500 ms poll cycle. Bounds catch-up so a
+/// sustained write burst cannot monopolise the task and starve the keepalive
+/// pings; backlog beyond this resumes from the last `seq` on the next cycle.
+const SSE_MAX_DRAIN_PAGES: usize = 10;
+
+async fn sse_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let cursor = parse_last_event_id(&headers).max(0);
+
+    // Poll-based tailing. Correctness relies on a single writer (the ingest
+    // path in `handle_event`): with `seq INTEGER PRIMARY KEY AUTOINCREMENT`,
+    // assignment order equals commit order, so advancing the cursor past every
+    // fetched `seq` never skips a row. Concurrent writers could diverge
+    // assignment from commit order and race this poll loop -- not supported.
+    let stream = async_stream::stream! {
+        let mut seq = cursor;
+        loop {
+            // Drain buffered rows, but cap the iterations per cycle so a
+            // sustained burst can't keep us here forever and starve the sleep
+            // / keepalive below. A short page (or the cap) falls through to
+            // the 500 ms sleep, then we poll again from the last `seq`.
+            for _ in 0..SSE_MAX_DRAIN_PAGES {
+                match db::query_events_after(
+                    &state.db,
+                    seq,
+                    SSE_PAGE_SIZE,
+                    None,
+                    None,
+                )
+                .await
+                {
+                    Ok((records, next_after)) => {
+                        let is_last_page = next_after.is_none();
+                        for record in records {
+                            seq = record.seq;
+                            let data = match serde_json::to_string(&record) {
+                                Ok(s) => s,
+                                Err(err) => {
+                                    error!(
+                                        "sse: failed to serialize EventRecord: {}",
+                                        err
+                                    );
+                                    continue;
+                                }
+                            };
+                            yield Ok(Event::default()
+                                .id(seq.to_string())
+                                .data(data));
+                        }
+                        if is_last_page {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        error!("sse: db query failed: {}", err);
+                        break;
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    };
+
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
 }
 
 #[tokio::main]
@@ -76,9 +209,7 @@ async fn main() -> anyhow::Result<()> {
         Some(_) => info!("Gotify notifications enabled"),
         None => info!("Gotify token not set, notifications disabled"),
     }
-    if gotify_token.is_some()
-        && cfg.gotify_url == config::Config::default().gotify_url
-    {
+    if gotify_token.is_some() && cfg.gotify_url == config::Config::default().gotify_url {
         tracing::warn!(
             "ACUITY_GOTIFY_TOKEN is set but gotify_url is still the default; \
              notifications will likely fail"
@@ -162,9 +293,7 @@ async fn handle_event(
     body: axum::body::Bytes,
 ) -> StatusCode {
     // 1. Validate schema version header (parse as u8, not string compare)
-    let schema_header = headers
-        .get("x-acuity-schema")
-        .and_then(|v| v.to_str().ok());
+    let schema_header = headers.get("x-acuity-schema").and_then(|v| v.to_str().ok());
 
     let version: u8 = match schema_header.and_then(|v| v.trim().parse().ok()) {
         Some(v) => v,
@@ -200,8 +329,7 @@ async fn handle_event(
 
     // 4. Payload = raw request bytes (faithful copy, not re-serialized).
     //    serde_json::from_slice already validated UTF-8, so unwrap is safe.
-    let payload =
-        String::from_utf8(body.to_vec()).expect("serde_json validated UTF-8");
+    let payload = String::from_utf8(body.to_vec()).expect("serde_json validated UTF-8");
 
     // 5. Persist to SQLite — failure returns 500
     match db::insert_event(&state.db, &event, received_at, &payload).await {
