@@ -19,10 +19,9 @@ fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
     let cwd = match cli.dir {
         Some(ref path) => {
-            if !path.exists() {
-                anyhow::bail!("--dir: path does not exist: {}", path.display());
-            }
-            if !path.is_dir() {
+            let md = std::fs::metadata(path)
+                .map_err(|_| anyhow::anyhow!("--dir: path does not exist: {}", path.display()))?;
+            if !md.is_dir() {
                 anyhow::bail!("--dir: not a directory: {}", path.display());
             }
             path.canonicalize()?
