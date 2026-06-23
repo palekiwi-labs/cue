@@ -86,7 +86,7 @@ fn default_limit() -> i64 {
 async fn query_events(
     State(state): State<AppState>,
     Query(params): Query<EventsQuery>,
-) -> Json<acuity_api::EventsPage> {
+) -> Result<Json<acuity_api::EventsPage>, StatusCode> {
     // Normalise: negative after is harmless but confusing; clamp to 0.
     let after = params.after.max(0);
 
@@ -99,13 +99,10 @@ async fn query_events(
     )
     .await
     {
-        Ok((events, next_after)) => Json(acuity_api::EventsPage { events, next_after }),
+        Ok((events, next_after)) => Ok(Json(acuity_api::EventsPage { events, next_after })),
         Err(err) => {
             error!("query_events failed: {}", err);
-            Json(acuity_api::EventsPage {
-                events: vec![],
-                next_after: None,
-            })
+            Err(StatusCode::INTERNAL_SERVER_ERROR)
         }
     }
 }

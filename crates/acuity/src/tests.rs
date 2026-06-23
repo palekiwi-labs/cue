@@ -568,3 +568,16 @@ async fn query_next_after_resumes_and_terminates() {
     assert_eq!(page.events.len(), 1);
     assert_eq!(page.next_after, None);
 }
+
+#[tokio::test]
+async fn query_db_failure_returns_500() {
+    // A DB failure must surface as 500, not a 200 OK with an empty page
+    // (which a paginating client would mistake for "final page reached").
+    let state = test_state_no_gotify().await;
+    // Close the pool so the query path fails.
+    state.db.close().await;
+
+    let app = make_app(state);
+    let resp = get_events(app, "").await;
+    assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+}
