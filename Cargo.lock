@@ -6,12 +6,15 @@ version = 4
 name = "acuity"
 version = "0.1.0"
 dependencies = [
+ "acuity-api",
  "acuity-schema",
  "anyhow",
+ "async-stream",
  "axum",
  "chrono",
  "dirs",
  "figment",
+ "futures-core",
  "http-body-util",
  "reqwest",
  "serde",
@@ -28,6 +31,7 @@ dependencies = [
 name = "acuity-api"
 version = "0.1.0"
 dependencies = [
+ "acuity-schema",
  "serde",
 ]
 
@@ -219,6 +223,28 @@ dependencies = [
  "predicates-core",
  "predicates-tree",
  "wait-timeout",
+]
+
+[[package]]
+name = "async-stream"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0b5a71a6f37880a80d1d7f19efd781e4b5de42c88f0722cc13bcb6cc2cfe8476"
+dependencies = [
+ "async-stream-impl",
+ "futures-core",
+ "pin-project-lite",
+]
+
+[[package]]
+name = "async-stream-impl"
+version = "0.3.6"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
+dependencies = [
+ "proc-macro2",
+ "quote",
+ "syn",
 ]
 
 [[package]]
