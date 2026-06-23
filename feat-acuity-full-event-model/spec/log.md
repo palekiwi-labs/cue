@@ -88,3 +88,51 @@ Applied all confirmed review findings from the Flash/Sonnet/Opus review cycle. F
 - **Decided:** Do not migrate to sqlx::raw_sql — functionally correct as-is, deprecated path is a style nit only
 - **Decided:** Accept serde_json/JsonValue.ts side-file — cannot redirect without newtype wrapper
 
+## [0b42c72] Nix wiring updated for Phase 3 acuity changes
+
+Two commits (a27740a, 0b42c72) update flake.nix and nixos/acuity.nix to match the Phase 3 behavioral changes: optional Gotify token, SQLite persistence requiring a writable data directory, and new acuity package output for non-NixOS users.
+
+- **Found:** sqlx sqlite feature without bundled flag links libsqlite3 dynamically — pkgs.sqlite must be in buildInputs of the flake package derivation
+- **Found:** ACUITY_DATA_DIR is a parent dir: binary appends acuity/events.db to it, so StateDirectory=acuity + ACUITY_DATA_DIR=/var/lib yields /var/lib/acuity/events.db
+- **Found:** workspaceBuild // { meta = ... } is idiomatic for exposing two named packages from one derivation with different mainProgram meta fields
+- **Found:** ProtectSystem=strict blocks all writes outside allowed paths; ReadWritePaths needed for custom dataDir values outside /var/lib
+- **Decided:** Single workspaceBuild derivation shared between packages.default (cue) and packages.acuity — one compile, two named outputs
+- **Decided:** StateDirectory=acuity only when dataDir is the default /var/lib; ReadWritePaths used for custom paths
+- **Decided:** environmentFile changed from required path to nullOr path defaulting to null — ACUITY_GOTIFY_TOKEN is now optional
+- **Decided:** package default changed from self.packages.default to self.packages.acuity to avoid pulling cue binary into the NixOS service default
+
+## [c3112e8] Refactor flake.nix: per-binary derivations with correct toolchain wiring
+
+Commit c3112e8. Replaced the single workspaceBuild // { meta } trick with three proper buildRustPackage derivations sharing a common attrset. Followed combined Sonnet + Opus consultation findings.
+
+- **Found:** workspaceBuild // { meta } was cosmetically wrong — both packages shared the same store path and same closure; the sqlite bleed was not fixed at all by the old approach
+- **Found:** Security win: acuity server derivation no longer ships cue and curator binaries in its store path
+- **Found:** cuelib tests would have fallen through cracks with per-crate -p scoping — no binary derivation would have tested the shared library crate
+- **Found:** The vendor tarball (fixed-output derivation from Cargo.lock) is shared across all three package builds — no extra network fetch cost from the split
+- **Decided:** makeRustPlatform { cargo = rustToolchain; rustc = rustToolchain; } used instead of PATH injection — fenix toolchain now wires into buildRustPackage hooks correctly
+- **Decided:** common attrset with shallow-merge // pattern — documented the nativeBuildInputs extension rule in a comment
+- **Decided:** pkgs.sqlite in buildInputs on acuity derivation only — cue and curator closures are now sqlite-free
+- **Decided:** doCheck = false on all three package derivations — test gate moved to checks.workspace-tests
+- **Decided:** checks.workspace-tests runs cargo nextest --workspace covering all crates including cuelib
+- **Decided:** pkgs.git retained in common.nativeBuildInputs — may be needed by dep build scripts in sandbox
+- **Decided:** Dynamic sqlite link kept, bundled feature rejected — acuity is NixOS-deployed, bundling adds libclang/bindgen cost for no benefit
+- **Decided:** packages.default = self.packages.${system}.cue explicitly rather than workspaceBuild alias
+
+## [db09029] Remove unused sqlx macros and migrate features — policy precedent set
+
+Commit db09029. Dropped the `macros` and `migrate` sqlx feature flags from crates/acuity/Cargo.toml after an Opus consultation endorsed going further than the initial 'lean remove' on migrate. Verified empirically: cargo check, cargo test -p acuity (20 passed), cargo clippy -p acuity -- -D warnings all clean. Cargo.lock pruned 455 lines of transitive dependencies.
+
+The decision turned on the team's own recorded policy ('fresh schema at v2, no deployed users') which directly contradicts pre-provisioning an in-place migration engine. Phase 5 SSE tables fit the existing idempotent SCHEMA_SQL const (CREATE TABLE IF NOT EXISTS) with zero new machinery. The macros feature was a latent CI footgun: enabling query!() requires DATABASE_URL or a .sqlx/ offline cache that nobody has set up.
+
+- **Found:** cargo check after removing a feature is the empirical proof it was unused in the compilation graph — the compiler is the source of truth, no guesswork
+- **Found:** Removing macros+migrate pruned 455 lines from Cargo.lock — the transitive dependency footprint of two 'small' feature flags is substantial
+- **Found:** macros enabled-but-unused is not neutral: it invites a future query!() call that silently makes cargo build environment-dependent (DATABASE_URL/.sqlx cache)
+- **Found:** migrate's real trigger is destructive transform of POPULATED rows (ALTER TABLE, backfills) — not adding new tables/indices, which the existing SCHEMA_SQL const handles idempotently
+- **Decided:** Remove both macros and migrate now — Opus pushed migrate from 'lean remove' to 'remove full stop', arguing the team's fresh-schema-at-v2 policy guts the case for keeping it
+- **Decided:** Do NOT leave a // TODO: adopt migrations at v2 in place of the feature — a dormant flag-plus-todo is documentation debt that rots; absence is self-documenting and discoverable in one cargo build
+- **Decided:** Workspace policy precedent: feature flags follow call sites, not roadmaps. A feature is enabled in the same PR as the code that consumes it, and removed when its last consumer is removed. 'We will need it in Phase N' is not a reason to enable a feature.
+- **Decided:** Policy carve-out (to prevent dogma): the test is 'is this feature load-bearing for code that exists in this PR?', not 'grep for a call site'. runtime-tokio-rustls and sqlite have no direct call site but are required-to-compile; they pass. Speculative Phase-N bets fail.
+- **Decided:** Defer sqlx::query!() adoption to a post-v2 ticket: right idea (compile-time query checking catches column renames, bind-count mismatches), wrong phase (schema is about to churn; would regenerate .sqlx cache on every edit)
+- **Open:** When v2 schema lands, decide: fresh-schema (delete events.db) vs in-place migration. If the latter, re-add migrate feature + migrations/ folder in the same PR.
+- **Open:** File a todo for sqlx::query!() adoption post-v2 stabilization (compile-time checking + .sqlx offline cache + sqlx prepare in CI)
+

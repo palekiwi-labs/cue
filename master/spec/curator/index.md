@@ -3,6 +3,7 @@
 ## References
 
 - [kanban ref analysis](.cue/master/doc/1781710490-3e2d075/kanban-ref-analysis.md)
+- [curator UI spec](.cue/master/spec/curator/ui.md)
 
 ## Purpose
 

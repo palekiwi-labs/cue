@@ -1,7 +1,8 @@
 ---
 title: "acuity-api: query API and SSE stream"
-status: open
+status: complete
 priority: normal
+branch: ""
 ---
 # acuity-api: query API and SSE stream
 
@@ -21,6 +22,6 @@ SQLite to design query shapes against rather than synthetic fixtures.
 
 | #  | Criterion                                                              | Verify by                                   | Evidence |
 | -- | ---------------------------------------------------------------------- | ------------------------------------------- | -------- |
-| 1  | HTTP query endpoint returns sensible results against real stored events | curl query endpoint with real data in SQLite |          |
-| 2  | SSE stream delivers live events as an agent runs                       | subscribe to SSE, run agent, observe events  |          |
-| 3  | Both are validated independently of `curator`                          | human attestation                            |          |
+| 1  | HTTP query endpoint returns sensible results against real stored events | curl query endpoint with real data in SQLite | PASS — bin/1782211100-a8d0fb9/validate-phase5.sh, all 8 checks green (2026-06-23) |
+| 2  | SSE stream delivers live events as an agent runs                       | subscribe to SSE, run agent, observe events  | PASS — bin/1782211100-a8d0fb9/validate-phase5-sse.sh, all 7 checks green (2026-06-23) |
+| 3  | Both are validated independently of `curator`                          | human attestation                            | PASS — both validated via raw curl, no curator involvement (user attested 2026-06-23) |

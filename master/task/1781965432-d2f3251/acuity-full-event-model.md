@@ -1,8 +1,8 @@
 ---
 title: "acuity: full event model + SQLite persistence"
-status: in-progress
+status: complete
 priority: normal
-branch: "feat/acuity-full-event-model"
+branch: ""
 ---
 # acuity: full event model + SQLite persistence
 
@@ -40,13 +40,13 @@ durable storage, and decouples notification from ingest.
 
 ## Acceptance Criteria
 
-| #  | Criterion                                                                          | Verify by                                               | Evidence |
-| -- | ---------------------------------------------------------------------------------- | ------------------------------------------------------- | -------- |
-| 1  | `curl` POSTs of all four event types return 200                                    | curl H1-H4 in the executive plan                        |          |
-| 2  | Events land in SQLite with correct `seq`, `event_type`, `session_id`, `received_at` | `sqlite3` inspect after POSTs (H2)                     |          |
-| 3  | `turn_id` is NULL for `session_idle`, populated for the other three types          | `sqlite3` inspect (H3)                                  |          |
-| 4  | A wrong `X-Acuity-Schema` value returns 400                                        | curl with `X-Acuity-Schema: 2` (H5)                     |          |
-| 5  | An unknown event `type` value returns 422                                           | curl with `"type":"nope"` (H6)                          |          |
-| 6  | Server starts without `ACUITY_GOTIFY_TOKEN` and persists events                    | start without env var, verify log + POST (H7)           |          |
-| 7  | `cargo test` (workspace) green, including persistence and Gotify-disabled tests    | `cargo test --workspace`                                |          |
-| 8  | `types.ts` regenerates with the 4-event discriminated union                        | `cargo run -p acuity-schema --bin codegen` (H8)         |          |
+| #  | Criterion                                                                          | Verify by                                               | Evidence                                           |
+| -- | ---------------------------------------------------------------------------------- | ------------------------------------------------------- | -------------------------------------------------- |
+| 1  | `curl` POSTs of all four event types return 200                                    | curl H1-H4 in the executive plan                        | attested 2026-06-23 (H1-H4 curl; PR #24 merged)    |
+| 2  | Events land in SQLite with correct `seq`, `event_type`, `session_id`, `received_at` | `sqlite3` inspect after POSTs (H2)                     | attested 2026-06-23 (H2 sqlite3 inspect)           |
+| 3  | `turn_id` is NULL for `session_idle`, populated for the other three types          | `sqlite3` inspect (H3)                                  | attested 2026-06-23 (H3 sqlite3 inspect)           |
+| 4  | A wrong `X-Acuity-Schema` value returns 400                                        | curl with `X-Acuity-Schema: 2` (H5)                     | attested 2026-06-23 (H5 curl)                      |
+| 5  | An unknown event `type` value returns 422                                           | curl with `"type":"nope"` (H6)                          | attested 2026-06-23 (H6 curl)                      |
+| 6  | Server starts without `ACUITY_GOTIFY_TOKEN` and persists events                    | start without env var, verify log + POST (H7)           | attested 2026-06-23 (H7 startup + POST)            |
+| 7  | `cargo test` (workspace) green, including persistence and Gotify-disabled tests    | `cargo test --workspace`                                | 138 workspace tests green; 20 acuity; clippy clean |
+| 8  | `types.ts` regenerates with the 4-event discriminated union                        | `cargo run -p acuity-schema --bin codegen` (H8)         | attested 2026-06-23 (H8 codegen)                   |
