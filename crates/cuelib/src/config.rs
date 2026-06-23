@@ -1,6 +1,6 @@
 use figment::{
-    providers::{Env, Format, Json, Serialized},
     Figment,
+    providers::{Env, Format, Json, Serialized},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;

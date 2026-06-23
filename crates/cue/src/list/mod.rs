@@ -63,10 +63,7 @@ impl FromStr for Filter {
 }
 
 /// Walk a dot-separated path into a JSON value.
-fn get_nested<'a>(
-    value: &'a serde_json::Value,
-    path: &[String],
-) -> Option<&'a serde_json::Value> {
+fn get_nested<'a>(value: &'a serde_json::Value, path: &[String]) -> Option<&'a serde_json::Value> {
     path.iter().try_fold(value, |v, key| v.get(key))
 }
 
@@ -291,10 +288,7 @@ pub fn to_cue_file(path: &Path, cue_path: &Path, root: &Path) -> Option<CueFile>
                 cue_file.commit_hash = Some(hash_str.to_string());
 
                 // name is relative to the ts-hash dir
-                let prefix = cue_path
-                    .join(&branch)
-                    .join(&category)
-                    .join(ts_hash_dir);
+                let prefix = cue_path.join(&branch).join(&category).join(ts_hash_dir);
                 if let Ok(rel_name) = path.strip_prefix(&prefix) {
                     cue_file.name = rel_name.to_string_lossy().to_string();
                 }
