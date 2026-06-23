@@ -55,8 +55,7 @@ pub async fn insert_event(
     received_at: DateTime<Utc>,
     payload: &str,
 ) -> sqlx::Result<i64> {
-    let received_at_str =
-        received_at.to_rfc3339_opts(SecondsFormat::Secs, true);
+    let received_at_str = received_at.to_rfc3339_opts(SecondsFormat::Secs, true);
     let result = sqlx::query(
         "INSERT INTO events (received_at, event_type, session_id, turn_id, payload)
          VALUES (?, ?, ?, ?, ?)",
@@ -81,13 +80,18 @@ pub async fn insert_event(
 ///
 /// Results are ordered by `seq` ascending so callers can use the last
 /// returned `seq` as the next `after` cursor.
+///
+/// Returns the records plus a pagination cursor: `Some(last_record.seq)` when
+/// the page was full (`records.len() == clamped_limit`, so more matching rows
+/// may exist), or `None` on a short page (the final page). The caller decides
+/// pagination from this cursor, not from the requested `limit`.
 pub async fn query_events_after(
     pool: &SqlitePool,
     after: i64,
     limit: i64,
     session_id: Option<&str>,
     event_type: Option<&str>,
-) -> sqlx::Result<Vec<acuity_api::EventRecord>> {
+) -> sqlx::Result<(Vec<acuity_api::EventRecord>, Option<i64>)> {
     let clamped_limit = limit.clamp(1, 500);
 
     let mut builder = sqlx::QueryBuilder::new(
@@ -108,13 +112,10 @@ pub async fn query_events_after(
     builder.push(" ORDER BY seq LIMIT ");
     builder.push_bind(clamped_limit);
 
-    let rows = builder
-        .build()
-        .fetch_all(pool)
-        .await?;
+    let rows = builder.build().fetch_all(pool).await?;
 
     use sqlx::Row as _;
-    let records = rows
+    let records: Vec<acuity_api::EventRecord> = rows
         .into_iter()
         .map(|row| acuity_api::EventRecord {
             seq: row.get("seq"),
@@ -126,7 +127,16 @@ pub async fn query_events_after(
         })
         .collect();
 
-    Ok(records)
+    // Full page -> more rows may exist; report the resume cursor. A short page
+    // (incl. empty) is the final page. If exactly `clamped_limit` rows remain,
+    // the client resumes and gets an empty page + None on the next call.
+    let next_after = if records.len() as i64 == clamped_limit {
+        records.last().map(|r| r.seq)
+    } else {
+        None
+    };
+
+    Ok((records, next_after))
 }
 
 /// Test-only: create an in-memory SQLite pool with the schema applied.
@@ -159,8 +169,7 @@ mod tests {
 
     use super::*;
     use acuity_schema::{
-        AgentTurnCompleted, AcuityEvent, SessionIdle, ToolCallCompleted,
-        ToolCallRequested,
+        AcuityEvent, AgentTurnCompleted, SessionIdle, ToolCallCompleted, ToolCallRequested,
     };
     use serde_json::json;
 
@@ -208,8 +217,7 @@ mod tests {
         let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/home/pl/code","session_title":"hack"}"#;
 
         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
-        let (event_type, session_id, turn_id, payload, received_at) =
-            fetch_row(&pool, seq).await;
+        let (event_type, session_id, turn_id, payload, received_at) = fetch_row(&pool, seq).await;
 
         assert_eq!(event_type, "session_idle");
         assert_eq!(session_id, "s1");
@@ -231,8 +239,7 @@ mod tests {
         let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","input_tokens":120,"output_tokens":340}"#;
 
         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
-        let (event_type, session_id, turn_id, _payload, _received_at) =
-            fetch_row(&pool, seq).await;
+        let (event_type, session_id, turn_id, _payload, _received_at) = fetch_row(&pool, seq).await;
 
         assert_eq!(event_type, "agent_turn_completed");
         assert_eq!(session_id, "s1");
@@ -252,8 +259,7 @@ mod tests {
         let raw = r#"{"type":"tool_call_requested","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"read","args":{"path":"/x","limit":50}}"#;
 
         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
-        let (event_type, session_id, turn_id, payload, _received_at) =
-            fetch_row(&pool, seq).await;
+        let (event_type, session_id, turn_id, payload, _received_at) = fetch_row(&pool, seq).await;
 
         assert_eq!(event_type, "tool_call_requested");
         assert_eq!(session_id, "s1");
@@ -275,8 +281,7 @@ mod tests {
         let raw = r#"{"type":"tool_call_completed","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"bash","is_error":true,"error_text":"command not found: fd"}"#;
 
         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
-        let (event_type, _session_id, turn_id, payload, _received_at) =
-            fetch_row(&pool, seq).await;
+        let (event_type, _session_id, turn_id, payload, _received_at) = fetch_row(&pool, seq).await;
 
         assert_eq!(event_type, "tool_call_completed");
         assert_eq!(turn_id.as_deref(), Some("t1"));

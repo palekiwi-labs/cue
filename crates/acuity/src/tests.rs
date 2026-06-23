@@ -123,9 +123,7 @@ async fn unknown_event_type_returns_422() {
     let state = test_state_with_url("http://localhost:80".into()).await;
     let app = make_app(state);
     // Missing / unknown "type" discriminant — must 422
-    let status =
-        send_request(app, Some("1"), r#"{"type":"nope","session_id":"x"}"#)
-            .await;
+    let status = send_request(app, Some("1"), r#"{"type":"nope","session_id":"x"}"#).await;
     assert_eq!(status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
 }
 
@@ -152,11 +150,10 @@ async fn valid_event_persists_correct_event_type() {
 
     send_request(app, Some("1"), SESSION_IDLE_BODY).await;
 
-    let event_type: String =
-        sqlx::query_scalar("SELECT event_type FROM events LIMIT 1")
-            .fetch_one(&pool)
-            .await
-            .unwrap();
+    let event_type: String = sqlx::query_scalar("SELECT event_type FROM events LIMIT 1")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
     assert_eq!(event_type, "session_idle");
 }
 
@@ -183,8 +180,7 @@ async fn valid_session_idle_forwards_to_gotify() {
     // The Gotify call is fire-and-forget (tokio::spawn); the JoinHandle is
     // dropped inside handle_event and is not accessible here. Poll until
     // wiremock records the expected request rather than using a fixed sleep.
-    let deadline = std::time::Instant::now()
-        + std::time::Duration::from_millis(500);
+    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
     loop {
         if mock_server.received_requests().await.map_or(0, |r| r.len()) >= 1 {
             break;
@@ -372,8 +368,7 @@ async fn sse_last_event_id_resumes_from_cursor() {
                 for line in chunk.lines() {
                     if let Some(rest) = line.strip_prefix("data:") {
                         let record: acuity_api::EventRecord =
-                            serde_json::from_str(rest.trim())
-                                .expect("must be valid EventRecord");
+                            serde_json::from_str(rest.trim()).expect("must be valid EventRecord");
                         // Must be the second event, not the first
                         assert_eq!(record.seq, 2);
                         assert_eq!(record.event_type, "agent_turn_completed");
@@ -508,4 +503,68 @@ async fn query_record_fields_correct() {
     assert!(rec.turn_id.is_none());
     assert_eq!(rec.payload, SESSION_IDLE_BODY);
     assert!(!rec.received_at.is_empty());
+}
+
+// ---------------------------------------------------------------------------
+// GET /events — pagination cursor (`next_after`)
+//
+// The server owns the "is there more?" decision so clients never depend on
+// the server's internal page-size clamp. Loop until `next_after` is `None`.
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn query_next_after_none_on_short_page() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+
+    // Two events; default limit (100) >> row count -> short page.
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
+    send_request(app.clone(), Some("1"), AGENT_TURN_BODY).await;
+
+    let app2 = make_app(state);
+    let resp = get_events(app2, "").await;
+    let page = body_json(resp).await;
+    assert_eq!(page.events.len(), 2);
+    assert_eq!(page.next_after, None);
+}
+
+#[tokio::test]
+async fn query_next_after_some_on_full_page() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+
+    // Three events; request limit=2 -> full page, must report a resume cursor.
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
+    send_request(app.clone(), Some("1"), AGENT_TURN_BODY).await;
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY_S2).await;
+
+    let app2 = make_app(state);
+    let resp = get_events(app2, "limit=2").await;
+    let page = body_json(resp).await;
+    assert_eq!(page.events.len(), 2);
+    // Cursor is the seq of the last returned row; resume with after=<that seq>.
+    assert_eq!(page.next_after, Some(page.events[1].seq));
+}
+
+#[tokio::test]
+async fn query_next_after_resumes_and_terminates() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
+    send_request(app.clone(), Some("1"), AGENT_TURN_BODY).await;
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY_S2).await;
+
+    // Page 1: limit=2 -> full page, cursor set.
+    let app2 = make_app(state.clone());
+    let page = body_json(get_events(app2, "limit=2").await).await;
+    assert_eq!(page.events.len(), 2);
+    let cursor = page.next_after.expect("full page must set cursor");
+
+    // Page 2: resume at the cursor -> exactly the remaining row, cursor None.
+    let app3 = make_app(state);
+    let next_uri = format!("limit=2&after={}", cursor);
+    let page = body_json(get_events(app3, &next_uri).await).await;
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(page.next_after, None);
 }

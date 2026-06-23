@@ -99,10 +99,13 @@ async fn query_events(
     )
     .await
     {
-        Ok(events) => Json(acuity_api::EventsPage { events }),
+        Ok((events, next_after)) => Json(acuity_api::EventsPage { events, next_after }),
         Err(err) => {
             error!("query_events failed: {}", err);
-            Json(acuity_api::EventsPage { events: vec![] })
+            Json(acuity_api::EventsPage {
+                events: vec![],
+                next_after: None,
+            })
         }
     }
 }
@@ -132,9 +135,11 @@ async fn sse_handler(
         loop {
             // Drain: keep fetching until a short page, then sleep.
             loop {
-                match db::query_events_after(&state.db, seq, 50, None, None).await {
-                    Ok(records) => {
-                        let is_last_page = records.len() < 50;
+                match db::query_events_after(&state.db, seq, 50, None, None)
+                    .await
+                {
+                    Ok((records, next_after)) => {
+                        let is_last_page = next_after.is_none();
                         for record in records {
                             seq = record.seq;
                             let data = match serde_json::to_string(&record) {
@@ -162,9 +167,7 @@ async fn sse_handler(
         }
     };
 
-    Sse::new(stream).keep_alive(
-        KeepAlive::new().interval(std::time::Duration::from_secs(15)),
-    )
+    Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
 }
 
 #[tokio::main]
@@ -184,9 +187,7 @@ async fn main() -> anyhow::Result<()> {
         Some(_) => info!("Gotify notifications enabled"),
         None => info!("Gotify token not set, notifications disabled"),
     }
-    if gotify_token.is_some()
-        && cfg.gotify_url == config::Config::default().gotify_url
-    {
+    if gotify_token.is_some() && cfg.gotify_url == config::Config::default().gotify_url {
         tracing::warn!(
             "ACUITY_GOTIFY_TOKEN is set but gotify_url is still the default; \
              notifications will likely fail"
@@ -270,9 +271,7 @@ async fn handle_event(
     body: axum::body::Bytes,
 ) -> StatusCode {
     // 1. Validate schema version header (parse as u8, not string compare)
-    let schema_header = headers
-        .get("x-acuity-schema")
-        .and_then(|v| v.to_str().ok());
+    let schema_header = headers.get("x-acuity-schema").and_then(|v| v.to_str().ok());
 
     let version: u8 = match schema_header.and_then(|v| v.trim().parse().ok()) {
         Some(v) => v,
@@ -308,8 +307,7 @@ async fn handle_event(
 
     // 4. Payload = raw request bytes (faithful copy, not re-serialized).
     //    serde_json::from_slice already validated UTF-8, so unwrap is safe.
-    let payload =
-        String::from_utf8(body.to_vec()).expect("serde_json validated UTF-8");
+    let payload = String::from_utf8(body.to_vec()).expect("serde_json validated UTF-8");
 
     // 5. Persist to SQLite — failure returns 500
     match db::insert_event(&state.db, &event, received_at, &payload).await {

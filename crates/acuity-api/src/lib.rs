@@ -34,10 +34,21 @@ pub struct EventRecord {
 
 /// Response body for `GET /events`.
 ///
-/// Pagination contract: if `events.len() == limit` (the requested page size),
-/// there may be more rows. Resume by setting `after` to the `seq` of the last
-/// returned record. If `events.len() < limit`, this is the final page.
+/// Pagination contract: loop, calling `GET /events?after=<cursor>`, until
+/// `next_after` is `None`. After each page set `after` to `next_after` (the
+/// `seq` of the last returned record). `next_after` is `Some(seq)` when the
+/// page was full — meaning more matching rows may exist — and `None` once a
+/// short page is returned (the final page).
+///
+/// The server decides "is there more?" so the client never depends on the
+/// server's internal page-size clamp. Do NOT infer the end of the result set
+/// from `events.len() == requested limit`: the server may clamp `limit` below
+/// what the client requested.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventsPage {
     pub events: Vec<EventRecord>,
+    /// `Some(last_record.seq)` when this page is full (more rows may follow);
+    /// `None` on the final page. Use as the next `after` cursor.
+    #[serde(default)]
+    pub next_after: Option<i64>,
 }
