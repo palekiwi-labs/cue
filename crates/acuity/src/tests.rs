@@ -285,18 +285,10 @@ fn basename_relative_no_dir_component() {
 // GET /events/stream — SSE smoke tests
 // ---------------------------------------------------------------------------
 
-async fn sse_first_data_line(state: AppState) -> String {
-    let app = make_app(state);
-    let request = axum::http::Request::builder()
-        .method("GET")
-        .uri("/events/stream")
-        .header("Accept", "text/event-stream")
-        .body(Body::empty())
-        .unwrap();
-    let response = app.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), axum::http::StatusCode::OK);
-
-    // Read chunks until we find a "data:" line.
+/// Read chunks from an SSE response until the first `data:` frame, returning
+/// its trimmed payload. Panics if no data frame arrives within 2 s.
+async fn first_data_frame(response: axum::http::Response<Body>) -> String {
+    use http_body_util::BodyExt as _;
     let mut body = response.into_body();
     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
     loop {
@@ -304,7 +296,6 @@ async fn sse_first_data_line(state: AppState) -> String {
             std::time::Instant::now() < deadline,
             "timed out waiting for SSE data frame"
         );
-        use http_body_util::BodyExt as _;
         if let Some(Ok(frame)) = body.frame().await {
             if let Ok(bytes) = frame.into_data() {
                 let chunk = String::from_utf8_lossy(&bytes);
@@ -318,6 +309,45 @@ async fn sse_first_data_line(state: AppState) -> String {
             panic!("SSE stream ended before a data: frame arrived");
         }
     }
+}
+
+/// Open an SSE stream against a fresh app built from `state`, asserting a 200
+/// response, and return the first `data:` payload.
+async fn sse_first_data_line(state: AppState) -> String {
+    let app = make_app(state);
+    let request = axum::http::Request::builder()
+        .method("GET")
+        .uri("/events/stream")
+        .header("Accept", "text/event-stream")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    first_data_frame(response).await
+}
+
+#[tokio::test]
+async fn sse_response_has_event_stream_content_type() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state);
+    let request = axum::http::Request::builder()
+        .method("GET")
+        .uri("/events/stream")
+        .header("Accept", "text/event-stream")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+    let content_type = response
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .expect("Content-Type header must be present");
+    assert!(
+        content_type.starts_with("text/event-stream"),
+        "expected text/event-stream, got: {}",
+        content_type
+    );
 }
 
 #[tokio::test]
@@ -357,29 +387,12 @@ async fn sse_last_event_id_resumes_from_cursor() {
     let response = app2.oneshot(request).await.unwrap();
     assert_eq!(response.status(), axum::http::StatusCode::OK);
 
-    let mut body = response.into_body();
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-    loop {
-        assert!(std::time::Instant::now() < deadline, "timed out");
-        use http_body_util::BodyExt as _;
-        if let Some(Ok(frame)) = body.frame().await {
-            if let Ok(bytes) = frame.into_data() {
-                let chunk = String::from_utf8_lossy(&bytes);
-                for line in chunk.lines() {
-                    if let Some(rest) = line.strip_prefix("data:") {
-                        let record: acuity_api::EventRecord =
-                            serde_json::from_str(rest.trim()).expect("must be valid EventRecord");
-                        // Must be the second event, not the first
-                        assert_eq!(record.seq, 2);
-                        assert_eq!(record.event_type, "agent_turn_completed");
-                        return;
-                    }
-                }
-            }
-        } else {
-            panic!("SSE stream ended unexpectedly");
-        }
-    }
+    let data = first_data_frame(response).await;
+    let record: acuity_api::EventRecord =
+        serde_json::from_str(&data).expect("must be valid EventRecord");
+    // Must be the second event, not the first
+    assert_eq!(record.seq, 2);
+    assert_eq!(record.event_type, "agent_turn_completed");
 }
 
 // ---------------------------------------------------------------------------

@@ -121,19 +121,41 @@ fn parse_last_event_id(headers: &HeaderMap) -> i64 {
         .unwrap_or(0)
 }
 
+/// Rows fetched per SSE drain query.
+const SSE_PAGE_SIZE: i64 = 50;
+
+/// Maximum full pages drained per 500 ms poll cycle. Bounds catch-up so a
+/// sustained write burst cannot monopolise the task and starve the keepalive
+/// pings; backlog beyond this resumes from the last `seq` on the next cycle.
+const SSE_MAX_DRAIN_PAGES: usize = 10;
+
 async fn sse_handler(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
     let cursor = parse_last_event_id(&headers).max(0);
 
+    // Poll-based tailing. Correctness relies on a single writer (the ingest
+    // path in `handle_event`): with `seq INTEGER PRIMARY KEY AUTOINCREMENT`,
+    // assignment order equals commit order, so advancing the cursor past every
+    // fetched `seq` never skips a row. Concurrent writers could diverge
+    // assignment from commit order and race this poll loop -- not supported.
     let stream = async_stream::stream! {
         let mut seq = cursor;
         loop {
-            // Drain: keep fetching until a short page, then sleep.
-            loop {
-                match db::query_events_after(&state.db, seq, 50, None, None)
-                    .await
+            // Drain buffered rows, but cap the iterations per cycle so a
+            // sustained burst can't keep us here forever and starve the sleep
+            // / keepalive below. A short page (or the cap) falls through to
+            // the 500 ms sleep, then we poll again from the last `seq`.
+            for _ in 0..SSE_MAX_DRAIN_PAGES {
+                match db::query_events_after(
+                    &state.db,
+                    seq,
+                    SSE_PAGE_SIZE,
+                    None,
+                    None,
+                )
+                .await
                 {
                     Ok((records, next_after)) => {
                         let is_last_page = next_after.is_none();
@@ -142,7 +164,10 @@ async fn sse_handler(
                             let data = match serde_json::to_string(&record) {
                                 Ok(s) => s,
                                 Err(err) => {
-                                    error!("sse: failed to serialize EventRecord: {}", err);
+                                    error!(
+                                        "sse: failed to serialize EventRecord: {}",
+                                        err
+                                    );
                                     continue;
                                 }
                             };
