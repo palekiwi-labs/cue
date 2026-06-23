@@ -286,6 +286,108 @@ fn basename_relative_no_dir_component() {
 }
 
 // ---------------------------------------------------------------------------
+// GET /events/stream — SSE smoke tests
+// ---------------------------------------------------------------------------
+
+async fn sse_first_data_line(state: AppState) -> String {
+    let app = make_app(state);
+    let request = axum::http::Request::builder()
+        .method("GET")
+        .uri("/events/stream")
+        .header("Accept", "text/event-stream")
+        .body(Body::empty())
+        .unwrap();
+    let response = app.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    // Read chunks until we find a "data:" line.
+    let mut body = response.into_body();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for SSE data frame"
+        );
+        use http_body_util::BodyExt as _;
+        if let Some(Ok(frame)) = body.frame().await {
+            if let Ok(bytes) = frame.into_data() {
+                let chunk = String::from_utf8_lossy(&bytes);
+                for line in chunk.lines() {
+                    if let Some(rest) = line.strip_prefix("data:") {
+                        return rest.trim().to_owned();
+                    }
+                }
+            }
+        } else {
+            panic!("SSE stream ended before a data: frame arrived");
+        }
+    }
+}
+
+#[tokio::test]
+async fn sse_delivers_existing_event_on_connect() {
+    let state = test_state_no_gotify().await;
+    // Insert one event directly into the pool before opening the SSE stream.
+    let app = make_app(state.clone());
+    send_request(app, Some("1"), SESSION_IDLE_BODY).await;
+
+    let data = sse_first_data_line(state).await;
+
+    // The data line must deserialize to a valid EventRecord.
+    let record: acuity_api::EventRecord =
+        serde_json::from_str(&data).expect("SSE data must be a valid EventRecord JSON");
+    assert_eq!(record.seq, 1);
+    assert_eq!(record.event_type, "session_idle");
+    assert_eq!(record.session_id, "abc-123");
+}
+
+#[tokio::test]
+async fn sse_last_event_id_resumes_from_cursor() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+    // Insert two events
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
+    send_request(app.clone(), Some("1"), AGENT_TURN_BODY).await;
+
+    // Connect with Last-Event-ID: 1 — should only receive the second event
+    let app2 = make_app(state);
+    let request = axum::http::Request::builder()
+        .method("GET")
+        .uri("/events/stream")
+        .header("Accept", "text/event-stream")
+        .header("Last-Event-ID", "1")
+        .body(Body::empty())
+        .unwrap();
+    let response = app2.oneshot(request).await.unwrap();
+    assert_eq!(response.status(), axum::http::StatusCode::OK);
+
+    let mut body = response.into_body();
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    loop {
+        assert!(std::time::Instant::now() < deadline, "timed out");
+        use http_body_util::BodyExt as _;
+        if let Some(Ok(frame)) = body.frame().await {
+            if let Ok(bytes) = frame.into_data() {
+                let chunk = String::from_utf8_lossy(&bytes);
+                for line in chunk.lines() {
+                    if let Some(rest) = line.strip_prefix("data:") {
+                        let record: acuity_api::EventRecord =
+                            serde_json::from_str(rest.trim())
+                                .expect("must be valid EventRecord");
+                        // Must be the second event, not the first
+                        assert_eq!(record.seq, 2);
+                        assert_eq!(record.event_type, "agent_turn_completed");
+                        return;
+                    }
+                }
+            }
+        } else {
+            panic!("SSE stream ended unexpectedly");
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // GET /events — query endpoint
 // ---------------------------------------------------------------------------
 

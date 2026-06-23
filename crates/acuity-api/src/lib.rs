@@ -16,12 +16,8 @@ pub use acuity_schema::AcuityEvent;
 ///
 /// The `payload` field contains the raw JSON wire bytes as they arrived from
 /// the plugin — a faithful copy of the request body. Callers that need the
-/// structured event can deserialize it:
-///
-/// ```rust
-/// let event: acuity_api::AcuityEvent =
-///     serde_json::from_str(&record.payload)?;
-/// ```
+/// structured event can deserialize it with
+/// `serde_json::from_str::<AcuityEvent>(&record.payload)`.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventRecord {
     pub seq: i64,
