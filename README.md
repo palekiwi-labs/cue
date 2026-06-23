@@ -3,9 +3,9 @@
 A file-based memory system for agentic workflows. See `.cue/master/spec/index.md`
 for the project intent and current state.
 
-This repository also ships the `acuity` binary: a stateless HTTP server that
-receives `session.idle` events from an opencode plugin and forwards them to a
-Gotify notification server.
+This repository also ships the `acuity` binary: an HTTP ingestion server that
+persists agent lifecycle events (session idle, agent turns, tool calls) to
+SQLite and optionally forwards notifications to a Gotify server.
 
 ## NixOS module
 
@@ -42,14 +42,16 @@ system configuration to run
 
 ### Environment file
 
-The `environmentFile` must be readable by the `acuity` system user and contain
-at least:
+The `environmentFile` is **optional**. If provided, it must be readable by the
+`acuity` system user. It is typically used to supply:
 
 ```
 ACUITY_GOTIFY_TOKEN=<your-gotify-app-token>
 ```
 
-This matches the read at `crates/acuity/src/main.rs:48`. The token is never
+The token is presence-based: when set, `session.idle` events are forwarded to
+Gotify; when unset, the service still starts and persists events but skips
+notifications (see `crates/acuity/src/main.rs:73-78`). The token is never
 stored in the Nix store; load it via your secrets mechanism (e.g. `sops-nix`,
 `agenix`, or a manually-managed `/run/keys/acuity.env`).
 
@@ -61,7 +63,8 @@ stored in the Nix store; load it via your secrets mechanism (e.g. `sops-nix`,
 | `services.acuity.package` | package | workspace build | acuity package to run. |
 | `services.acuity.gotifyUrl` | string | `"http://localhost"` | Gotify base URL (no trailing slash). |
 | `services.acuity.port` | port | `33222` | Listen port. |
-| `services.acuity.environmentFile` | path | (required) | systemd EnvironmentFile providing `ACUITY_GOTIFY_TOKEN`. |
+| `services.acuity.dataDir` | path | `"/var/lib"` | Parent dir for the SQLite DB; binary appends `acuity/events.db`. |
+| `services.acuity.environmentFile` | path | `null` | Optional systemd EnvironmentFile providing `ACUITY_GOTIFY_TOKEN`. |
 | `services.acuity.user` | string | `"acuity"` | System user. |
 | `services.acuity.group` | string | `"acuity"` | System group. |
 
