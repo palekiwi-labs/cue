@@ -1,5 +1,5 @@
 // acuity: observability server for the cue ecosystem.
-// Phase 3: 4-event model, SQLite persistence, optional Gotify notifications.
+// Phase 5: query API + SSE stream added to Phase 3 ingest server.
 
 mod config;
 mod db;
@@ -10,11 +10,13 @@ use std::path::Path;
 
 use acuity_schema::{AcuityEvent, SCHEMA_VERSION};
 use axum::{
-    Router,
-    extract::{DefaultBodyLimit, State},
+    Json, Router,
+    extract::{DefaultBodyLimit, Query, State},
     http::{HeaderMap, StatusCode},
-    routing::post,
+    response::sse::{Event, KeepAlive, Sse},
+    routing::get,
 };
+use serde::Deserialize;
 use serde_json::json;
 use sqlx::SqlitePool;
 use tracing::{error, info};
@@ -54,9 +56,115 @@ fn resolve_db_path() -> std::path::PathBuf {
 
 fn make_app(state: AppState) -> Router {
     Router::new()
-        .route("/events", post(handle_event))
+        .route("/events", get(query_events).post(handle_event))
+        .route("/events/stream", get(sse_handler))
         .layer(DefaultBodyLimit::max(64 * 1024))
         .with_state(state)
+}
+
+// ---------------------------------------------------------------------------
+// GET /events — paginated historical query
+// ---------------------------------------------------------------------------
+
+/// Query parameters accepted by `GET /events`.
+#[derive(Debug, Deserialize)]
+struct EventsQuery {
+    /// Exclusive lower bound on `seq`. Defaults to 0 (return all events).
+    #[serde(default)]
+    after: i64,
+    /// Maximum rows to return. Clamped to 1–500 server-side. Default 100.
+    #[serde(default = "default_limit")]
+    limit: i64,
+    session_id: Option<String>,
+    event_type: Option<String>,
+}
+
+fn default_limit() -> i64 {
+    100
+}
+
+async fn query_events(
+    State(state): State<AppState>,
+    Query(params): Query<EventsQuery>,
+) -> Json<acuity_api::EventsPage> {
+    // Normalise: negative after is harmless but confusing; clamp to 0.
+    let after = params.after.max(0);
+
+    match db::query_events_after(
+        &state.db,
+        after,
+        params.limit,
+        params.session_id.as_deref(),
+        params.event_type.as_deref(),
+    )
+    .await
+    {
+        Ok(events) => Json(acuity_api::EventsPage { events }),
+        Err(err) => {
+            error!("query_events failed: {}", err);
+            Json(acuity_api::EventsPage { events: vec![] })
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
+// GET /events/stream — real-time SSE stream (poll-based)
+// ---------------------------------------------------------------------------
+
+/// Parse the `Last-Event-ID` header as an i64 seq cursor.
+/// Returns 0 (start of stream) on absent or non-numeric values.
+fn parse_last_event_id(headers: &HeaderMap) -> i64 {
+    headers
+        .get("last-event-id")
+        .and_then(|v| v.to_str().ok())
+        .and_then(|v| v.trim().parse::<i64>().ok())
+        .unwrap_or(0)
+}
+
+async fn sse_handler(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
+    let cursor = parse_last_event_id(&headers).max(0);
+
+    let stream = async_stream::stream! {
+        let mut seq = cursor;
+        loop {
+            // Drain: keep fetching until a short page, then sleep.
+            loop {
+                match db::query_events_after(&state.db, seq, 50, None, None).await {
+                    Ok(records) => {
+                        let is_last_page = records.len() < 50;
+                        for record in records {
+                            seq = record.seq;
+                            let data = match serde_json::to_string(&record) {
+                                Ok(s) => s,
+                                Err(err) => {
+                                    error!("sse: failed to serialize EventRecord: {}", err);
+                                    continue;
+                                }
+                            };
+                            yield Ok(Event::default()
+                                .id(seq.to_string())
+                                .data(data));
+                        }
+                        if is_last_page {
+                            break;
+                        }
+                    }
+                    Err(err) => {
+                        error!("sse: db query failed: {}", err);
+                        break;
+                    }
+                }
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+    };
+
+    Sse::new(stream).keep_alive(
+        KeepAlive::new().interval(std::time::Duration::from_secs(15)),
+    )
 }
 
 #[tokio::main]

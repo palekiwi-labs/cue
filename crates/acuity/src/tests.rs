@@ -1,4 +1,5 @@
 use axum::body::Body;
+use http_body_util::BodyExt as _;
 use tower::ServiceExt;
 use wiremock::matchers::{header, method, path};
 use wiremock::{Mock, MockServer, ResponseTemplate};
@@ -60,6 +61,30 @@ async fn row_count(pool: &sqlx::SqlitePool) -> i64 {
 // Valid bodies for each event type
 const SESSION_IDLE_BODY: &str = r#"{"type":"session_idle","session_id":"abc-123","project_dir":"/home/me/project","session_title":"hello"}"#;
 const AGENT_TURN_BODY: &str = r#"{"type":"agent_turn_completed","session_id":"abc-123","turn_id":"t1","input_tokens":120,"output_tokens":340}"#;
+const SESSION_IDLE_BODY_S2: &str = r#"{"type":"session_idle","session_id":"session-2","project_dir":"/home/me/other","session_title":"other"}"#;
+
+// ---------------------------------------------------------------------------
+// Query endpoint helpers
+// ---------------------------------------------------------------------------
+
+async fn get_events(router: axum::Router, query: &str) -> axum::http::Response<Body> {
+    let uri = if query.is_empty() {
+        "/events".to_string()
+    } else {
+        format!("/events?{}", query)
+    };
+    let request = axum::http::Request::builder()
+        .method("GET")
+        .uri(&uri)
+        .body(Body::empty())
+        .unwrap();
+    router.oneshot(request).await.unwrap()
+}
+
+async fn body_json(resp: axum::http::Response<Body>) -> acuity_api::EventsPage {
+    let bytes = resp.into_body().collect().await.unwrap().to_bytes();
+    serde_json::from_slice(&bytes).expect("response must be valid EventsPage JSON")
+}
 
 // ---------------------------------------------------------------------------
 // Schema header validation
@@ -258,4 +283,127 @@ fn basename_empty() {
 #[test]
 fn basename_relative_no_dir_component() {
     assert_eq!(basename("relative"), "relative");
+}
+
+// ---------------------------------------------------------------------------
+// GET /events — query endpoint
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn query_empty_db_returns_empty_page() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state);
+
+    let resp = get_events(app, "").await;
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    let page = body_json(resp).await;
+    assert!(page.events.is_empty());
+}
+
+#[tokio::test]
+async fn query_returns_inserted_events() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+
+    // Insert two events via POST
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
+    send_request(app.clone(), Some("1"), AGENT_TURN_BODY).await;
+
+    let app2 = make_app(state);
+    let resp = get_events(app2, "").await;
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    let page = body_json(resp).await;
+    assert_eq!(page.events.len(), 2);
+    assert_eq!(page.events[0].event_type, "session_idle");
+    assert_eq!(page.events[1].event_type, "agent_turn_completed");
+}
+
+#[tokio::test]
+async fn query_after_cursor_filters_correctly() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
+    send_request(app.clone(), Some("1"), AGENT_TURN_BODY).await;
+
+    // after=1 should return only the second event (seq=2)
+    let app2 = make_app(state);
+    let resp = get_events(app2, "after=1").await;
+    let page = body_json(resp).await;
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(page.events[0].event_type, "agent_turn_completed");
+}
+
+#[tokio::test]
+async fn query_session_id_filter() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY_S2).await;
+
+    let app2 = make_app(state);
+    let resp = get_events(app2, "session_id=session-2").await;
+    let page = body_json(resp).await;
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(page.events[0].session_id, "session-2");
+}
+
+#[tokio::test]
+async fn query_event_type_filter() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
+    send_request(app.clone(), Some("1"), AGENT_TURN_BODY).await;
+
+    let app2 = make_app(state);
+    let resp = get_events(app2, "event_type=agent_turn_completed").await;
+    let page = body_json(resp).await;
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(page.events[0].event_type, "agent_turn_completed");
+}
+
+#[tokio::test]
+async fn query_limit_respected() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+
+    // Insert 3 events
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
+    send_request(app.clone(), Some("1"), AGENT_TURN_BODY).await;
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
+
+    let app2 = make_app(state);
+    let resp = get_events(app2, "limit=2").await;
+    let page = body_json(resp).await;
+    assert_eq!(page.events.len(), 2);
+}
+
+#[tokio::test]
+async fn query_limit_clamped_to_500() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state);
+    // A giant limit should not cause an error — it's clamped server-side
+    let resp = get_events(app, "limit=999999").await;
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+}
+
+#[tokio::test]
+async fn query_record_fields_correct() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+    send_request(app, Some("1"), SESSION_IDLE_BODY).await;
+
+    let app2 = make_app(state);
+    let resp = get_events(app2, "").await;
+    let page = body_json(resp).await;
+    let rec = &page.events[0];
+
+    assert_eq!(rec.seq, 1);
+    assert_eq!(rec.event_type, "session_idle");
+    assert_eq!(rec.session_id, "abc-123");
+    assert!(rec.turn_id.is_none());
+    assert_eq!(rec.payload, SESSION_IDLE_BODY);
+    assert!(!rec.received_at.is_empty());
 }
