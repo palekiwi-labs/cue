@@ -72,6 +72,63 @@ pub async fn insert_event(
     Ok(result.last_insert_rowid())
 }
 
+/// Query events from the database with optional filters.
+///
+/// `after` is the exclusive lower bound on `seq` (use 0 to start from the
+/// beginning). `limit` is clamped to `1..=500` server-side — callers must
+/// not pass raw user-supplied integers. Optional `session_id` and
+/// `event_type` filters apply as equality predicates.
+///
+/// Results are ordered by `seq` ascending so callers can use the last
+/// returned `seq` as the next `after` cursor.
+pub async fn query_events_after(
+    pool: &SqlitePool,
+    after: i64,
+    limit: i64,
+    session_id: Option<&str>,
+    event_type: Option<&str>,
+) -> sqlx::Result<Vec<acuity_api::EventRecord>> {
+    let clamped_limit = limit.clamp(1, 500);
+
+    let mut builder = sqlx::QueryBuilder::new(
+        "SELECT seq, received_at, event_type, session_id, turn_id, payload \
+         FROM events WHERE seq > ",
+    );
+    builder.push_bind(after);
+
+    if let Some(sid) = session_id {
+        builder.push(" AND session_id = ");
+        builder.push_bind(sid);
+    }
+    if let Some(et) = event_type {
+        builder.push(" AND event_type = ");
+        builder.push_bind(et);
+    }
+
+    builder.push(" ORDER BY seq LIMIT ");
+    builder.push_bind(clamped_limit);
+
+    let rows = builder
+        .build()
+        .fetch_all(pool)
+        .await?;
+
+    use sqlx::Row as _;
+    let records = rows
+        .into_iter()
+        .map(|row| acuity_api::EventRecord {
+            seq: row.get("seq"),
+            received_at: row.get("received_at"),
+            event_type: row.get("event_type"),
+            session_id: row.get("session_id"),
+            turn_id: row.get("turn_id"),
+            payload: row.get("payload"),
+        })
+        .collect();
+
+    Ok(records)
+}
+
 /// Test-only: create an in-memory SQLite pool with the schema applied.
 ///
 /// `max_connections(1)` is required — each connection to `:memory:` gets its
