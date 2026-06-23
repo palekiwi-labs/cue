@@ -17,7 +17,18 @@ use std::io::{self, Read};
 
 fn main() -> anyhow::Result<()> {
     let cli = Cli::parse();
-    let cwd = env::current_dir()?;
+    let cwd = match cli.dir {
+        Some(ref path) => {
+            if !path.exists() {
+                anyhow::bail!("--dir: path does not exist: {}", path.display());
+            }
+            if !path.is_dir() {
+                anyhow::bail!("--dir: not a directory: {}", path.display());
+            }
+            path.canonicalize()?
+        }
+        None => env::current_dir()?,
+    };
 
     match cli.command {
         Commands::Init => {

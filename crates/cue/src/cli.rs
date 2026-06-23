@@ -14,6 +14,11 @@ fn parse_frontmatter_field(s: &str) -> Result<(String, String), String> {
 #[derive(Parser)]
 #[command(author, version, about, long_about = None)]
 pub struct Cli {
+    /// Run as if started in <PATH> instead of the current directory.
+    /// Mirrors the git -C convention.
+    #[arg(short = 'C', long = "dir", value_name = "PATH", global = true)]
+    pub dir: Option<std::path::PathBuf>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
