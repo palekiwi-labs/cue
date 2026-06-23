@@ -4,19 +4,30 @@ version = "0.1.0"
 edition = "2024"
 
 [dependencies]
+sqlx = { version = "0.8", default-features = false, features = [
+    "runtime-tokio-rustls",
+    "sqlite",
+] }
+chrono = { version = "0.4", default-features = false, features = [
+    "clock",
+    "std",
+] }
 acuity-schema = { path = "../acuity-schema" }
-axum          = "0.8"
-tokio         = { version = "1", features = ["full"] }
-reqwest       = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
-serde         = { version = "1", features = ["derive"] }
-serde_json    = "1"
-figment       = { version = "0.10", features = ["json", "env"] }
-anyhow        = "1"
-tracing       = "0.1"
+axum = "0.8"
+tokio = { version = "1", features = ["full"] }
+reqwest = { version = "0.12", default-features = false, features = [
+    "json",
+    "rustls-tls",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+figment = { version = "0.10", features = ["json", "env"] }
+anyhow = "1"
+tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-dirs          = "6"
+dirs = "6"
 
 [dev-dependencies]
-tower          = { version = "0.5", features = ["util"] }
+tower = { version = "0.5", features = ["util"] }
 http-body-util = "0.1"
-wiremock       = "0.6"
+wiremock = "0.6"

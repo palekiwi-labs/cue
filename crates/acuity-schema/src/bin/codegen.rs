@@ -1,4 +1,4 @@
-use acuity_schema::SessionIdle;
+use acuity_schema::AcuityEvent;
 use ts_rs::{Config, TS};
 
 fn main() {
@@ -13,7 +13,7 @@ fn main() {
     std::fs::create_dir_all(&out_dir).expect("failed to create output directory");
 
     let cfg = Config::new().with_out_dir(&out_dir);
-    SessionIdle::export_all(&cfg).expect("ts-rs export failed");
+    AcuityEvent::export_all(&cfg).expect("ts-rs export failed");
 
     println!("wrote {}/types.ts", out_dir);
 }
