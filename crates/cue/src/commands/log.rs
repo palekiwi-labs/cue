@@ -24,6 +24,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
             decided,
             open,
             file,
+            branch,
         } => {
             let entry = if let Some(path) = file {
                 let content = fs::read_to_string(&path)
@@ -43,7 +44,14 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
                 }
             };
 
-            let log_file_path = log::add_entry(&root, &config, LogAddOptions { entry })?;
+            let log_file_path = log::add_entry(
+                &root,
+                &config,
+                LogAddOptions {
+                    entry,
+                    branch_name: branch,
+                },
+            )?;
             let rel_path = log_file_path.strip_prefix(&root).unwrap_or(&log_file_path);
             eprintln!("✓ Logged");
             println!("{}", rel_path.display());
@@ -56,7 +64,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
                     "Could not determine current branch. Have you made your first commit yet?",
                 )?
             };
-            let branch_dir = branch_name.replace(['/', '\\'], "-");
+            let branch_dir = git::sanitize_branch_name(&branch_name);
 
             let cue_path = root.join(&config.dir_name);
             if !cue_path.exists() {

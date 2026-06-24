@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
@@ -51,7 +51,10 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         git::get_current_branch(root)
             .context("Could not determine current branch. Have you made your first commit yet?")?
     };
-    let branch_dir = branch.replace(['/', '\\'], "-");
+    if branch.trim().is_empty() {
+        bail!("Branch name cannot be empty.");
+    }
+    let branch_dir = git::sanitize_branch_name(&branch);
 
     // 4. Resolve destination directory
     let type_dir = cue_path.join(&branch_dir).join(&cue_type);
