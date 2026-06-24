@@ -337,7 +337,18 @@ impl App {
 // Private helpers
 // ---------------------------------------------------------------------------
 
-/// Classify a flat task list into (open, in_progress, complete) column vecs.
+/// Rank a priority string as a sortable integer (lower = higher priority).
+fn priority_rank(p: Option<&str>) -> u8 {
+    match p {
+        Some("critical") => 0,
+        Some("high") => 1,
+        Some("low") => 3,
+        _ => 2, // "normal" or absent
+    }
+}
+
+/// Classify a flat task list into (open, in_progress, complete) column vecs,
+/// each sorted by priority (critical → high → normal → low).
 ///
 /// Closed or unrecognised statuses are silently excluded — not kanban-visible.
 fn classify_tasks(
@@ -355,6 +366,10 @@ fn classify_tasks(
             Some(TaskStatus::Closed) | None => {}
         }
     }
+
+    open.sort_by_key(|t| priority_rank(t.priority_raw.as_deref()));
+    in_progress.sort_by_key(|t| priority_rank(t.priority_raw.as_deref()));
+    complete.sort_by_key(|t| priority_rank(t.priority_raw.as_deref()));
 
     (open, in_progress, complete)
 }
