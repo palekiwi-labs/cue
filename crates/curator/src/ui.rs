@@ -376,6 +376,130 @@ pub(crate) fn is_diagnostic(event_type: &str) -> bool {
 }
 
 // ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use acuity_api::EventRecord;
+    use acuity_schema::{
+        AcuityEvent, AgentTurnCompleted, SessionIdle, ToolCallCompleted, ToolCallRequested,
+    };
+
+    fn make_record(seq: i64, event: AcuityEvent) -> EventRecord {
+        EventRecord {
+            seq,
+            received_at: "2026-01-01T00:00:00Z".to_string(),
+            event_type: event.event_type().to_string(),
+            session_id: "s1".to_string(),
+            turn_id: event.turn_id().map(str::to_string),
+            payload: serde_json::to_string(&event).unwrap(),
+        }
+    }
+
+    // --- event_summary ---
+
+    #[test]
+    fn event_summary_session_idle_with_title() {
+        let record = make_record(
+            1,
+            AcuityEvent::SessionIdle(SessionIdle {
+                session_id: "s1".to_string(),
+                project_dir: "/my/project".to_string(),
+                session_title: Some("My Project".to_string()),
+            }),
+        );
+        assert_eq!(event_summary(&record), "idle: My Project");
+    }
+
+    #[test]
+    fn event_summary_session_idle_no_title() {
+        let record = make_record(
+            1,
+            AcuityEvent::SessionIdle(SessionIdle {
+                session_id: "s1".to_string(),
+                project_dir: "/my/project".to_string(),
+                session_title: None,
+            }),
+        );
+        assert_eq!(event_summary(&record), "idle: (no title)");
+    }
+
+    #[test]
+    fn event_summary_agent_turn_completed() {
+        let record = make_record(
+            2,
+            AcuityEvent::AgentTurnCompleted(AgentTurnCompleted {
+                session_id: "s1".to_string(),
+                turn_id: "t1".to_string(),
+                input_tokens: Some(100),
+                output_tokens: Some(200),
+            }),
+        );
+        assert_eq!(event_summary(&record), "turn: in=100 out=200");
+    }
+
+    #[test]
+    fn event_summary_tool_call_requested() {
+        let record = make_record(
+            3,
+            AcuityEvent::ToolCallRequested(ToolCallRequested {
+                session_id: "s1".to_string(),
+                turn_id: "t1".to_string(),
+                tool_call_id: "c1".to_string(),
+                tool_name: "bash".to_string(),
+                args: serde_json::Value::Null,
+            }),
+        );
+        assert_eq!(event_summary(&record), "tool: bash");
+    }
+
+    #[test]
+    fn event_summary_tool_call_completed_ok() {
+        let record = make_record(
+            4,
+            AcuityEvent::ToolCallCompleted(ToolCallCompleted {
+                session_id: "s1".to_string(),
+                turn_id: "t1".to_string(),
+                tool_call_id: "c1".to_string(),
+                tool_name: "bash".to_string(),
+                is_error: false,
+                error_text: None,
+            }),
+        );
+        assert_eq!(event_summary(&record), "done: bash");
+    }
+
+    #[test]
+    fn event_summary_tool_call_completed_error() {
+        let record = make_record(
+            5,
+            AcuityEvent::ToolCallCompleted(ToolCallCompleted {
+                session_id: "s1".to_string(),
+                turn_id: "t1".to_string(),
+                tool_call_id: "c1".to_string(),
+                tool_name: "bash".to_string(),
+                is_error: true,
+                error_text: Some("exit 1".to_string()),
+            }),
+        );
+        assert_eq!(event_summary(&record), "ERR:  bash \u{2014} exit 1");
+    }
+
+    // --- is_diagnostic ---
+
+    #[test]
+    fn is_diagnostic_matches_tool_call_prefix_only() {
+        assert!(is_diagnostic("tool_call_requested"));
+        assert!(is_diagnostic("tool_call_completed"));
+        assert!(!is_diagnostic("session_idle"));
+        assert!(!is_diagnostic("agent_turn_completed"));
+        assert!(!is_diagnostic("tool_other")); // "tool_" prefix not enough
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Private helpers
 // ---------------------------------------------------------------------------
 

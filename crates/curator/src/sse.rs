@@ -228,3 +228,160 @@ async fn connect_and_stream(
     // Stream exhausted (server closed connection); caller will reconnect.
     Ok(lb.cursor())
 }
+
+// ---------------------------------------------------------------------------
+// Tests
+// ---------------------------------------------------------------------------
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Helpers ---
+
+    /// Build a minimal valid JSON string for an `EventRecord`.
+    fn record_json(seq: i64, session_id: &str) -> String {
+        format!(
+            r#"{{"seq":{seq},"received_at":"2026-01-01T00:00:{seq:02}Z","event_type":"session_idle","session_id":"{session_id}","turn_id":null,"payload":"{{}}"}}"#
+        )
+    }
+
+    /// Build a complete SSE event frame (two trailing newlines = terminator).
+    fn event_frame(seq: i64, session_id: &str) -> String {
+        format!("id: {seq}\ndata: {}\n\n", record_json(seq, session_id))
+    }
+
+    // --- next_backoff ---
+
+    #[test]
+    fn next_backoff_doubles_then_caps_at_5000() {
+        assert_eq!(next_backoff(500), 1000);
+        assert_eq!(next_backoff(1000), 2000);
+        assert_eq!(next_backoff(2000), 4000);
+        assert_eq!(next_backoff(4000), 5000); // cap
+        assert_eq!(next_backoff(5000), 5000); // stays at cap
+    }
+
+    // --- LineBuffer: single complete event ---
+
+    #[test]
+    fn single_complete_event_returned() {
+        let mut lb = LineBuffer::new(0);
+        let records = lb.feed(event_frame(1, "s1").as_bytes());
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].seq, 1);
+        assert_eq!(records[0].session_id, "s1");
+    }
+
+    // --- LineBuffer: chunk boundary ---
+
+    #[test]
+    fn chunk_boundary_split_completes_on_second_chunk() {
+        let mut lb = LineBuffer::new(0);
+        let frame = event_frame(1, "s1");
+        let bytes = frame.as_bytes();
+        let mid = bytes.len() / 2;
+        let r1 = lb.feed(&bytes[..mid]);
+        assert!(r1.is_empty(), "no record before second chunk");
+        let r2 = lb.feed(&bytes[mid..]);
+        assert_eq!(r2.len(), 1);
+        assert_eq!(r2[0].seq, 1);
+    }
+
+    // --- LineBuffer: keep-alive skip ---
+
+    #[test]
+    fn keep_alive_comments_are_skipped() {
+        let mut lb = LineBuffer::new(0);
+        let input = format!(
+            "{}:keep-alive\n{}",
+            event_frame(1, "s1"),
+            event_frame(2, "s1")
+        );
+        let records = lb.feed(input.as_bytes());
+        assert_eq!(records.len(), 2);
+        assert_eq!(records[0].seq, 1);
+        assert_eq!(records[1].seq, 2);
+    }
+
+    // --- LineBuffer: leading-space strip ---
+
+    #[test]
+    fn data_field_with_leading_space_parses_correctly() {
+        let mut lb = LineBuffer::new(0);
+        // Standard SSE: one space after the colon.
+        let frame = format!("id: 1\ndata: {}\n\n", record_json(1, "s1"));
+        let records = lb.feed(frame.as_bytes());
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].seq, 1);
+    }
+
+    #[test]
+    fn data_field_without_leading_space_parses_correctly() {
+        let mut lb = LineBuffer::new(0);
+        // No space after the colon — still valid per our strip logic.
+        let frame = format!("id: 1\ndata:{}\n\n", record_json(1, "s1"));
+        let records = lb.feed(frame.as_bytes());
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].seq, 1);
+    }
+
+    // --- LineBuffer: malformed JSON ---
+
+    #[test]
+    fn malformed_json_produces_no_records_and_no_panic() {
+        let mut lb = LineBuffer::new(0);
+        let records = lb.feed(b"id: 1\ndata: not valid json at all\n\n");
+        assert!(records.is_empty());
+    }
+
+    // --- LineBuffer: multiple events in one chunk ---
+
+    #[test]
+    fn multiple_events_in_single_chunk_returned_in_order() {
+        let mut lb = LineBuffer::new(0);
+        let combined: String = (1..=3)
+            .map(|i| event_frame(i, "s1"))
+            .collect();
+        let records = lb.feed(combined.as_bytes());
+        assert_eq!(records.len(), 3);
+        assert_eq!(records[0].seq, 1);
+        assert_eq!(records[1].seq, 2);
+        assert_eq!(records[2].seq, 3);
+    }
+
+    // --- LineBuffer: blank-line no-op ---
+
+    #[test]
+    fn blank_line_with_no_pending_data_emits_nothing() {
+        let mut lb = LineBuffer::new(0);
+        let records = lb.feed(b"\n\n\n");
+        assert!(records.is_empty());
+    }
+
+    // --- LineBuffer: cursor tracking ---
+
+    #[test]
+    fn cursor_is_initial_value_before_any_events() {
+        let lb = LineBuffer::new(42);
+        assert_eq!(lb.cursor(), 42);
+    }
+
+    #[test]
+    fn cursor_tracks_seq_of_last_parsed_event() {
+        let mut lb = LineBuffer::new(0);
+        for i in 1..=5_i64 {
+            lb.feed(event_frame(i, "s1").as_bytes());
+        }
+        assert_eq!(lb.cursor(), 5);
+    }
+
+    #[test]
+    fn cursor_not_updated_after_malformed_json() {
+        let mut lb = LineBuffer::new(0);
+        lb.feed(event_frame(1, "s1").as_bytes());
+        lb.feed(b"id: 99\ndata: {bad json}\n\n");
+        // Cursor should still reflect the last *successfully* parsed event.
+        assert_eq!(lb.cursor(), 1);
+    }
+}

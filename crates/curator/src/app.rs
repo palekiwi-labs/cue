@@ -546,4 +546,68 @@ mod tests {
         app.push_event(tool_done(4, "s1", false));
         assert_eq!(app.diagnostics_len(), 2);
     }
+
+    // --- priority sort (Slice 8 Tier 1) ---
+
+    fn make_task(title: &str, status: &str, priority: Option<&str>) -> cuelib::artifact::ArtifactMeta {
+        cuelib::artifact::ArtifactMeta {
+            title: title.to_string(),
+            status_raw: Some(status.to_string()),
+            priority_raw: priority.map(str::to_string),
+            artifact_type: "task".to_string(),
+            path: std::path::PathBuf::from(format!("/tmp/{title}.md")),
+        }
+    }
+
+    #[test]
+    fn priority_sort_in_app_new_is_critical_high_normal_low() {
+        let tasks = vec![
+            make_task("low-task", "open", Some("low")),
+            make_task("critical-task", "open", Some("critical")),
+            make_task("normal-task", "open", None),
+            make_task("high-task", "open", Some("high")),
+        ];
+        let app = App::new(tasks);
+        let titles: Vec<&str> = app.open.iter().map(|t| t.title.as_str()).collect();
+        assert_eq!(
+            titles,
+            &["critical-task", "high-task", "normal-task", "low-task"]
+        );
+    }
+
+    // --- reload_kanban (Slice 8 Tier 1) ---
+
+    #[test]
+    fn reload_kanban_reclassifies_resets_selection_and_sorts() {
+        let initial = vec![
+            make_task("t1", "open", None),
+            make_task("t2", "open", None),
+            make_task("t3", "open", None),
+        ];
+        let mut app = App::new(initial);
+        // Move selections away from 0 to confirm reset.
+        app.sel_open = 2;
+        app.sel_in_progress = 1;
+
+        let new_tasks = vec![
+            make_task("n-low", "open", Some("low")),
+            make_task("n-critical", "open", Some("critical")),
+            make_task("n-progress", "in-progress", None),
+        ];
+        app.reload_kanban(new_tasks);
+
+        // Reclassification correct.
+        assert_eq!(app.open.len(), 2);
+        assert_eq!(app.in_progress.len(), 1);
+        assert_eq!(app.complete.len(), 0);
+
+        // Priority sort applied to the new Open column.
+        assert_eq!(app.open[0].title, "n-critical");
+        assert_eq!(app.open[1].title, "n-low");
+
+        // All selection indices reset.
+        assert_eq!(app.sel_open, 0);
+        assert_eq!(app.sel_in_progress, 0);
+        assert_eq!(app.sel_complete, 0);
+    }
 }
