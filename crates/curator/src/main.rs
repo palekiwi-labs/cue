@@ -1,6 +1,7 @@
 // curator: TUI kanban board for cue artifacts.
 mod app;
 mod event;
+mod msg;
 mod tui;
 mod ui;
 
