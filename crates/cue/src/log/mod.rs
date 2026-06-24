@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
@@ -21,10 +21,12 @@ pub struct LogEntry {
 
 pub struct LogAddOptions {
     pub entry: LogEntry,
+    pub branch_name: Option<String>,
 }
 
 pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<PathBuf> {
     let entry = opts.entry;
+    let branch_name = opts.branch_name;
 
     // 1. Validate
     if entry.title.trim().is_empty() {
@@ -49,8 +51,12 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
         );
     }
 
-    let branch = git::get_current_branch(root)
-        .context("Could not determine current branch. Have you made your first commit yet?")?;
+    let branch = if let Some(b) = branch_name {
+        b
+    } else {
+        git::get_current_branch(root)
+            .context("Could not determine current branch. Have you made your first commit yet?")?
+    };
     let branch_dir = branch.replace(['/', '\\'], "-");
 
     let log_file_path = cue_path.join(&branch_dir).join("spec").join("log.md");

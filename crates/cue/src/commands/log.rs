@@ -24,6 +24,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
             decided,
             open,
             file,
+            branch,
         } => {
             let entry = if let Some(path) = file {
                 let content = fs::read_to_string(&path)
@@ -43,7 +44,14 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
                 }
             };
 
-            let log_file_path = log::add_entry(&root, &config, LogAddOptions { entry })?;
+            let log_file_path = log::add_entry(
+                &root,
+                &config,
+                LogAddOptions {
+                    entry,
+                    branch_name: branch,
+                },
+            )?;
             let rel_path = log_file_path.strip_prefix(&root).unwrap_or(&log_file_path);
             eprintln!("✓ Logged");
             println!("{}", rel_path.display());

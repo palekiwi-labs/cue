@@ -167,6 +167,9 @@ pub enum LogCommands {
         /// Read entry data from a JSON file
         #[arg(long, conflicts_with_all = &["title", "body", "found", "decided", "open"])]
         file: Option<String>,
+        /// Write log entry to a specific branch instead of current
+        #[arg(short = 'b', long)]
+        branch: Option<String>,
     },
     /// List log entries
     List {

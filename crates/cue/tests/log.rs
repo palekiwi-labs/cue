@@ -200,3 +200,45 @@ fn test_log_list() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_log_add_with_explicit_branch() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    // Initialize mem
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // Add a log entry to a DIFFERENT branch than current (main)
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("log")
+        .arg("add")
+        .arg("--title")
+        .arg("Branch Entry")
+        .arg("--branch")
+        .arg("feature/other")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(
+            ".test-mem/feature-other/spec/log.md\n",
+        ));
+
+    let log_path = env.root().join(".test-mem/feature-other/spec/log.md");
+    let content = fs::read_to_string(&log_path)?;
+
+    assert!(content.contains("# Project Log"));
+    assert!(content.contains("Branch Entry"));
+
+    // Verify main branch log does not have this entry
+    let main_log = env.root().join(".test-mem/main/spec/log.md");
+    assert!(!main_log.exists());
+
+    Ok(())
+}
