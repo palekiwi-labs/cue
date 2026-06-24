@@ -25,8 +25,7 @@ pub struct LogAddOptions {
 }
 
 pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<PathBuf> {
-    let entry = opts.entry;
-    let branch_name = opts.branch_name;
+    let LogAddOptions { entry, branch_name } = opts;
 
     // 1. Validate
     if entry.title.trim().is_empty() {
@@ -57,7 +56,10 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
         git::get_current_branch(root)
             .context("Could not determine current branch. Have you made your first commit yet?")?
     };
-    let branch_dir = branch.replace(['/', '\\'], "-");
+    if branch.trim().is_empty() {
+        bail!("Branch name cannot be empty.");
+    }
+    let branch_dir = git::sanitize_branch_name(&branch);
 
     let log_file_path = cue_path.join(&branch_dir).join("spec").join("log.md");
 

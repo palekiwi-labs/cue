@@ -64,7 +64,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
                     "Could not determine current branch. Have you made your first commit yet?",
                 )?
             };
-            let branch_dir = branch_name.replace(['/', '\\'], "-");
+            let branch_dir = git::sanitize_branch_name(&branch_name);
 
             let cue_path = root.join(&config.dir_name);
             if !cue_path.exists() {

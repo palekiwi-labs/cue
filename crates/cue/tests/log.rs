@@ -140,6 +140,99 @@ fn test_log_add_validation() -> anyhow::Result<()> {
         .failure()
         .stderr(predicate::str::contains("The --title argument is required"));
 
+    // Empty branch
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("log")
+        .arg("add")
+        .arg("--title")
+        .arg("Some Title")
+        .arg("--branch")
+        .arg("")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Branch name cannot be empty"));
+
+    Ok(())
+}
+
+#[test]
+fn test_log_add_branch_and_list() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // Write entry to feature/other
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("log")
+        .arg("add")
+        .arg("--title")
+        .arg("Round Trip")
+        .arg("--branch")
+        .arg("feature/other")
+        .assert()
+        .success();
+
+    // Read it back with log list --branch
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("log")
+        .arg("list")
+        .arg("--branch")
+        .arg("feature/other")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("# Project Log"))
+        .stdout(predicate::str::contains("Round Trip"));
+
+    Ok(())
+}
+
+#[test]
+fn test_log_add_file_with_branch() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    let json_content = r#"{"title": "File Branch Title"}"#;
+    let json_path = env.root().join("entry.json");
+    fs::write(&json_path, json_content)?;
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("log")
+        .arg("add")
+        .arg("--file")
+        .arg(&json_path)
+        .arg("--branch")
+        .arg("feature/other")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(
+            ".test-mem/feature-other/spec/log.md\n",
+        ));
+
+    let log_path = env.root().join(".test-mem/feature-other/spec/log.md");
+    let content = fs::read_to_string(&log_path)?;
+    assert!(content.contains("File Branch Title"));
+
     Ok(())
 }
 
