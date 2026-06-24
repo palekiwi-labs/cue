@@ -6,7 +6,7 @@ edition = "2024"
 [dependencies]
 acuity-api  = { path = "../acuity-api" }
 anyhow = "1.0.102"
-clap = { version = "4.6.1", features = ["derive"] }
+clap = { version = "4.6.1", features = ["derive", "env"] }
 crossterm = { version = "0.28" }
 cuelib = { path = "../cuelib" }
 futures-util  = { version = "0.3", default-features = false, features = ["std"] }
