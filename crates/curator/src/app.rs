@@ -1,5 +1,13 @@
 use cuelib::artifact::{ArtifactMeta, TaskStatus};
 
+/// Which top-level view is currently displayed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum View {
+    Kanban,
+    Activity,
+    Diagnostics,
+}
+
 /// Which kanban column is currently active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Column {

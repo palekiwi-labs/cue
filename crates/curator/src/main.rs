@@ -1,6 +1,7 @@
 // curator: TUI kanban board for cue artifacts.
 mod app;
 mod event;
+mod input;
 mod msg;
 mod tui;
 mod ui;
@@ -70,7 +71,8 @@ fn run(terminal: &mut tui::Tui, app: &mut App) -> Result<()> {
             Action::Up => app.scroll_up(),
             Action::Left => app.move_left(),
             Action::Right => app.move_right(),
-            Action::None => {}
+            // Handled in Slice 5 unified run loop; no-op for now.
+            Action::SwitchView(_) | Action::Refresh | Action::None => {}
         }
     }
     Ok(())
