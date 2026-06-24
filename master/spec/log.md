@@ -223,3 +223,23 @@ closed as superseded by the task.
 - **Decided:** git -C convention (--dir long, -C short) chosen as the flag naming
 - **Decided:** Defer curator --root vs cue --dir naming alignment to Phase 6; captured as a todo
 
+## [5be2d77] Research complete: log --branch flag
+
+- **Found:** Task premise is partially wrong: `log list` ALREADY supports --branch (cli.rs:172-176); only `log add` lacks it (cli.rs:151-170)
+- **Found:** `log add` hardcodes the current git branch in add_entry (log/mod.rs:52-56) and LogAddOptions carries no branch field (log/mod.rs:22-24)
+- **Found:** Pattern to follow is `add --branch` (cli.rs:53-55 + add/mod.rs:47-57); change spans 3 source files + 1 test, ~10-15 prod lines
+- **Found:** No master-branch special-casing in CLI; writing to master log works for free once --branch is wired
+- **Found:** Shared sanitize_branch_name helper exists in cuelib (git.rs:141-143) but add/list/log inline .replace() instead — minor DRY duplication, optional refactor only
+- **Open:** Short-flag choice for log add --branch: match `add` (-b) or match log list (long-only). Recommend -b.
+
+## [be00e7e] feat: cue log add --branch shipped
+
+The `--branch` / `-b` flag is now available on `cue log add`, allowing log entries to be written to an arbitrary branch (e.g. master) instead of only the current git branch. This entry is written using that feature.
+
+- **Found:** sanitize_branch_name helper already existed in cuelib but was unused by add/log paths
+- **Decided:** Use if let Some(b) pattern (matches add/mod.rs) not combinators
+- **Decided:** Field named branch_name in LogAddOptions for consistency with AddOptions
+- **Decided:** Sanitization via git::sanitize_branch_name helper, applied after resolution
+- **Open:** validate_branch_name to reject .. path traversal (deferred todo)
+- **Open:** Detached HEAD silently routes to HEAD/ directory (deferred todo)
+

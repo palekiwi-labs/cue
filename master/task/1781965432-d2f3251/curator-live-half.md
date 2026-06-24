@@ -1,6 +1,6 @@
 ---
 title: "curator: live acuity integration"
-status: open
+status: in-progress
 priority: normal
 ---
 # curator: live acuity integration
