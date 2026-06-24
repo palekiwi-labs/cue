@@ -74,10 +74,14 @@ impl From<SseStatus> for AcuityStatus {
 /// so totals survive even when old events are evicted from the ring buffer.
 #[derive(Debug, Clone)]
 pub struct SessionSummary {
+    /// Stored for Slice 8 unit tests; not yet read by rendering code.
+    #[allow(dead_code)]
     pub session_id: String,
     pub project_dir: String,
     pub session_title: Option<String>,
     /// ISO-8601 timestamp of the earliest received event for this session.
+    /// Stored for Slice 8 unit tests and future display; not yet read by rendering.
+    #[allow(dead_code)]
     pub first_seen: String,
     /// ISO-8601 timestamp of the most recently received event for this session.
     pub last_seen: String,
@@ -213,10 +217,9 @@ impl App {
             "tool_call_completed" => {
                 if let Ok(AcuityEvent::ToolCallCompleted(ev)) =
                     serde_json::from_str::<AcuityEvent>(&record.payload)
+                    && ev.is_error
                 {
-                    if ev.is_error {
-                        entry.error_count += 1;
-                    }
+                    entry.error_count += 1;
                 }
             }
             _ => {}

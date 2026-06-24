@@ -12,28 +12,25 @@ use crate::msg::Msg;
 /// The thread runs until the receiver is dropped (i.e. the main loop exits),
 /// at which point a send error is treated as a clean shutdown signal.
 pub fn spawn(tx: SyncSender<Msg>) {
-    std::thread::spawn(move || loop {
+    std::thread::spawn(move || {
         // `event::read()` blocks indefinitely — no polling overhead.
-        let ev = match event::read() {
-            Ok(ev) => ev,
-            Err(_) => break,
-        };
-
-        let msg = match ev {
-            Event::Key(key) => {
-                // Ignore key-release events (Windows fires these).
-                if key.kind != KeyEventKind::Press {
-                    continue;
+        while let Ok(ev) = event::read() {
+            let msg = match ev {
+                Event::Key(key) => {
+                    // Ignore key-release events (Windows fires these).
+                    if key.kind != KeyEventKind::Press {
+                        continue;
+                    }
+                    let action = map_key(key.code);
+                    Msg::Input(action)
                 }
-                let action = map_key(key.code);
-                Msg::Input(action)
-            }
-            Event::Resize(_, _) => Msg::Redraw,
-            _ => continue,
-        };
+                Event::Resize(_, _) => Msg::Redraw,
+                _ => continue,
+            };
 
-        if tx.send(msg).is_err() {
-            break;
+            if tx.send(msg).is_err() {
+                break;
+            }
         }
     });
 }

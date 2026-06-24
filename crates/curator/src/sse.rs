@@ -73,11 +73,7 @@ impl LineBuffer {
         self.buf.extend_from_slice(chunk);
         let mut records = Vec::new();
 
-        loop {
-            // Find next newline; stop when none remains (partial line in buf).
-            let Some(nl) = self.buf.iter().position(|&b| b == b'\n') else {
-                break;
-            };
+        while let Some(nl) = self.buf.iter().position(|&b| b == b'\n') {
 
             // Extract the line bytes (excluding the \n).
             let line_bytes = self.buf[..nl].to_vec();
