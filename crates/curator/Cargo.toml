@@ -9,7 +9,7 @@ anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive"] }
 crossterm = { version = "0.28" }
 cuelib = { path = "../cuelib" }
-futures-core = "0.3"
+futures-util  = { version = "0.3", default-features = false, features = ["std"] }
 ratatui = "0.29"
 reqwest     = { version = "0.12", default-features = false,
                 features = ["rustls-tls", "stream"] }

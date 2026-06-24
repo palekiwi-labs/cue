@@ -3,6 +3,7 @@ mod app;
 mod event;
 mod input;
 mod msg;
+mod sse;
 mod tui;
 mod ui;
 
