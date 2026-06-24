@@ -738,6 +738,7 @@ name = "curator"
 version = "0.1.0"
 dependencies = [
  "acuity-api",
+ "acuity-schema",
  "anyhow",
  "clap",
  "crossterm",
