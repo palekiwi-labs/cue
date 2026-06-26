@@ -106,8 +106,14 @@ impl LineBuffer {
                             records.push(record);
                         }
                         Err(_) => {
-                            // Silently skip — zero records returned to caller
-                            // signals the drop; eprintln! would corrupt TUI.
+                            // Drop silently. This drop is currently
+                            // unobservable — the caller iterates `for record
+                            // in lb.feed(..)` and an empty vec just skips the
+                            // loop body, so the UI has no direct signal of a
+                            // malformed-JSON storm. Accepted because the wire
+                            // format is server-controlled by `acuity`. Not
+                            // using eprintln! because stderr writes corrupt
+                            // the ratatui display.
                         }
                     }
                 }
