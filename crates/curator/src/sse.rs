@@ -1,4 +1,4 @@
-use std::sync::mpsc::SyncSender;
+use std::sync::mpsc::{SyncSender, TrySendError};
 
 use anyhow::{Result, anyhow};
 use futures_util::StreamExt;
@@ -105,8 +105,9 @@ impl LineBuffer {
                             }
                             records.push(record);
                         }
-                        Err(e) => {
-                            eprintln!("sse: malformed event JSON, skipping: {e}");
+                        Err(_) => {
+                            // Silently skip — zero records returned to caller
+                            // signals the drop; eprintln! would corrupt TUI.
                         }
                     }
                 }
@@ -123,6 +124,12 @@ impl LineBuffer {
                 }
             } else if let Some(rest) = line.strip_prefix("data:") {
                 let val = rest.strip_prefix(' ').unwrap_or(rest);
+                if !self.pending_data.is_empty() {
+                    // SSE spec: multiple data: lines in one event are joined
+                    // with U+000A (LF). serde_json is tolerant of interior
+                    // whitespace so multi-line JSON objects parse correctly.
+                    self.pending_data.push('\n');
+                }
                 self.pending_data.push_str(val);
             }
             // Other field names (event:, retry:) are intentionally ignored.
@@ -155,8 +162,9 @@ pub fn spawn(url: String, tx: SyncSender<Msg>) {
             .build()
         {
             Ok(rt) => rt,
-            Err(e) => {
-                eprintln!("sse: failed to build tokio runtime: {e}");
+            Err(_) => {
+                // SseStatus::Reconnecting surfaces the failure to the UI;
+                // eprintln! would corrupt the TUI display.
                 let _ = tx.send(Msg::SseStatus(SseStatus::Reconnecting { attempt: 1 }));
                 return;
             }
@@ -166,6 +174,9 @@ pub fn spawn(url: String, tx: SyncSender<Msg>) {
 }
 
 async fn run_loop(url: String, tx: SyncSender<Msg>) {
+    // Build the client once; it is Arc'd internally and designed to be
+    // reused across reconnects (shares the TLS stack and connection pool).
+    let client = reqwest::Client::new();
     let mut cursor: i64 = 0;
     let mut backoff_ms: u64 = 500;
     let mut attempt: u32 = 0;
@@ -174,7 +185,7 @@ async fn run_loop(url: String, tx: SyncSender<Msg>) {
         attempt += 1;
         let _ = tx.send(Msg::SseStatus(SseStatus::Reconnecting { attempt }));
 
-        match connect_and_stream(&url, cursor, &tx).await {
+        match connect_and_stream(&client, &url, cursor, &tx).await {
             Ok(last_cursor) => {
                 cursor = last_cursor;
                 backoff_ms = 500;
@@ -182,8 +193,9 @@ async fn run_loop(url: String, tx: SyncSender<Msg>) {
                 // Connected status is sent inside connect_and_stream as soon
                 // as the 200 response arrives, before consuming the stream.
             }
-            Err(e) => {
-                eprintln!("sse: stream error (attempt {attempt}): {e}");
+            Err(_) => {
+                // SseStatus::Reconnecting (sent above) already surfaces the
+                // degraded state to the UI; eprintln! would corrupt the TUI.
                 tokio::time::sleep(tokio::time::Duration::from_millis(backoff_ms)).await;
                 backoff_ms = next_backoff(backoff_ms);
             }
@@ -192,11 +204,11 @@ async fn run_loop(url: String, tx: SyncSender<Msg>) {
 }
 
 async fn connect_and_stream(
+    client: &reqwest::Client,
     url: &str,
     cursor: i64,
     tx: &SyncSender<Msg>,
 ) -> Result<i64> {
-    let client = reqwest::Client::new();
     let response = client
         .get(format!("{url}/events/stream"))
         .header("Last-Event-ID", cursor.to_string())
@@ -218,9 +230,19 @@ async fn connect_and_stream(
     while let Some(chunk) = stream.next().await {
         let chunk = chunk?;
         for record in lb.feed(&chunk) {
-            if tx.send(Msg::Sse(record)).is_err() {
-                // Receiver dropped — main thread exited cleanly.
-                return Ok(lb.cursor());
+            match tx.try_send(Msg::Sse(record)) {
+                Ok(()) => {}
+                Err(TrySendError::Full(_)) => {
+                    // Channel is saturated (reconnect burst or live overload).
+                    // Drop this event — telemetry is inherently lossy and the
+                    // ring buffer (EVENT_CAP) already bounds what the UI shows.
+                    // Using try_send ensures the input thread (and Quit) are
+                    // never blocked by SSE bursts.
+                }
+                Err(TrySendError::Disconnected(_)) => {
+                    // Receiver dropped — main thread exited cleanly.
+                    return Ok(lb.cursor());
+                }
             }
         }
     }
@@ -383,5 +405,21 @@ mod tests {
         lb.feed(b"id: 99\ndata: {bad json}\n\n");
         // Cursor should still reflect the last *successfully* parsed event.
         assert_eq!(lb.cursor(), 1);
+    }
+
+    // --- LineBuffer: multi-line data: join per SSE spec ---
+
+    #[test]
+    fn data_multiline_lines_joined_with_newline() {
+        // An event whose data: is split across two lines at a JSON key boundary.
+        // The LF between them must not corrupt parsing.
+        let mut lb = LineBuffer::new(0);
+        let line1 = r#"{"seq":7,"received_at":"2026-01-01T00:00:07Z","event_type":"session_idle","session_id":"s1","turn_id":null,"#;
+        let line2 = r#""payload":"{}"}"#;
+        let frame = format!("id: 7\ndata: {line1}\ndata: {line2}\n\n");
+        let records = lb.feed(frame.as_bytes());
+        assert_eq!(records.len(), 1);
+        assert_eq!(records[0].seq, 7);
+        assert_eq!(lb.cursor(), 7);
     }
 }

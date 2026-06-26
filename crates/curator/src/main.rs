@@ -78,6 +78,10 @@ fn main() -> Result<()> {
         let _ = tx.send(Msg::SseStatus(SseStatus::Disabled));
     }
 
+    // Drop the original tx so that when all spawned thread senders have
+    // exited, rx.recv() returns Err and run() can exit cleanly via that path.
+    drop(tx);
+
     let mut app = App::new(tasks);
     let mut terminal = tui::init()?;
 
@@ -109,7 +113,12 @@ fn run(
                     return Ok(());
                 }
             }
-            Err(_) => break, // all senders dropped — shouldn't happen normally
+            Err(_) => {
+                // All senders dropped — both leaf threads have exited.
+                // This is the clean-shutdown path when threads terminate
+                // before a Quit message is received.
+                return Ok(());
+            }
         }
         while let Ok(msg) = rx.try_recv() {
             if process_msg(msg, app, root, branch)? == LoopControl::Quit {
@@ -117,7 +126,6 @@ fn run(
             }
         }
     }
-    Ok(())
 }
 
 fn process_msg(msg: Msg, app: &mut App, root: &Path, branch: &str) -> Result<LoopControl> {
