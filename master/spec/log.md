@@ -243,3 +243,42 @@ The `--branch` / `-b` flag is now available on `cue log add`, allowing log entri
 - **Open:** validate_branch_name to reject .. path traversal (deferred todo)
 - **Open:** Detached HEAD silently routes to HEAD/ directory (deferred todo)
 
+## [ecd8396] [ecd8396] Phase 6 complete — curator live half (SSE + Activity/Diagnostics views) merged to master
+
+The `feat/curator-w-acuity` branch was merged via PR #29, closing Phase 6 of the acuity roadmap. `curator` now consumes the acuity SSE stream and renders two new live views alongside the existing kanban.
+
+**Architecture (Opus-reviewed, unified-channel variant of Option A):** Two leaf threads — crossterm input + tokio SSE — both post into a single `std::sync::mpsc::SyncSender<Msg>` (capacity 4096). The main loop blocks on `rx.recv()`, drains pending via `try_recv()`, then draws once. No async runtime in the main thread; zero borrow/cancellation hazards.
+
+**Deliverables:**
+1. **Msg enum** (`msg.rs`): `Input(Action)`, `Redraw`, `Sse(EventRecord)`, `SseStatus(SseStatus)`. Action extended with `SwitchView(View)` and `Refresh`.
+2. **Input thread** (`input.rs`): blocking `crossterm::event::read()` loop; keys 1/2/3 switch views, `r` reloads.
+3. **SSE thread** (`sse.rs`): single-threaded tokio runtime; `LineBuffer` is a pure synchronous SSE parser (chunk-boundary safe, keep-alive `:` comments skipped, cursor tracking, LF-join for multi-line `data:` per SSE spec). `next_backoff` pure helper caps at 5000ms.
+4. **App state** (`app.rs`): `View` enum, `AcuityStatus`, ring buffer (`EVENT_CAP=2000`, oldest-first eviction), incremental `SessionSummary` HashMap updated *before* eviction so totals (project_dir, token sums, error counts) survive ring-buffer churn. `classify_tasks` extracted + priority-sorted (critical→high→normal→low).
+5. **Three-view UI** (`ui.rs`): Kanban (priority-sorted), Activity Feed (reverse-chrono with session-group headers), Diagnostics (tool_call_* filter, errors in red). Status bar colour-codes SSE state.
+6. **CLI**: `--acuity-url` / `$ACUITY_URL` (clap `env` feature); kanban-only mode when unset (sends `SseStatus::Disabled` synchronously).
+7. **29 curator tests**, 138 workspace tests green; `cargo clippy --workspace -- -D warnings` clean.
+
+**Review fixes (pre-merge, from Phase 6 code review):** M3 removed `eprintln!` from SSE thread (TUI corruption); M1 hoisted `reqwest::Client` to `run_loop` (built once, reused across reconnects); H2 fixed `data:` multi-line join per SSE spec + new test; C1 switched `Msg::Sse` to `try_send` so SSE bursts cannot starve the input thread or Quit; H1 added `drop(tx)` in main so `recv()` Err arm is reachable + removed dead trailing `Ok(())`. Follow-up Opus review confirmed all 5 fixes ship-able; one misleading M3 comment was clarified (05eeca7).
+
+Three Opus review nits deferred (not merge blockers): C1 cursor-coupling note (drops are permanent across reconnects since cursor advances at parse time); H2 test contract comment (data: splits only safe on structural JSON boundaries); M1 optional `Client::builder().build()` for TLS-error symmetry.
+
+- **Found:** Incremental SessionSummary HashMap is load-bearing — fold-on-render is silently wrong once old SessionIdle events age out of the ring buffer; updating the map before eviction preserves totals (project_dir, token sums, error counts)
+- **Found:** SSE parsing must line-buffer across chunk boundaries AND skip : keep-alive comments or reconnect storms occur every ~15s when acuity emits its keep-alive
+- **Found:** LineBuffer extracted as a pure synchronous struct enables full unit-testing of chunk-boundary/keep-alive/cursor/malformed-JSON logic with zero server infrastructure — 11 tests green on first run
+- **Found:** try_send for Msg::Sse protects input/Quit liveness: when SSE burst saturates the channel, events are dropped (telemetry is lossy, ring buffer already caps UI at 2000) but the input thread never blocks. SseStatus stays blocking send() — rare and UI-critical
+- **Found:** lb.feed() advances cursor at parse time, before try_send — so Full drops permanently skip the dropped event on reconnect (Last-Event-ID resumes after it). Correct lossiness model for live telemetry
+- **Found:** clap env feature must be explicitly enabled to support #[arg(env = "ACUITY_URL")] — was not on by default
+- **Found:** Cursor must be checked for LoopControl::Quit on BOTH the initial rx.recv() and the try_recv() drain — checking only the drain misses Quit from the first message in a batch
+- **Found:** Connected status is sent inside connect_and_stream right after the HTTP 200 (before stream consumption) so the UI shows connected during active streaming, not just after stream end
+- **Decided:** Merge feat/curator-w-acuity to master; close Phase 6
+- **Decided:** Adopted unified-channel Option A (two leaf threads → single mpsc) over a multi-channel or async-main approach — zero borrow/cancellation hazards, instant keyboard response, batches SSE bursts
+- **Decided:** Incremental SessionSummary updates before ring-buffer eviction (not fold-on-render) — the key correctness fix from the Opus architecture review
+- **Decided:** LineBuffer + next_backoff extracted as pure synchronous helpers — enables Slice 8 unit tests without any server/async infrastructure
+- **Decided:** try_send for Msg::Sse only; SseStatus remains blocking send() (low-frequency, UI-critical)
+- **Decided:** Diagnostics view deserializes payload per-row (only tool_call_* events) — acceptable cost since filter is cheap and list is bounded by EVENT_CAP
+- **Decided:** Server-side ?limit_history=N (Slice 2 follow-up) adopted as the only feasible cold-start replay bound given acuity's forward-only query API — deferred to a dedicated task; C1 try_send remains load-bearing until then
+- **Decided:** Tier 3 TcpListener end-to-end test and TestBackend snapshot tests skipped — negative ROI per plan; Tier 1+2 cover ~90% of risk
+- **Open:** Manual QA checklist (Slice 7) requires live acuity — cursor-resume correctness (step 7) cannot be fully covered by automated tests
+- **Open:** Slice 2: server-side ?limit_history=N parameter to bound cold-start history replay — captured as todo on the feature branch
+- **Open:** Phase 7 hardening: broadcast-channel SSE redesign, dedup lifecycle, server-side idempotency, curator --root vs cue --dir naming alignment
+

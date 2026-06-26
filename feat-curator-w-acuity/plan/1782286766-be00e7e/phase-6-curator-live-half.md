@@ -1,5 +1,5 @@
 ---
-status: open
+status: complete
 ---
 # Phase 6 — Curator Live Half
 
@@ -192,7 +192,7 @@ events with a proper line-buffer, and reconnects with cursor on any error.
 **Goal:** Add view state, event ring buffer, and incremental session map to
 `App`. The existing kanban fields are untouched.
 
-- [ ] Add to `crates/curator/src/app.rs`:
+- [x] Add to `crates/curator/src/app.rs`:
 
   **New enums:**
   ```rust
@@ -254,10 +254,10 @@ events with a proper line-buffer, and reconnects with cursor on any error.
   - `scroll_down_diagnostics()` / `scroll_up_diagnostics()` — bounded by
     filtered tool-call count (or compute on the fly)
 
-- [ ] Add `use std::collections::{HashMap, VecDeque}` and
+- [x] Add `use std::collections::{HashMap, VecDeque}` and
   `use acuity_api::{AcuityEvent, EventRecord}` to `app.rs`.
 
-- [ ] Write `push_event` unit tests **red-green alongside the implementation**
+- [x] Write `push_event` unit tests **red-green alongside the implementation**
   (TDD — write the failing test first, then the code):
   - Eviction at cap: assert ring buffer stays ≤ 2000
   - Token accumulation: tokens sum across multiple `AgentTurnCompleted`
@@ -275,7 +275,7 @@ events with a proper line-buffer, and reconnects with cursor on any error.
 **Goal:** Replace the existing poll-based run loop with a unified `rx.recv()`
 loop. Wire the SSE thread and input thread.
 
-- [ ] Update `crates/curator/src/main.rs`:
+- [x] Update `crates/curator/src/main.rs`:
 
   **CLI additions:**
   ```rust
@@ -349,11 +349,11 @@ loop. Wire the SSE thread and input thread.
   Navigation dispatch (Down/Up) checks `app.active_view` and calls the
   appropriate method (`scroll_down` / `scroll_down_activity` / etc.).
 
-- [ ] Remove the old `next_action()` call from the run loop (it is now dead
+- [x] Remove the old `next_action()` call from the run loop (it is now dead
   code; `event.rs`'s `next_action()` function can be removed or left as
   dead code until cleanup).
 
-- [ ] Reload helper:
+- [x] Reload helper:
   ```rust
   fn reload_tasks(app: &mut App, root: &Path, branch: &str) -> Result<()> {
       let tasks = read_artifacts(root, branch, "task")?;
@@ -372,7 +372,7 @@ loop. Wire the SSE thread and input thread.
 **Goal:** Implement the three-view UI. Kanban stays unchanged; two new
 render functions added.
 
-- [ ] Update `crates/curator/src/ui.rs`:
+- [x] Update `crates/curator/src/ui.rs`:
 
   **Top-level `render()`:** dispatch on `app.active_view`:
   ```rust
@@ -442,7 +442,7 @@ render functions added.
 **Goal:** Remove dead code, confirm all automated tests pass, then hand off the
 manual smoke-test checklist to the human developer.
 
-- [ ] **Cleanup:**
+- [x] **Cleanup:**
   - Remove dead `next_action()` function from `event.rs` if unused
   - Remove `next_action` import from `main.rs`
   - Confirm `cargo clippy --workspace -- -D warnings` is clean
@@ -482,47 +482,47 @@ Per Opus review: tiers 1+2 cover ~90% of the risk. Tier 3 is optional.
 
 ### Tier 1 — App state unit tests (highest ROI)
 
-- [ ] Expand `push_event` tests from Slice 4 with any gaps:
+- [x] Expand `push_event` tests from Slice 4 with any gaps:
   - Eviction at cap (≤ 2000)
   - Token accumulation across multiple `agent_turn_completed` events
   - Project attribution (`project_dir`) survives ring-buffer eviction
   - Error count increments on `tool_call_completed { is_error: true }`
 
-- [ ] Additional `App` tests:
+- [x] Additional `App` tests:
   - Priority sort: after `App::new()` tasks appear in canonical priority order
     (`critical → high → normal → low`)
   - `reload_kanban`: re-classifies, re-sorts, resets all `sel_*` indices to 0
 
-- [ ] `next_backoff` unit test:
+- [x] `next_backoff` unit test:
   - Doubles from 500 → 1000 → 2000 → 4000 → 5000 (capped)
 
 ### Tier 2 — `LineBuffer` parser unit tests (highest risk, zero infrastructure)
 
 These are synchronous `#[test]` functions — no async, no server, no extra deps.
 
-- [ ] Normal single-event: feed one complete SSE frame as a single chunk,
+- [x] Normal single-event: feed one complete SSE frame as a single chunk,
   assert one `EventRecord` returned with correct `seq` and `session_id`
 
-- [ ] Chunk boundary split: feed a single SSE frame as two chunks (split
+- [x] Chunk boundary split: feed a single SSE frame as two chunks (split
   mid-`data:` line), assert the record is not emitted until the second chunk
   completes the event
 
-- [ ] Keep-alive skip: feed `:keep-alive\n` between two events, assert only
+- [x] Keep-alive skip: feed `:keep-alive\n` between two events, assert only
   two records returned (keep-alive does not corrupt state)
 
-- [ ] Leading-space strip: `data: {"seq":1,...}` (one space after colon)
+- [x] Leading-space strip: `data: {"seq":1,...}` (one space after colon)
   parses correctly; `data:{"seq":1,...}` (no space) also parses correctly
 
-- [ ] Malformed JSON: feed a frame with invalid `data:` JSON, assert zero
+- [x] Malformed JSON: feed a frame with invalid `data:` JSON, assert zero
   records returned (no panic, no reconnect)
 
-- [ ] Multiple events in one chunk: three complete SSE frames in a single
+- [x] Multiple events in one chunk: three complete SSE frames in a single
   `feed()` call, assert three records returned in order
 
-- [ ] Blank-line no-op: a blank line with empty `pending_data` produces no
+- [x] Blank-line no-op: a blank line with empty `pending_data` produces no
   record
 
-- [ ] Cursor tracking: after N events, `lb.cursor()` equals the `seq` of the
+- [x] Cursor tracking: after N events, `lb.cursor()` equals the `seq` of the
   last successfully parsed event
 
 ### Tier 3 — Thin end-to-end wiring test (optional)
@@ -534,10 +534,10 @@ These are synchronous `#[test]` functions — no async, no server, no extra deps
 
 ### Tier 4 — Render helper unit tests (no TestBackend snapshots)
 
-- [ ] Extract `event_summary(record: &EventRecord) -> String` as a `pub(crate)`
+- [x] Extract `event_summary(record: &EventRecord) -> String` as a `pub(crate)`
   function in `ui.rs`; unit-test all four event types produce expected strings
 
-- [ ] Extract `is_diagnostic(event_type: &str) -> bool` (filters `tool_call_*`
+- [x] Extract `is_diagnostic(event_type: &str) -> bool` (filters `tool_call_*`
   events for Diagnostics view); unit-test the filter
 
 - [ ] (Optional) One "does not panic" `TestBackend` smoke test: render each

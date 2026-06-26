@@ -1,5 +1,5 @@
 ---
-status: open
+status: closed
 title: Content show with expanded view
 ---
 

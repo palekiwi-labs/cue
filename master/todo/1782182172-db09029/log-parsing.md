@@ -1,7 +1,7 @@
 ---
 priority: normal
 title: Log parsing
-status: open
+status: closed
 ---
 
 The "log" in `cue` and the "cue framework" is a markdown file so

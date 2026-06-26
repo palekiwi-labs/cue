@@ -1,6 +1,6 @@
 ---
 title: "curator: live acuity integration"
-status: in-progress
+status: complete
 priority: normal
 ---
 # curator: live acuity integration
@@ -21,5 +21,5 @@ acuity read model) is independently proven before they are joined here.
 
 | #  | Criterion                                                                              | Verify by                                  | Evidence |
 | -- | -------------------------------------------------------------------------------------- | ------------------------------------------ | -------- |
-| 1  | `curator` shows the artifact kanban and live agent events updating in real time        | run live agent with acuity up, observe TUI |          |
-| 2  | Full ecosystem loop is closed: agent -> plugin -> acuity -> curator                    | human attestation                          |          |
+| 1  | `curator` shows the artifact kanban and live agent events updating in real time        | run live agent with acuity up, observe TUI | tested   |
+| 2  | Full ecosystem loop is closed: agent -> plugin -> acuity -> curator                    | human attestation                          | tested   |
