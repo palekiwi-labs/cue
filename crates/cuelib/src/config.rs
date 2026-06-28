@@ -1,6 +1,6 @@
 use figment::{
-    Figment,
     providers::{Env, Format, Json, Serialized},
+    Figment,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -35,7 +35,7 @@ impl Default for Config {
         Self {
             branch_name: "cue".into(),
             dir_name: ".cue".into(),
-            artifact_types: vec!["spec".into(), "trace".into(), "tmp".into()],
+            artifact_types: vec!["spec".into(), "trace".into(), "tmp".into(), "note".into()],
             ignored_types: vec!["tmp".into()],
             context: HashMap::new(),
         }
@@ -71,7 +71,7 @@ mod tests {
     #[test]
     fn test_default_artifact_types() {
         let config = Config::default();
-        assert_eq!(config.artifact_types, vec!["spec", "trace", "tmp"]);
+        assert_eq!(config.artifact_types, vec!["spec", "trace", "tmp", "note"]);
     }
 
     #[test]

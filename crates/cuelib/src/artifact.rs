@@ -9,7 +9,7 @@ const FRONTMATTER_MAX_LINES: usize = 64;
 
 /// Canonical artifact types supported by cue out of the box.
 pub const CANONICAL_TYPES: &[&str] = &[
-    "spec", "plan", "trace", "doc", "todo", "bin", "tmp", "ref", "task",
+    "spec", "plan", "trace", "doc", "todo", "bin", "tmp", "ref", "task", "note",
 ];
 
 /// Default artifact types that are gitignored and not listed.
@@ -93,6 +93,49 @@ impl std::str::FromStr for TaskStatus {
             "open" => Ok(Self::Open),
             "in-progress" => Ok(Self::InProgress),
             "complete" => Ok(Self::Complete),
+            "closed" => Ok(Self::Closed),
+            _ => Err(()),
+        }
+    }
+}
+
+/// Canonical status values for note artifacts.
+///
+/// A note has no `complete` status: it does not finish, it *dissolves* into
+/// its outcome (a `task`, `spec`, `doc`, etc.) and is then `closed`. Notes are
+/// conversational, not work items, so they are never kanban-visible.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum NoteStatus {
+    Open,
+    InProgress,
+    /// Terminal state: the conversation concluded; the outcome now lives in a
+    /// different artifact. The note itself is deletable.
+    Closed,
+}
+
+impl NoteStatus {
+    /// Returns `false` unconditionally: notes are never kanban work items.
+    pub fn is_kanban_visible(&self) -> bool {
+        false
+    }
+
+    /// Return the canonical string representation.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Self::Open => "open",
+            Self::InProgress => "in-progress",
+            Self::Closed => "closed",
+        }
+    }
+}
+
+impl std::str::FromStr for NoteStatus {
+    type Err = ();
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s {
+            "open" => Ok(Self::Open),
+            "in-progress" => Ok(Self::InProgress),
             "closed" => Ok(Self::Closed),
             _ => Err(()),
         }
@@ -248,7 +291,8 @@ mod tests {
         assert!(CANONICAL_TYPES.contains(&"todo"));
         assert!(CANONICAL_TYPES.contains(&"bin"));
         assert!(CANONICAL_TYPES.contains(&"task"));
-        assert_eq!(CANONICAL_TYPES.len(), 9);
+        assert!(CANONICAL_TYPES.contains(&"note"));
+        assert_eq!(CANONICAL_TYPES.len(), 10);
     }
 
     #[test]
@@ -322,6 +366,37 @@ mod tests {
         // `archived` is not a status; it should be an orthogonal flag if ever implemented.
         assert!(TaskStatus::from_str("archived").is_err());
         assert!(TodoStatus::from_str("archived").is_err());
+    }
+
+    // ── NoteStatus ────────────────────────────────────────────────────────────
+
+    #[test]
+    fn note_status_is_never_kanban_visible() {
+        // Notes are not work items; they never appear on the kanban board.
+        assert!(!NoteStatus::Open.is_kanban_visible());
+        assert!(!NoteStatus::InProgress.is_kanban_visible());
+        assert!(!NoteStatus::Closed.is_kanban_visible());
+    }
+
+    #[test]
+    fn note_status_round_trip() {
+        for (s, expected) in &[
+            ("open", NoteStatus::Open),
+            ("in-progress", NoteStatus::InProgress),
+            ("closed", NoteStatus::Closed),
+        ] {
+            let parsed = NoteStatus::from_str(s).unwrap();
+            assert_eq!(&parsed, expected);
+            assert_eq!(parsed.as_str(), *s);
+        }
+    }
+
+    #[test]
+    fn note_status_unknown_returns_err() {
+        assert!(NoteStatus::from_str("complete").is_err());
+        assert!(NoteStatus::from_str("archived").is_err());
+        assert!(NoteStatus::from_str("unknown").is_err());
+        assert!(NoteStatus::from_str("").is_err());
     }
 
     // ── collect_files ─────────────────────────────────────────────────────────

@@ -371,6 +371,129 @@ fn test_add_custom_type_via_config() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_add_note_type_is_default() -> anyhow::Result<()> {
+    // `note` is a first-class default type; no cue.json needed.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // Add a note with frontmatter; lands nested under note/<ts>-<hash>/
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("note")
+        .arg("idea.md")
+        .arg("a thought worth examining")
+        .arg("-f")
+        .arg("status=open")
+        .assert()
+        .success()
+        .stdout(predicate::str::starts_with(".test-mem/main/note/"));
+
+    // Verify the file exists inside a nested ts-hash dir
+    let note_base = env.root().join(".test-mem/main/note");
+    assert!(note_base.exists(), "note/ directory should exist");
+    let entries: Vec<_> = fs::read_dir(&note_base)?.collect::<Result<_, _>>()?;
+    assert_eq!(entries.len(), 1, "exactly one ts-hash subdir expected");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_note_root_anchor() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // --root saves flat at note/<filename>
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("note")
+        .arg("--root")
+        .arg("brainstorm.md")
+        .arg("seed idea")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/main/note/brainstorm.md\n"));
+
+    let file_path = env.root().join(".test-mem/main/note/brainstorm.md");
+    assert!(file_path.exists());
+
+    Ok(())
+}
+
+#[test]
+fn test_add_note_root_subdirectory_grouping() -> anyhow::Result<()> {
+    // --root with a subdirectory path groups related notes into a named dir.
+    // This is the "note thread" pattern: a note that grows into a collection.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // First file: the note's index
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("note")
+        .arg("--root")
+        .arg("auth-redesign/index.md")
+        .arg("# Auth redesign idea")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(
+            ".test-mem/main/note/auth-redesign/index.md\n",
+        ));
+
+    // Second file: a reference in the same note thread
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("note")
+        .arg("--root")
+        .arg("auth-redesign/references.md")
+        .arg("# References")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(
+            ".test-mem/main/note/auth-redesign/references.md\n",
+        ));
+
+    // Both files exist in the same subdirectory
+    let group_dir = env.root().join(".test-mem/main/note/auth-redesign");
+    assert!(group_dir.join("index.md").exists());
+    assert!(group_dir.join("references.md").exists());
+
+    Ok(())
+}
+
+#[test]
 fn test_add_type_tmp_nested_by_default() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
