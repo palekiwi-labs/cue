@@ -2,6 +2,12 @@
 
 <important>always load the "cue" skill first</important>
 
+<important>
+we are at a prototyping stage:
+- do not bump package or schema versions
+- do not worry about backwards compatibility
+</important>
+
 This repository is the home of the `cue` CLI tool and protocol—a system designed to manage **Agent Memory** and ensure cross-session continuity.
 
 ## Purpose
