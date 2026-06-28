@@ -62,6 +62,9 @@ async fn row_count(pool: &sqlx::SqlitePool) -> i64 {
 const SESSION_IDLE_BODY: &str = r#"{"type":"session_idle","session_id":"abc-123","project_dir":"/home/me/project","harness":"opencode","session_title":"hello"}"#;
 const AGENT_TURN_BODY: &str = r#"{"type":"agent_turn_completed","session_id":"abc-123","turn_id":"t1","project_dir":"/home/me/project","harness":"opencode","input_tokens":120,"output_tokens":340}"#;
 const SESSION_IDLE_BODY_S2: &str = r#"{"type":"session_idle","session_id":"session-2","project_dir":"/home/me/other","harness":"opencode","session_title":"other"}"#;
+/// Same session as SESSION_IDLE_BODY but a different project_dir — used to
+/// exercise the project_dir query filter independently of session_id.
+const SESSION_IDLE_BODY_PD2: &str = r#"{"type":"session_idle","session_id":"abc-123","project_dir":"/home/me/other","harness":"opencode","session_title":"other-proj"}"#;
 
 // ---------------------------------------------------------------------------
 // Query endpoint helpers
@@ -595,4 +598,25 @@ async fn query_db_failure_returns_500() {
     let app = make_app(state);
     let resp = get_events(app, "").await;
     assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+// ---------------------------------------------------------------------------
+// GET /events — project_dir filter
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn query_project_dir_filter() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+
+    // Two events: same session_id, different project_dir.
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY_PD2).await;
+
+    let app2 = make_app(state);
+    let resp = get_events(app2, "project_dir=/home/me/other").await;
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    let page = body_json(resp).await;
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(page.events[0].project_dir, "/home/me/other");
 }

@@ -129,6 +129,7 @@ pub async fn query_events_after(
     limit: i64,
     session_id: Option<&str>,
     event_type: Option<&str>,
+    project_dir: Option<&str>,
 ) -> sqlx::Result<(Vec<acuity_api::EventRecord>, Option<i64>)> {
     let clamped_limit = limit.clamp(1, 500);
 
@@ -146,6 +147,10 @@ pub async fn query_events_after(
     if let Some(et) = event_type {
         builder.push(" AND event_type = ");
         builder.push_bind(et);
+    }
+    if let Some(pd) = project_dir {
+        builder.push(" AND project_dir = ");
+        builder.push_bind(pd);
     }
 
     builder.push(" ORDER BY seq LIMIT ");

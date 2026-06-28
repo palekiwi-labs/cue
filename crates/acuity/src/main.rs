@@ -77,6 +77,7 @@ struct EventsQuery {
     limit: i64,
     session_id: Option<String>,
     event_type: Option<String>,
+    project_dir: Option<String>,
 }
 
 fn default_limit() -> i64 {
@@ -96,6 +97,7 @@ async fn query_events(
         params.limit,
         params.session_id.as_deref(),
         params.event_type.as_deref(),
+        params.project_dir.as_deref(),
     )
     .await
     {
@@ -152,6 +154,7 @@ async fn sse_handler(
                     &state.db,
                     seq,
                     SSE_PAGE_SIZE,
+                    None,
                     None,
                     None,
                 )
