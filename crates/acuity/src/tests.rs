@@ -59,9 +59,9 @@ async fn row_count(pool: &sqlx::SqlitePool) -> i64 {
 }
 
 // Valid bodies for each event type
-const SESSION_IDLE_BODY: &str = r#"{"type":"session_idle","session_id":"abc-123","project_dir":"/home/me/project","session_title":"hello"}"#;
-const AGENT_TURN_BODY: &str = r#"{"type":"agent_turn_completed","session_id":"abc-123","turn_id":"t1","input_tokens":120,"output_tokens":340}"#;
-const SESSION_IDLE_BODY_S2: &str = r#"{"type":"session_idle","session_id":"session-2","project_dir":"/home/me/other","session_title":"other"}"#;
+const SESSION_IDLE_BODY: &str = r#"{"type":"session_idle","session_id":"abc-123","project_dir":"/home/me/project","harness":"opencode","session_title":"hello"}"#;
+const AGENT_TURN_BODY: &str = r#"{"type":"agent_turn_completed","session_id":"abc-123","turn_id":"t1","project_dir":"/home/me/project","harness":"opencode","input_tokens":120,"output_tokens":340}"#;
+const SESSION_IDLE_BODY_S2: &str = r#"{"type":"session_idle","session_id":"session-2","project_dir":"/home/me/other","harness":"opencode","session_title":"other"}"#;
 
 // ---------------------------------------------------------------------------
 // Query endpoint helpers

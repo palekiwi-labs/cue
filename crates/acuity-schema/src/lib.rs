@@ -20,6 +20,7 @@ pub const SCHEMA_VERSION: u8 = 1;
 pub struct SessionIdle {
     pub session_id: String,
     pub project_dir: String,
+    pub harness: String,
     pub session_title: Option<String>,
 }
 
@@ -29,6 +30,8 @@ pub struct SessionIdle {
 pub struct AgentTurnCompleted {
     pub session_id: String,
     pub turn_id: String,
+    pub project_dir: String,
+    pub harness: String,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
 }
@@ -39,6 +42,8 @@ pub struct AgentTurnCompleted {
 pub struct ToolCallRequested {
     pub session_id: String,
     pub turn_id: String,
+    pub project_dir: String,
+    pub harness: String,
     pub tool_call_id: String,
     pub tool_name: String,
     /// Raw tool arguments as a JSON value.
@@ -63,6 +68,8 @@ pub struct ToolCallRequested {
 pub struct ToolCallCompleted {
     pub session_id: String,
     pub turn_id: String,
+    pub project_dir: String,
+    pub harness: String,
     pub tool_call_id: String,
     pub tool_name: String,
     pub is_error: bool,
@@ -108,6 +115,26 @@ impl AcuityEvent {
         }
     }
 
+    /// Returns the `project_dir` from whichever variant is active.
+    pub fn project_dir(&self) -> &str {
+        match self {
+            AcuityEvent::SessionIdle(e) => &e.project_dir,
+            AcuityEvent::AgentTurnCompleted(e) => &e.project_dir,
+            AcuityEvent::ToolCallRequested(e) => &e.project_dir,
+            AcuityEvent::ToolCallCompleted(e) => &e.project_dir,
+        }
+    }
+
+    /// Returns the `harness` from whichever variant is active.
+    pub fn harness(&self) -> &str {
+        match self {
+            AcuityEvent::SessionIdle(e) => &e.harness,
+            AcuityEvent::AgentTurnCompleted(e) => &e.harness,
+            AcuityEvent::ToolCallRequested(e) => &e.harness,
+            AcuityEvent::ToolCallCompleted(e) => &e.harness,
+        }
+    }
+
     /// Returns `None` for `SessionIdle`; `Some(&turn_id)` for all other variants.
     pub fn turn_id(&self) -> Option<&str> {
         match self {
@@ -128,6 +155,7 @@ mod tests {
         AcuityEvent::SessionIdle(SessionIdle {
             session_id: "s1".into(),
             project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
             session_title: Some("hack".into()),
         })
     }
@@ -136,6 +164,8 @@ mod tests {
         AcuityEvent::AgentTurnCompleted(AgentTurnCompleted {
             session_id: "s1".into(),
             turn_id: "t1".into(),
+            project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
             input_tokens: Some(120),
             output_tokens: Some(340),
         })
@@ -145,6 +175,8 @@ mod tests {
         AcuityEvent::ToolCallRequested(ToolCallRequested {
             session_id: "s1".into(),
             turn_id: "t1".into(),
+            project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
             tool_call_id: "c1".into(),
             tool_name: "read".into(),
             args: json!({"path": "/x", "limit": 50}),
@@ -155,6 +187,8 @@ mod tests {
         AcuityEvent::ToolCallCompleted(ToolCallCompleted {
             session_id: "s1".into(),
             turn_id: "t1".into(),
+            project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
             tool_call_id: "c1".into(),
             tool_name: "bash".into(),
             is_error: true,
@@ -263,45 +297,71 @@ mod tests {
 
     #[test]
     fn session_idle_deserializes_from_raw_json() {
-        let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/home/pl/code","session_title":"hack"}"#;
+        let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/home/pl/code","harness":"opencode","session_title":"hack"}"#;
         let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
         assert_eq!(ev.event_type(), "session_idle");
         assert_eq!(ev.session_id(), "s1");
+        assert_eq!(ev.project_dir(), "/home/pl/code");
+        assert_eq!(ev.harness(), "opencode");
         assert_eq!(ev.turn_id(), None);
     }
 
     #[test]
     fn agent_turn_completed_deserializes_from_raw_json() {
-        let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","input_tokens":120,"output_tokens":340}"#;
+        let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","input_tokens":120,"output_tokens":340}"#;
         let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
         assert_eq!(ev.event_type(), "agent_turn_completed");
         assert_eq!(ev.session_id(), "s1");
+        assert_eq!(ev.project_dir(), "/home/pl/code");
+        assert_eq!(ev.harness(), "opencode");
         assert_eq!(ev.turn_id(), Some("t1"));
     }
 
     #[test]
     fn tool_call_requested_deserializes_from_raw_json() {
-        let raw = r#"{"type":"tool_call_requested","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"read","args":{"path":"/x","limit":50}}"#;
+        let raw = r#"{"type":"tool_call_requested","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","tool_call_id":"c1","tool_name":"read","args":{"path":"/x","limit":50}}"#;
         let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
         assert_eq!(ev.event_type(), "tool_call_requested");
         assert_eq!(ev.session_id(), "s1");
+        assert_eq!(ev.project_dir(), "/home/pl/code");
+        assert_eq!(ev.harness(), "opencode");
         assert_eq!(ev.turn_id(), Some("t1"));
     }
 
     #[test]
     fn tool_call_completed_deserializes_from_raw_json() {
-        let raw = r#"{"type":"tool_call_completed","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"bash","is_error":true,"error_text":"command not found: fd"}"#;
+        let raw = r#"{"type":"tool_call_completed","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","tool_call_id":"c1","tool_name":"bash","is_error":true,"error_text":"command not found: fd"}"#;
         let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
         assert_eq!(ev.event_type(), "tool_call_completed");
         assert_eq!(ev.session_id(), "s1");
+        assert_eq!(ev.project_dir(), "/home/pl/code");
+        assert_eq!(ev.harness(), "opencode");
         assert_eq!(ev.turn_id(), Some("t1"));
+    }
+
+    // --- project_dir() and harness() accessors ---
+
+    #[test]
+    fn project_dir_accessible_all_variants() {
+        assert_eq!(session_idle().project_dir(), "/home/pl/code");
+        assert_eq!(agent_turn_completed().project_dir(), "/home/pl/code");
+        assert_eq!(tool_call_requested().project_dir(), "/home/pl/code");
+        assert_eq!(tool_call_completed().project_dir(), "/home/pl/code");
+    }
+
+    #[test]
+    fn harness_accessible_all_variants() {
+        assert_eq!(session_idle().harness(), "opencode");
+        assert_eq!(agent_turn_completed().harness(), "opencode");
+        assert_eq!(tool_call_requested().harness(), "opencode");
+        assert_eq!(tool_call_completed().harness(), "opencode");
     }
 
     // --- forward-compat: unknown fields are silently ignored ---
 
     #[test]
     fn unknown_fields_are_ignored_on_deserialization() {
-        let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/p","session_title":null,"future_field":"ignored"}"#;
+        let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/p","harness":"opencode","session_title":null,"future_field":"ignored"}"#;
         let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
         assert_eq!(ev.event_type(), "session_idle");
         assert_eq!(ev.session_id(), "s1");

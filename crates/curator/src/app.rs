@@ -408,6 +408,7 @@ mod tests {
             AcuityEvent::SessionIdle(SessionIdle {
                 session_id: session_id.to_string(),
                 project_dir: project_dir.to_string(),
+                harness: "opencode".to_string(),
                 session_title: Some(format!("proj-{project_dir}")),
             }),
         )
@@ -420,6 +421,8 @@ mod tests {
             AcuityEvent::AgentTurnCompleted(AgentTurnCompleted {
                 session_id: session_id.to_string(),
                 turn_id: "t1".to_string(),
+                project_dir: "/home/pl/code".to_string(),
+                harness: "opencode".to_string(),
                 input_tokens: Some(input),
                 output_tokens: Some(output),
             }),
@@ -433,6 +436,8 @@ mod tests {
             AcuityEvent::ToolCallCompleted(ToolCallCompleted {
                 session_id: session_id.to_string(),
                 turn_id: "t1".to_string(),
+                project_dir: "/home/pl/code".to_string(),
+                harness: "opencode".to_string(),
                 tool_call_id: format!("c{seq}"),
                 tool_name: "bash".to_string(),
                 is_error,
@@ -452,6 +457,8 @@ mod tests {
             AcuityEvent::ToolCallRequested(ToolCallRequested {
                 session_id: session_id.to_string(),
                 turn_id: "t1".to_string(),
+                project_dir: "/home/pl/code".to_string(),
+                harness: "opencode".to_string(),
                 tool_call_id: format!("c{seq}"),
                 tool_name: "bash".to_string(),
                 args: serde_json::Value::Null,

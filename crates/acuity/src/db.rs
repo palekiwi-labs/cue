@@ -212,9 +212,10 @@ mod tests {
         let ev = AcuityEvent::SessionIdle(SessionIdle {
             session_id: "s1".into(),
             project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
             session_title: Some("hack".into()),
         });
-        let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/home/pl/code","session_title":"hack"}"#;
+        let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/home/pl/code","harness":"opencode","session_title":"hack"}"#;
 
         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
         let (event_type, session_id, turn_id, payload, received_at) = fetch_row(&pool, seq).await;
@@ -233,10 +234,12 @@ mod tests {
         let ev = AcuityEvent::AgentTurnCompleted(AgentTurnCompleted {
             session_id: "s1".into(),
             turn_id: "t1".into(),
+            project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
             input_tokens: Some(120),
             output_tokens: Some(340),
         });
-        let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","input_tokens":120,"output_tokens":340}"#;
+        let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","input_tokens":120,"output_tokens":340}"#;
 
         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
         let (event_type, session_id, turn_id, _payload, _received_at) = fetch_row(&pool, seq).await;
@@ -252,11 +255,13 @@ mod tests {
         let ev = AcuityEvent::ToolCallRequested(ToolCallRequested {
             session_id: "s1".into(),
             turn_id: "t1".into(),
+            project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
             tool_call_id: "c1".into(),
             tool_name: "read".into(),
             args: json!({"path": "/x", "limit": 50}),
         });
-        let raw = r#"{"type":"tool_call_requested","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"read","args":{"path":"/x","limit":50}}"#;
+        let raw = r#"{"type":"tool_call_requested","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","tool_call_id":"c1","tool_name":"read","args":{"path":"/x","limit":50}}"#;
 
         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
         let (event_type, session_id, turn_id, payload, _received_at) = fetch_row(&pool, seq).await;
@@ -273,12 +278,14 @@ mod tests {
         let ev = AcuityEvent::ToolCallCompleted(ToolCallCompleted {
             session_id: "s1".into(),
             turn_id: "t1".into(),
+            project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
             tool_call_id: "c1".into(),
             tool_name: "bash".into(),
             is_error: true,
             error_text: Some("command not found: fd".into()),
         });
-        let raw = r#"{"type":"tool_call_completed","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"bash","is_error":true,"error_text":"command not found: fd"}"#;
+        let raw = r#"{"type":"tool_call_completed","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","tool_call_id":"c1","tool_name":"bash","is_error":true,"error_text":"command not found: fd"}"#;
 
         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
         let (event_type, _session_id, turn_id, payload, _received_at) = fetch_row(&pool, seq).await;
