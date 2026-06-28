@@ -59,9 +59,12 @@ async fn row_count(pool: &sqlx::SqlitePool) -> i64 {
 }
 
 // Valid bodies for each event type
-const SESSION_IDLE_BODY: &str = r#"{"type":"session_idle","session_id":"abc-123","project_dir":"/home/me/project","session_title":"hello"}"#;
-const AGENT_TURN_BODY: &str = r#"{"type":"agent_turn_completed","session_id":"abc-123","turn_id":"t1","input_tokens":120,"output_tokens":340}"#;
-const SESSION_IDLE_BODY_S2: &str = r#"{"type":"session_idle","session_id":"session-2","project_dir":"/home/me/other","session_title":"other"}"#;
+const SESSION_IDLE_BODY: &str = r#"{"type":"session_idle","session_id":"abc-123","project_dir":"/home/me/project","harness":"opencode","session_title":"hello"}"#;
+const AGENT_TURN_BODY: &str = r#"{"type":"agent_turn_completed","session_id":"abc-123","turn_id":"t1","project_dir":"/home/me/project","harness":"opencode","input_tokens":120,"output_tokens":340}"#;
+const SESSION_IDLE_BODY_S2: &str = r#"{"type":"session_idle","session_id":"session-2","project_dir":"/home/me/other","harness":"opencode","session_title":"other"}"#;
+/// Same session as SESSION_IDLE_BODY but a different project_dir — used to
+/// exercise the project_dir query filter independently of session_id.
+const SESSION_IDLE_BODY_PD2: &str = r#"{"type":"session_idle","session_id":"abc-123","project_dir":"/home/me/other","harness":"opencode","session_title":"other-proj"}"#;
 
 // ---------------------------------------------------------------------------
 // Query endpoint helpers
@@ -514,6 +517,8 @@ async fn query_record_fields_correct() {
     assert_eq!(rec.event_type, "session_idle");
     assert_eq!(rec.session_id, "abc-123");
     assert!(rec.turn_id.is_none());
+    assert_eq!(rec.project_dir, "/home/me/project");
+    assert_eq!(rec.harness, "opencode");
     assert_eq!(rec.payload, SESSION_IDLE_BODY);
     assert!(!rec.received_at.is_empty());
 }
@@ -593,4 +598,59 @@ async fn query_db_failure_returns_500() {
     let app = make_app(state);
     let resp = get_events(app, "").await;
     assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
+}
+
+// ---------------------------------------------------------------------------
+// GET /events — project_dir filter
+// ---------------------------------------------------------------------------
+
+#[tokio::test]
+async fn query_project_dir_filter() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+
+    // Two events: same session_id, different project_dir.
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY_PD2).await;
+
+    // Sanity check: unfiltered query returns both rows (proves both inserted).
+    let all_page = body_json(get_events(make_app(state.clone()), "").await).await;
+    assert_eq!(all_page.events.len(), 2, "both rows must be present before filtering");
+
+    // Filter for /home/me/other -> only the PD2 row.
+    let resp = get_events(make_app(state.clone()), "project_dir=/home/me/other").await;
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    let page = body_json(resp).await;
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(page.events[0].project_dir, "/home/me/other");
+
+    // Reverse direction: filter for /home/me/project -> only the original row.
+    let resp2 = get_events(make_app(state), "project_dir=/home/me/project").await;
+    let page2 = body_json(resp2).await;
+    assert_eq!(page2.events.len(), 1);
+    assert_eq!(page2.events[0].project_dir, "/home/me/project");
+}
+
+#[tokio::test]
+async fn query_project_dir_and_session_id_combined_filter() {
+    let state = test_state_no_gotify().await;
+    let app = make_app(state.clone());
+
+    // Three events: two share session_id abc-123 (different project_dirs),
+    // one has a different session_id.
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;     // abc-123, /home/me/project
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY_PD2).await; // abc-123, /home/me/other
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY_S2).await;  // session-2, /home/me/other
+
+    // Combined: session_id=abc-123 AND project_dir=/home/me/other -> only PD2.
+    let resp = get_events(
+        make_app(state),
+        "session_id=abc-123&project_dir=/home/me/other",
+    )
+    .await;
+    assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    let page = body_json(resp).await;
+    assert_eq!(page.events.len(), 1);
+    assert_eq!(page.events[0].session_id, "abc-123");
+    assert_eq!(page.events[0].project_dir, "/home/me/other");
 }

@@ -18,6 +18,9 @@ pub use acuity_schema::AcuityEvent;
 /// the plugin — a faithful copy of the request body. Callers that need the
 /// structured event can deserialize it with
 /// `serde_json::from_str::<AcuityEvent>(&record.payload)`.
+///
+/// `project_dir` and `harness` are extracted from the event payload at ingest
+/// time and stored as first-class columns for efficient filtering.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct EventRecord {
     pub seq: i64,
@@ -28,6 +31,10 @@ pub struct EventRecord {
     pub event_type: String,
     pub session_id: String,
     pub turn_id: Option<String>,
+    /// Absolute path to the project directory reported by the plugin.
+    pub project_dir: String,
+    /// Harness identifier, e.g. `"opencode"`.
+    pub harness: String,
     /// Raw JSON wire bytes (the original request body, not re-serialized).
     pub payload: String,
 }

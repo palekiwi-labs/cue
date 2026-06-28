@@ -394,6 +394,8 @@ mod tests {
             event_type: event.event_type().to_string(),
             session_id: "s1".to_string(),
             turn_id: event.turn_id().map(str::to_string),
+            project_dir: event.project_dir().to_string(),
+            harness: event.harness().to_string(),
             payload: serde_json::to_string(&event).unwrap(),
         }
     }
@@ -407,6 +409,7 @@ mod tests {
             AcuityEvent::SessionIdle(SessionIdle {
                 session_id: "s1".to_string(),
                 project_dir: "/my/project".to_string(),
+                harness: "opencode".to_string(),
                 session_title: Some("My Project".to_string()),
             }),
         );
@@ -420,6 +423,7 @@ mod tests {
             AcuityEvent::SessionIdle(SessionIdle {
                 session_id: "s1".to_string(),
                 project_dir: "/my/project".to_string(),
+                harness: "opencode".to_string(),
                 session_title: None,
             }),
         );
@@ -433,6 +437,8 @@ mod tests {
             AcuityEvent::AgentTurnCompleted(AgentTurnCompleted {
                 session_id: "s1".to_string(),
                 turn_id: "t1".to_string(),
+                project_dir: "/my/project".to_string(),
+                harness: "opencode".to_string(),
                 input_tokens: Some(100),
                 output_tokens: Some(200),
             }),
@@ -447,6 +453,8 @@ mod tests {
             AcuityEvent::ToolCallRequested(ToolCallRequested {
                 session_id: "s1".to_string(),
                 turn_id: "t1".to_string(),
+                project_dir: "/my/project".to_string(),
+                harness: "opencode".to_string(),
                 tool_call_id: "c1".to_string(),
                 tool_name: "bash".to_string(),
                 args: serde_json::Value::Null,
@@ -462,6 +470,8 @@ mod tests {
             AcuityEvent::ToolCallCompleted(ToolCallCompleted {
                 session_id: "s1".to_string(),
                 turn_id: "t1".to_string(),
+                project_dir: "/my/project".to_string(),
+                harness: "opencode".to_string(),
                 tool_call_id: "c1".to_string(),
                 tool_name: "bash".to_string(),
                 is_error: false,
@@ -478,6 +488,8 @@ mod tests {
             AcuityEvent::ToolCallCompleted(ToolCallCompleted {
                 session_id: "s1".to_string(),
                 turn_id: "t1".to_string(),
+                project_dir: "/my/project".to_string(),
+                harness: "opencode".to_string(),
                 tool_call_id: "c1".to_string(),
                 tool_name: "bash".to_string(),
                 is_error: true,

@@ -16,12 +16,16 @@ CREATE TABLE IF NOT EXISTS events (
     event_type  TEXT    NOT NULL,
     session_id  TEXT    NOT NULL,
     turn_id     TEXT,
+    project_dir TEXT    NOT NULL,
+    harness     TEXT    NOT NULL,
     payload     TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_session
     ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_turn
     ON events(turn_id) WHERE turn_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_events_project
+    ON events(project_dir);
 ";
 
 /// Open (or create) a SQLite pool at `path` and apply the schema.
@@ -38,6 +42,41 @@ pub async fn connect(path: &Path) -> anyhow::Result<SqlitePool> {
         .create_if_missing(true);
 
     let pool = SqlitePool::connect_with(opts).await?;
+
+    // Startup column-mismatch guard: must run BEFORE SCHEMA_SQL because
+    // SCHEMA_SQL contains `CREATE INDEX … ON events(project_dir)`, which
+    // would itself fail with a cryptic "no such column" error if the table
+    // already exists without that column. By checking first we replace that
+    // cryptic error with a clear, actionable message.
+    //
+    // Logic: if PRAGMA table_info(events) returns 0 rows the table does not
+    // yet exist (fresh DB) — skip the check and let SCHEMA_SQL create it.
+    // If rows are returned the table already exists and we verify the
+    // required columns are present by name. This does not validate column
+    // types or nullability — it only detects the absence of required columns.
+    {
+        use sqlx::Row as _;
+        let rows = sqlx::query("PRAGMA table_info(events)")
+            .fetch_all(&pool)
+            .await?;
+        if !rows.is_empty() {
+            let columns: std::collections::HashSet<String> = rows
+                .iter()
+                .map(|row| row.get::<String, _>("name"))
+                .collect();
+            for col in ["project_dir", "harness"] {
+                if !columns.contains(col) {
+                    let msg = format!(
+                        "stale events.db detected — column `{col}` missing; \
+                         delete the file and restart"
+                    );
+                    tracing::error!("{}", msg);
+                    return Err(anyhow::anyhow!(msg));
+                }
+            }
+        }
+    }
+
     sqlx::query(SCHEMA_SQL).execute(&pool).await?;
     Ok(pool)
 }
@@ -57,13 +96,16 @@ pub async fn insert_event(
 ) -> sqlx::Result<i64> {
     let received_at_str = received_at.to_rfc3339_opts(SecondsFormat::Secs, true);
     let result = sqlx::query(
-        "INSERT INTO events (received_at, event_type, session_id, turn_id, payload)
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO events \
+         (received_at, event_type, session_id, turn_id, project_dir, harness, payload) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(received_at_str)
     .bind(event.event_type())
     .bind(event.session_id())
     .bind(event.turn_id())
+    .bind(event.project_dir())
+    .bind(event.harness())
     .bind(payload)
     .execute(pool)
     .await?;
@@ -71,12 +113,29 @@ pub async fn insert_event(
     Ok(result.last_insert_rowid())
 }
 
+/// Optional equality filters for [`query_events_after`].
+///
+/// Each field narrows results to rows where the column matches the given
+/// value exactly. `None` means "no constraint on this column".
+/// All non-`None` fields are combined with `AND`.
+///
+/// Note: `project_dir` is an exact byte match — no path normalisation is
+/// performed. Callers should supply the value verbatim as stored by the
+/// plugin (e.g. from an `EventRecord.project_dir` they received earlier).
+#[derive(Debug, Default)]
+pub struct EventFilter<'a> {
+    pub session_id: Option<&'a str>,
+    pub event_type: Option<&'a str>,
+    pub project_dir: Option<&'a str>,
+}
+
 /// Query events from the database with optional filters.
 ///
 /// `after` is the exclusive lower bound on `seq` (use 0 to start from the
 /// beginning). `limit` is clamped to `1..=500` server-side — callers must
-/// not pass raw user-supplied integers. Optional `session_id` and
-/// `event_type` filters apply as equality predicates.
+/// not pass raw user-supplied integers. `filter` selects a subset of rows
+/// by equality on one or more columns; use `EventFilter::default()` for
+/// no filtering.
 ///
 /// Results are ordered by `seq` ascending so callers can use the last
 /// returned `seq` as the next `after` cursor.
@@ -89,24 +148,28 @@ pub async fn query_events_after(
     pool: &SqlitePool,
     after: i64,
     limit: i64,
-    session_id: Option<&str>,
-    event_type: Option<&str>,
+    filter: EventFilter<'_>,
 ) -> sqlx::Result<(Vec<acuity_api::EventRecord>, Option<i64>)> {
     let clamped_limit = limit.clamp(1, 500);
 
     let mut builder = sqlx::QueryBuilder::new(
-        "SELECT seq, received_at, event_type, session_id, turn_id, payload \
+        "SELECT seq, received_at, event_type, session_id, turn_id, \
+         project_dir, harness, payload \
          FROM events WHERE seq > ",
     );
     builder.push_bind(after);
 
-    if let Some(sid) = session_id {
+    if let Some(sid) = filter.session_id {
         builder.push(" AND session_id = ");
         builder.push_bind(sid);
     }
-    if let Some(et) = event_type {
+    if let Some(et) = filter.event_type {
         builder.push(" AND event_type = ");
         builder.push_bind(et);
+    }
+    if let Some(pd) = filter.project_dir {
+        builder.push(" AND project_dir = ");
+        builder.push_bind(pd);
     }
 
     builder.push(" ORDER BY seq LIMIT ");
@@ -123,6 +186,8 @@ pub async fn query_events_after(
             event_type: row.get("event_type"),
             session_id: row.get("session_id"),
             turn_id: row.get("turn_id"),
+            project_dir: row.get("project_dir"),
+            harness: row.get("harness"),
             payload: row.get("payload"),
         })
         .collect();
@@ -173,6 +238,69 @@ mod tests {
     };
     use serde_json::json;
 
+    // --- schema guard tests ---
+
+    #[tokio::test]
+    async fn new_columns_exist_in_schema() {
+        let pool = memory_pool().await;
+        let rows = sqlx::query("PRAGMA table_info(events)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let names: std::collections::HashSet<String> =
+            rows.iter().map(|r| r.get::<String, _>("name")).collect();
+        assert!(
+            names.contains("project_dir"),
+            "project_dir column missing from schema"
+        );
+        assert!(
+            names.contains("harness"),
+            "harness column missing from schema"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_stale_db_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("events.db");
+
+        // Build an old-schema DB (no project_dir / harness columns).
+        {
+            let opts = SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true);
+            let old_pool = sqlx::pool::PoolOptions::new()
+                .max_connections(1)
+                .connect_with(opts)
+                .await
+                .unwrap();
+            sqlx::query(
+                "CREATE TABLE events (
+                    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    received_at TEXT    NOT NULL,
+                    event_type  TEXT    NOT NULL,
+                    session_id  TEXT    NOT NULL,
+                    turn_id     TEXT,
+                    payload     TEXT    NOT NULL
+                )",
+            )
+            .execute(&old_pool)
+            .await
+            .unwrap();
+            old_pool.close().await;
+        }
+
+        // connect() must detect the stale file via the column guard and
+        // return Err with the actionable message — not a generic DB error.
+        let err = connect(&db_path)
+            .await
+            .expect_err("connect() should fail on a stale DB without project_dir/harness");
+        assert!(
+            err.to_string().contains("stale events.db detected"),
+            "expected stale-DB guard error, got: {err}"
+        );
+    }
+
     fn test_ts() -> DateTime<Utc> {
         "2026-06-22T10:00:00Z"
             .parse::<DateTime<Utc>>()
@@ -212,9 +340,10 @@ mod tests {
         let ev = AcuityEvent::SessionIdle(SessionIdle {
             session_id: "s1".into(),
             project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
             session_title: Some("hack".into()),
         });
-        let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/home/pl/code","session_title":"hack"}"#;
+        let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/home/pl/code","harness":"opencode","session_title":"hack"}"#;
 
         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
         let (event_type, session_id, turn_id, payload, received_at) = fetch_row(&pool, seq).await;
@@ -233,10 +362,12 @@ mod tests {
         let ev = AcuityEvent::AgentTurnCompleted(AgentTurnCompleted {
             session_id: "s1".into(),
             turn_id: "t1".into(),
+            project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
             input_tokens: Some(120),
             output_tokens: Some(340),
         });
-        let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","input_tokens":120,"output_tokens":340}"#;
+        let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","input_tokens":120,"output_tokens":340}"#;
 
         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
         let (event_type, session_id, turn_id, _payload, _received_at) = fetch_row(&pool, seq).await;
@@ -252,11 +383,13 @@ mod tests {
         let ev = AcuityEvent::ToolCallRequested(ToolCallRequested {
             session_id: "s1".into(),
             turn_id: "t1".into(),
+            project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
             tool_call_id: "c1".into(),
             tool_name: "read".into(),
             args: json!({"path": "/x", "limit": 50}),
         });
-        let raw = r#"{"type":"tool_call_requested","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"read","args":{"path":"/x","limit":50}}"#;
+        let raw = r#"{"type":"tool_call_requested","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","tool_call_id":"c1","tool_name":"read","args":{"path":"/x","limit":50}}"#;
 
         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
         let (event_type, session_id, turn_id, payload, _received_at) = fetch_row(&pool, seq).await;
@@ -273,12 +406,14 @@ mod tests {
         let ev = AcuityEvent::ToolCallCompleted(ToolCallCompleted {
             session_id: "s1".into(),
             turn_id: "t1".into(),
+            project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
             tool_call_id: "c1".into(),
             tool_name: "bash".into(),
             is_error: true,
             error_text: Some("command not found: fd".into()),
         });
-        let raw = r#"{"type":"tool_call_completed","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"bash","is_error":true,"error_text":"command not found: fd"}"#;
+        let raw = r#"{"type":"tool_call_completed","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","tool_call_id":"c1","tool_name":"bash","is_error":true,"error_text":"command not found: fd"}"#;
 
         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
         let (event_type, _session_id, turn_id, payload, _received_at) = fetch_row(&pool, seq).await;
