@@ -23,6 +23,10 @@ Plugins have access to their container bash shell so can collect extra informati
 If we change the schema or the payload, we do not need to worry about any backwards
 compatibility - we can simply start with a fresh database. We are still prototyping.
 
+## `curator`: open kanban item in $EDITOR
+
+use `e` as a keybinding
+
 ## `curator`: use progress indicators
 
 Currently, starting `curator` results in a rather jarring experience in the activity

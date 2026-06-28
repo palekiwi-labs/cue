@@ -282,3 +282,36 @@ Three Opus review nits deferred (not merge blockers): C1 cursor-coupling note (d
 - **Open:** Slice 2: server-side ?limit_history=N parameter to bound cold-start history replay — captured as todo on the feature branch
 - **Open:** Phase 7 hardening: broadcast-channel SSE redesign, dedup lifecycle, server-side idempotency, curator --root vs cue --dir naming alignment
 
+## [ecd8396] Research: Rust markdown chunking crates
+
+- **Found:** text-splitter v0.32.0 (2026-06-16) is the dominant crate with 1.5M downloads and an explicit markdown feature backed by pulldown-cmark
+- **Found:** pulldown-cmark v0.13.4 has 111M downloads and is the standard CommonMark parser; used by text-splitter
+- **Found:** chunkedrs v1.0.4 (2026-06-07) explicitly says markdown-aware, recursive splitting, optional semantic mode via embeddings
+- **Found:** niblits v0.3.14 (2026-06-22) is the largest library by source (5.9K lines), multi-format token-aware splitting
+- **Found:** chunk v0.10.2 (2026-05-28, chonkie-inc) has 12K downloads, SIMD-accelerated, but markdown support is unconfirmed
+- **Found:** markdown-chunk v0.1.0 (2026-05-16) is heading-hierarchy-aware, zero deps, but only 53 lines and 15 downloads
+- **Found:** markdown-rag v0.1.0 (2026-05-29) is RAG-focused markdown splitter, alpha quality
+- **Found:** markdown_splitter v0.1.1 (2020) is annotation-based, abandoned, not semantic
+- **Found:** md-scatter v0.1.2 (2025-12-23) is a file-level split/reassemble tool, not an in-process chunking library
+- **Found:** transmutation v0.3.3 (2026-06-18) converts 27 document formats for LLM ingestion, heavier scope
+- **Found:** memchunk (chonkie-inc) appears superseded by chunk from the same org
+- **Found:** document-splitter does NOT exist on crates.io (404)
+- **Decided:** text-splitter is the only production-ready option for markdown-aware chunking in Rust as of June 2026
+
+## [ecd8396] Rust RAG ecosystem research completed
+
+- **Found:** rig-core v0.39.0 (updated 2026-06-19): actively maintained, 12+ vector store integrations, 1.35M downloads, used in production by St. Jude, Neon, etc.
+- **Found:** langchain-rust v4.6.0 (last updated 2024-10-06): likely stalled, full RAG pipeline, supports Qdrant/Postgres/SQLite/SurrealDB
+- **Found:** chonkie v0.1.1 exists as a Rust crate (ported from Python by chonkie.ai team, 729 downloads, very new)
+- **Found:** llm-chain v0.13.0 (last updated 2023-11-15): abandoned, had Qdrant support
+- **Found:** candle-core v0.11.0 (updated 2026-06-26): HuggingFace ML inference framework, not a RAG framework
+- **Found:** qdrant-client v1.18.0: NO embedded mode, requires external server
+- **Found:** lancedb v0.30.0: embedded/serverless vector DB, used in rig
+- **Found:** sqlite-vec v0.1.9: in-process SQLite extension for vector search
+- **Found:** usearch v2.25.3: single-file in-process vector search
+- **Found:** fastembed v5.17.2: local embedding generation via ONNX, used by both rig and langchain-rust
+- **Found:** pgvector v0.4.2: 14.1M downloads, PostgreSQL vector extension client
+- **Decided:** rig is the leading Rust RAG/LLM framework as of 2026
+- **Decided:** Qdrant has no embedded mode - always requires external server
+- **Decided:** LanceDB is the best embedded vector store option for Rust
+
