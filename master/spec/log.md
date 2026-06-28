@@ -315,3 +315,25 @@ Three Opus review nits deferred (not merge blockers): C1 cursor-coupling note (d
 - **Decided:** Qdrant has no embedded mode - always requires external server
 - **Decided:** LanceDB is the best embedded vector store option for Rust
 
+## [dab157e] Curator UX improvement plan finalised — 8 tasks created
+
+Design session with user + Opus consultation produced a final roadmap for the curator improvements initiative. All artifacts created on master branch under timestamp 1782644149-dab157e.
+
+- **Found:** Opus flagged tool-grouping by positional adjacency as wrong — must key on (session_id, turn_id)
+- **Found:** All existing test fixtures use turn_id: t1 — a (session_id, turn_id) HashMap key prevents the latent collision this creates
+- **Found:** SessionSummary.project_dir currently only set from SessionIdle — push_event must set it from every event after Phase 1
+- **Found:** Plugin header is a hardcoded string literal not a variable — plugin is an external repo deployed separately
+- **Decided:** Defer harness_version — not needed for prototype
+- **Decided:** Defer schema versioning / backward compat enforcement — prototyping phase
+- **Decided:** Add project_dir and harness to all four event structs (required on every event)
+- **Decided:** project_dir stored as DB column for server-side queries AND on EventRecord for render path — tripling accepted, captured as low-priority todo
+- **Decided:** Default fold state: all turns folded (addresses too-many-rows pain point)
+- **Decided:** Tool-call grouping keyed on (session_id, turn_id) HashMap — not positional adjacency (Opus catch)
+- **Decided:** Logical-identity selection tracking (not raw visual index) — survives fold/unfold and SSE arrivals
+- **Decided:** Zero selected projects = show all (narrowing filter model)
+- **Decided:** build_activity_items as pure function called at render time — no derived-state cache
+- **Decided:** 8 implementation slices: 1 schema, 2 DB/EventRecord, 3 server filter, 4 plugin, 5 ActivityItem model, 6 activity view, 7 navigation, 8 projects view
+- **Open:** harness_version availability from opencode SDK — investigate if needed later
+- **Open:** Multi-project kanban — deferred to a later phase
+- **Open:** Hostname field — deferred pending CAST_HOSTNAME injection
+
