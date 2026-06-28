@@ -12,3 +12,8 @@ This project strictly follows the `cue` protocol for its own development:
 1. **Load Skills**: Always load the `cue` skill and the `tdd` skill (for Rust development).
 2. **Consult the Anchor**: Read `.cue/master/spec/index.md` for the current project state and general specification.
 3. **Log Progress**: Use `cue log add` to record milestones and decisions.
+
+## External directories
+
+- `/home/pl/code/palekiwi-labs/cue.nvim`: a neovim plugin for cue
+- `/home/pl/.config/opencode/plugin/palekiwi-labs/cue-plugins`: cue plugins for agent harnesses
