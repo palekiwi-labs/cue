@@ -42,38 +42,42 @@ pub async fn connect(path: &Path) -> anyhow::Result<SqlitePool> {
         .create_if_missing(true);
 
     let pool = SqlitePool::connect_with(opts).await?;
-    sqlx::query(SCHEMA_SQL).execute(&pool).await?;
 
-    // Startup column-mismatch guard: detect stale DB files created by an
-    // older schema version. `CREATE TABLE IF NOT EXISTS` does not add new
-    // columns to an existing table, so an old file silently keeps its old
-    // structure. We check here rather than at insert time to fail fast with
-    // a clear, actionable error message.
+    // Startup column-mismatch guard: must run BEFORE SCHEMA_SQL because
+    // SCHEMA_SQL contains `CREATE INDEX … ON events(project_dir)`, which
+    // would itself fail with a cryptic "no such column" error if the table
+    // already exists without that column. By checking first we replace that
+    // cryptic error with a clear, actionable message.
+    //
+    // Logic: if PRAGMA table_info(events) returns 0 rows the table does not
+    // yet exist (fresh DB) — skip the check and let SCHEMA_SQL create it.
+    // If rows are returned the table already exists and we verify the
+    // required columns are present by name. This does not validate column
+    // types or nullability — it only detects the absence of required columns.
     {
         use sqlx::Row as _;
         let rows = sqlx::query("PRAGMA table_info(events)")
             .fetch_all(&pool)
             .await?;
-        let columns: std::collections::HashSet<String> = rows
-            .iter()
-            .map(|row| row.get::<String, _>("name"))
-            .collect();
-        for col in ["project_dir", "harness"] {
-            if !columns.contains(col) {
-                tracing::error!(
-                    "stale events.db detected — column `{}` missing; \
-                     delete the file and restart",
-                    col
-                );
-                return Err(anyhow::anyhow!(
-                    "stale events.db detected — column `{}` missing; \
-                     delete the file and restart",
-                    col
-                ));
+        if !rows.is_empty() {
+            let columns: std::collections::HashSet<String> = rows
+                .iter()
+                .map(|row| row.get::<String, _>("name"))
+                .collect();
+            for col in ["project_dir", "harness"] {
+                if !columns.contains(col) {
+                    let msg = format!(
+                        "stale events.db detected — column `{col}` missing; \
+                         delete the file and restart"
+                    );
+                    tracing::error!("{}", msg);
+                    return Err(anyhow::anyhow!(msg));
+                }
             }
         }
     }
 
+    sqlx::query(SCHEMA_SQL).execute(&pool).await?;
     Ok(pool)
 }
 
@@ -109,12 +113,29 @@ pub async fn insert_event(
     Ok(result.last_insert_rowid())
 }
 
+/// Optional equality filters for [`query_events_after`].
+///
+/// Each field narrows results to rows where the column matches the given
+/// value exactly. `None` means "no constraint on this column".
+/// All non-`None` fields are combined with `AND`.
+///
+/// Note: `project_dir` is an exact byte match — no path normalisation is
+/// performed. Callers should supply the value verbatim as stored by the
+/// plugin (e.g. from an `EventRecord.project_dir` they received earlier).
+#[derive(Debug, Default)]
+pub struct EventFilter<'a> {
+    pub session_id: Option<&'a str>,
+    pub event_type: Option<&'a str>,
+    pub project_dir: Option<&'a str>,
+}
+
 /// Query events from the database with optional filters.
 ///
 /// `after` is the exclusive lower bound on `seq` (use 0 to start from the
 /// beginning). `limit` is clamped to `1..=500` server-side — callers must
-/// not pass raw user-supplied integers. Optional `session_id` and
-/// `event_type` filters apply as equality predicates.
+/// not pass raw user-supplied integers. `filter` selects a subset of rows
+/// by equality on one or more columns; use `EventFilter::default()` for
+/// no filtering.
 ///
 /// Results are ordered by `seq` ascending so callers can use the last
 /// returned `seq` as the next `after` cursor.
@@ -127,9 +148,7 @@ pub async fn query_events_after(
     pool: &SqlitePool,
     after: i64,
     limit: i64,
-    session_id: Option<&str>,
-    event_type: Option<&str>,
-    project_dir: Option<&str>,
+    filter: EventFilter<'_>,
 ) -> sqlx::Result<(Vec<acuity_api::EventRecord>, Option<i64>)> {
     let clamped_limit = limit.clamp(1, 500);
 
@@ -140,15 +159,15 @@ pub async fn query_events_after(
     );
     builder.push_bind(after);
 
-    if let Some(sid) = session_id {
+    if let Some(sid) = filter.session_id {
         builder.push(" AND session_id = ");
         builder.push_bind(sid);
     }
-    if let Some(et) = event_type {
+    if let Some(et) = filter.event_type {
         builder.push(" AND event_type = ");
         builder.push_bind(et);
     }
-    if let Some(pd) = project_dir {
+    if let Some(pd) = filter.project_dir {
         builder.push(" AND project_dir = ");
         builder.push_bind(pd);
     }
@@ -222,7 +241,7 @@ mod tests {
     // --- schema guard tests ---
 
     #[tokio::test]
-    async fn project_dir_column_exists_in_schema() {
+    async fn new_columns_exist_in_schema() {
         let pool = memory_pool().await;
         let rows = sqlx::query("PRAGMA table_info(events)")
             .fetch_all(&pool)
@@ -271,11 +290,14 @@ mod tests {
             old_pool.close().await;
         }
 
-        // connect() must detect the stale file and return Err.
-        let result = connect(&db_path).await;
+        // connect() must detect the stale file via the column guard and
+        // return Err with the actionable message — not a generic DB error.
+        let err = connect(&db_path)
+            .await
+            .expect_err("connect() should fail on a stale DB without project_dir/harness");
         assert!(
-            result.is_err(),
-            "connect() should fail on a stale DB without project_dir/harness"
+            err.to_string().contains("stale events.db detected"),
+            "expected stale-DB guard error, got: {err}"
         );
     }
 

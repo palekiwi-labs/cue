@@ -95,9 +95,11 @@ async fn query_events(
         &state.db,
         after,
         params.limit,
-        params.session_id.as_deref(),
-        params.event_type.as_deref(),
-        params.project_dir.as_deref(),
+        db::EventFilter {
+            session_id: params.session_id.as_deref(),
+            event_type: params.event_type.as_deref(),
+            project_dir: params.project_dir.as_deref(),
+        },
     )
     .await
     {
@@ -154,9 +156,7 @@ async fn sse_handler(
                     &state.db,
                     seq,
                     SSE_PAGE_SIZE,
-                    None,
-                    None,
-                    None,
+                    db::EventFilter::default(),
                 )
                 .await
                 {
