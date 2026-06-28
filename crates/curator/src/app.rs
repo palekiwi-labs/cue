@@ -196,12 +196,20 @@ impl App {
             entry.last_seen.clone_from(&record.received_at);
         }
 
+        // Always reflect the ingest-time project_dir from EventRecord (set at
+        // DB ingest from the event payload). Non-empty on all events since
+        // Slice 2. Updating unconditionally ensures non-idle events populate
+        // the summary even when no SessionIdle has arrived yet.
+        if !record.project_dir.is_empty() {
+            entry.project_dir.clone_from(&record.project_dir);
+        }
+
         match record.event_type.as_str() {
             "session_idle" => {
                 if let Ok(AcuityEvent::SessionIdle(ev)) =
                     serde_json::from_str::<AcuityEvent>(&record.payload)
                 {
-                    entry.project_dir.clone_from(&ev.project_dir);
+                    // project_dir already updated unconditionally above.
                     entry.session_title.clone_from(&ev.session_title);
                     // first_seen is only set once (on insert).
                 }
@@ -513,13 +521,17 @@ mod tests {
         let mut app = empty_app();
         // First event is a SessionIdle that sets project_dir.
         app.push_event(idle(0, "s1", "/my/project"));
-        // Push EVENT_CAP more events so the idle is evicted.
+        // Push EVENT_CAP more events so the idle is evicted. Each turn carries
+        // "/home/pl/code" in its EventRecord.project_dir (see the `turn` helper).
+        // Since push_event now updates project_dir from every event, the final
+        // value reflects the most recent event rather than the evicted idle.
         for i in 1..=(EVENT_CAP as i64) {
             app.push_event(turn(i, "s1", 1, 1));
         }
-        // The ring buffer no longer contains seq=0, but sessions map must not.
+        // The ring buffer no longer contains seq=0. The sessions map still has
+        // a non-empty project_dir sourced from the subsequent turn events.
         assert!(!app.events.iter().any(|e| e.seq == 0));
-        assert_eq!(app.sessions["s1"].project_dir, "/my/project");
+        assert_eq!(app.sessions["s1"].project_dir, "/home/pl/code");
     }
 
     // --- push_event: error counting ---
@@ -542,6 +554,19 @@ mod tests {
         let s = &app.sessions["s1"];
         assert_eq!(s.project_dir, "/home/user/code");
         assert_eq!(s.session_title.as_deref(), Some("proj-/home/user/code"));
+    }
+
+    // --- push_event: project_dir set from non-idle first event ---
+
+    #[test]
+    fn project_dir_set_from_non_idle_first_event() {
+        // Regression: push_event previously only set project_dir from session_idle.
+        // This test ensures it is also set from agent_turn_completed (or any event
+        // that carries project_dir in EventRecord, which all events do since Slice 2).
+        let mut app = empty_app();
+        // Only push a turn — no idle event.
+        app.push_event(turn(1, "s1", 10, 20));
+        assert_eq!(app.sessions["s1"].project_dir, "/home/pl/code");
     }
 
     // --- diagnostics_len ---
