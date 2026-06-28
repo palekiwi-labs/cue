@@ -70,10 +70,14 @@ pub fn build_activity_items<'a>(
 ) -> Vec<ActivityItem<'a>> {
     let mut items: Vec<ActivityItem<'a>> = Vec::new();
 
-    // Maps (session_id, turn_id) -> index into `items` for the Turn variant.
+    // Maps (session_id, turn_id) -> (index into `items`, turn_is_expanded).
     // Keys borrow from `events` ('a); no conflict with the &mut items access
     // because turn_map and items are disjoint allocations.
-    let mut turn_map: HashMap<(&'a str, &'a str), usize> = HashMap::new();
+    // INVARIANT: `items` is append-only within this call. Stored indices are
+    // positional and break if items is ever reordered or has elements removed.
+    // Fold check is hoisted to turn-insertion time: one (String,String) alloc
+    // per turn instead of one per tool call.
+    let mut turn_map: HashMap<(&'a str, &'a str), (usize, bool)> = HashMap::new();
 
     // Tracks the (session_id, project_dir) pair of the last emitted header.
     // Cloned only when a new header is emitted — O(distinct sessions) total.
@@ -112,7 +116,20 @@ pub fn build_activity_items<'a>(
                     tool_calls: vec![],
                 });
                 let idx = items.len() - 1;
-                turn_map.insert((&record.session_id, turn_id), idx);
+                // or_insert_with: closure only runs for the first-seen (newest
+                // in reverse-chrono) occurrence of this (session_id, turn_id).
+                // Duplicate agent_turn_completed records (retries) still render
+                // as Turn items but do not win the slot — their tool calls
+                // cannot attach. This is intentional: newest turn owns the
+                // tool calls. The String alloc for the fold check is inside the
+                // closure so it is skipped entirely on the duplicate path.
+                turn_map
+                    .entry((record.session_id.as_str(), turn_id))
+                    .or_insert_with(|| {
+                        let expanded =
+                            fold_state.contains(&(record.session_id.clone(), turn_id.to_string()));
+                        (idx, expanded)
+                    });
             }
 
             "tool_call_requested" | "tool_call_completed" => {
@@ -122,9 +139,9 @@ pub fn build_activity_items<'a>(
                     continue;
                 };
                 match turn_map.get(&(record.session_id.as_str(), turn_id)) {
-                    Some(&idx) => {
+                    Some(&(idx, expanded)) => {
                         // Parent turn is in the ring buffer.
-                        if fold_state.contains(&(record.session_id.clone(), turn_id.to_string())) {
+                        if expanded {
                             // Turn is expanded — attach tool call.
                             if let ActivityItem::Turn {
                                 ref mut tool_calls, ..
