@@ -16,12 +16,16 @@ CREATE TABLE IF NOT EXISTS events (
     event_type  TEXT    NOT NULL,
     session_id  TEXT    NOT NULL,
     turn_id     TEXT,
+    project_dir TEXT    NOT NULL,
+    harness     TEXT    NOT NULL,
     payload     TEXT    NOT NULL
 );
 CREATE INDEX IF NOT EXISTS idx_events_session
     ON events(session_id);
 CREATE INDEX IF NOT EXISTS idx_events_turn
     ON events(turn_id) WHERE turn_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_events_project
+    ON events(project_dir);
 ";
 
 /// Open (or create) a SQLite pool at `path` and apply the schema.
@@ -39,6 +43,37 @@ pub async fn connect(path: &Path) -> anyhow::Result<SqlitePool> {
 
     let pool = SqlitePool::connect_with(opts).await?;
     sqlx::query(SCHEMA_SQL).execute(&pool).await?;
+
+    // Startup column-mismatch guard: detect stale DB files created by an
+    // older schema version. `CREATE TABLE IF NOT EXISTS` does not add new
+    // columns to an existing table, so an old file silently keeps its old
+    // structure. We check here rather than at insert time to fail fast with
+    // a clear, actionable error message.
+    {
+        use sqlx::Row as _;
+        let rows = sqlx::query("PRAGMA table_info(events)")
+            .fetch_all(&pool)
+            .await?;
+        let columns: std::collections::HashSet<String> = rows
+            .iter()
+            .map(|row| row.get::<String, _>("name"))
+            .collect();
+        for col in ["project_dir", "harness"] {
+            if !columns.contains(col) {
+                tracing::error!(
+                    "stale events.db detected — column `{}` missing; \
+                     delete the file and restart",
+                    col
+                );
+                return Err(anyhow::anyhow!(
+                    "stale events.db detected — column `{}` missing; \
+                     delete the file and restart",
+                    col
+                ));
+            }
+        }
+    }
+
     Ok(pool)
 }
 
@@ -57,13 +92,16 @@ pub async fn insert_event(
 ) -> sqlx::Result<i64> {
     let received_at_str = received_at.to_rfc3339_opts(SecondsFormat::Secs, true);
     let result = sqlx::query(
-        "INSERT INTO events (received_at, event_type, session_id, turn_id, payload)
-         VALUES (?, ?, ?, ?, ?)",
+        "INSERT INTO events \
+         (received_at, event_type, session_id, turn_id, project_dir, harness, payload) \
+         VALUES (?, ?, ?, ?, ?, ?, ?)",
     )
     .bind(received_at_str)
     .bind(event.event_type())
     .bind(event.session_id())
     .bind(event.turn_id())
+    .bind(event.project_dir())
+    .bind(event.harness())
     .bind(payload)
     .execute(pool)
     .await?;
@@ -95,7 +133,8 @@ pub async fn query_events_after(
     let clamped_limit = limit.clamp(1, 500);
 
     let mut builder = sqlx::QueryBuilder::new(
-        "SELECT seq, received_at, event_type, session_id, turn_id, payload \
+        "SELECT seq, received_at, event_type, session_id, turn_id, \
+         project_dir, harness, payload \
          FROM events WHERE seq > ",
     );
     builder.push_bind(after);
@@ -123,6 +162,8 @@ pub async fn query_events_after(
             event_type: row.get("event_type"),
             session_id: row.get("session_id"),
             turn_id: row.get("turn_id"),
+            project_dir: row.get("project_dir"),
+            harness: row.get("harness"),
             payload: row.get("payload"),
         })
         .collect();
@@ -172,6 +213,66 @@ mod tests {
         AcuityEvent, AgentTurnCompleted, SessionIdle, ToolCallCompleted, ToolCallRequested,
     };
     use serde_json::json;
+
+    // --- schema guard tests ---
+
+    #[tokio::test]
+    async fn project_dir_column_exists_in_schema() {
+        let pool = memory_pool().await;
+        let rows = sqlx::query("PRAGMA table_info(events)")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+        let names: std::collections::HashSet<String> =
+            rows.iter().map(|r| r.get::<String, _>("name")).collect();
+        assert!(
+            names.contains("project_dir"),
+            "project_dir column missing from schema"
+        );
+        assert!(
+            names.contains("harness"),
+            "harness column missing from schema"
+        );
+    }
+
+    #[tokio::test]
+    async fn connect_stale_db_returns_error() {
+        let dir = tempfile::tempdir().unwrap();
+        let db_path = dir.path().join("events.db");
+
+        // Build an old-schema DB (no project_dir / harness columns).
+        {
+            let opts = SqliteConnectOptions::new()
+                .filename(&db_path)
+                .create_if_missing(true);
+            let old_pool = sqlx::pool::PoolOptions::new()
+                .max_connections(1)
+                .connect_with(opts)
+                .await
+                .unwrap();
+            sqlx::query(
+                "CREATE TABLE events (
+                    seq         INTEGER PRIMARY KEY AUTOINCREMENT,
+                    received_at TEXT    NOT NULL,
+                    event_type  TEXT    NOT NULL,
+                    session_id  TEXT    NOT NULL,
+                    turn_id     TEXT,
+                    payload     TEXT    NOT NULL
+                )",
+            )
+            .execute(&old_pool)
+            .await
+            .unwrap();
+            old_pool.close().await;
+        }
+
+        // connect() must detect the stale file and return Err.
+        let result = connect(&db_path).await;
+        assert!(
+            result.is_err(),
+            "connect() should fail on a stale DB without project_dir/harness"
+        );
+    }
 
     fn test_ts() -> DateTime<Utc> {
         "2026-06-22T10:00:00Z"

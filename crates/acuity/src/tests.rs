@@ -514,6 +514,8 @@ async fn query_record_fields_correct() {
     assert_eq!(rec.event_type, "session_idle");
     assert_eq!(rec.session_id, "abc-123");
     assert!(rec.turn_id.is_none());
+    assert_eq!(rec.project_dir, "/home/me/project");
+    assert_eq!(rec.harness, "opencode");
     assert_eq!(rec.payload, SESSION_IDLE_BODY);
     assert!(!rec.received_at.is_empty());
 }
