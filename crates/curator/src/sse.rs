@@ -270,7 +270,7 @@ mod tests {
     /// Build a minimal valid JSON string for an `EventRecord`.
     fn record_json(seq: i64, session_id: &str) -> String {
         format!(
-            r#"{{"seq":{seq},"received_at":"2026-01-01T00:00:{seq:02}Z","event_type":"session_idle","session_id":"{session_id}","turn_id":null,"payload":"{{}}"}}"#
+            r#"{{"seq":{seq},"received_at":"2026-01-01T00:00:{seq:02}Z","event_type":"session_idle","session_id":"{session_id}","turn_id":null,"project_dir":"/home/me/project","harness":"opencode","payload":"{{}}"}}"#
         )
     }
 
@@ -420,8 +420,8 @@ mod tests {
         // An event whose data: is split across two lines at a JSON key boundary.
         // The LF between them must not corrupt parsing.
         let mut lb = LineBuffer::new(0);
-        let line1 = r#"{"seq":7,"received_at":"2026-01-01T00:00:07Z","event_type":"session_idle","session_id":"s1","turn_id":null,"#;
-        let line2 = r#""payload":"{}"}"#;
+        let line1 = r#"{"seq":7,"received_at":"2026-01-01T00:00:07Z","event_type":"session_idle","session_id":"s1","turn_id":null,"project_dir":"/home/me/project","#;
+        let line2 = r#""harness":"opencode","payload":"{}"}"#;
         let frame = format!("id: 7\ndata: {line1}\ndata: {line2}\n\n");
         let records = lb.feed(frame.as_bytes());
         assert_eq!(records.len(), 1);

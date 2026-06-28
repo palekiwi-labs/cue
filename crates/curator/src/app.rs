@@ -397,6 +397,8 @@ mod tests {
             event_type: event.event_type().to_string(),
             session_id: session_id.to_string(),
             turn_id: event.turn_id().map(str::to_string),
+            project_dir: event.project_dir().to_string(),
+            harness: event.harness().to_string(),
             payload: serde_json::to_string(&event).unwrap(),
         }
     }
