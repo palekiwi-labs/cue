@@ -266,26 +266,18 @@ mod tests {
         )
     }
 
-    /// Build `events` (oldest-first) and an empty sessions map, then call
-    /// `build_activity_items` with an empty fold_state (all folded).
-    fn build(events_vec: Vec<EventRecord>) -> (VecDeque<EventRecord>, Vec<ActivityItem<'static>>) {
-        // We need the VecDeque to live long enough for the returned items.
-        // Return it alongside the items so the caller owns both.
-        // This works because the borrow in ActivityItem<'_> is tied to the
-        // VecDeque's allocation — as long as the VecDeque lives, the borrows
-        // are valid.
-        //
-        // We leak both here so tests can inspect items without lifetime fights.
-        // Acceptable in tests only.
-        let deque: VecDeque<EventRecord> = events_vec.into_iter().collect();
-        let deque_ref: &'static VecDeque<EventRecord> = Box::leak(Box::new(deque));
+    /// Build items from `events` (oldest-first) with an empty sessions map and
+    /// empty fold_state (all turns folded).
+    ///
+    /// Leaks the deque and sessions map to obtain `'static` references for
+    /// `ActivityItem<'static>`. The leaked memory is bounded per test run and
+    /// reclaimed at process exit. Acceptable in tests only.
+    fn build(events_vec: Vec<EventRecord>) -> Vec<ActivityItem<'static>> {
+        let deque_ref: &'static VecDeque<EventRecord> =
+            Box::leak(Box::new(events_vec.into_iter().collect()));
         let sessions_ref: &'static HashMap<String, SessionSummary> =
             Box::leak(Box::new(HashMap::new()));
-        let fold: HashSet<(String, String)> = HashSet::new();
-        let items = build_activity_items(deque_ref, sessions_ref, &fold);
-        // Return the deque too so it isn't dropped (it won't be — it's leaked,
-        // but returning it makes the ownership model clear in tests).
-        (VecDeque::new(), items)
+        build_activity_items(deque_ref, sessions_ref, &HashSet::new())
     }
 
     /// Like `build` but with a non-empty fold_state.
@@ -378,7 +370,7 @@ mod tests {
             // No agent_turn for session "s1", turn "t1" in the ring buffer.
             tool_done(2, "s1", "t1", "/proj"),
         ];
-        let (_, items) = build(events);
+        let items = build(events);
 
         // Expect: header, standalone (the orphan tool call).
         let (headers, turns, standalones) = counts(&items);
@@ -423,7 +415,7 @@ mod tests {
         // Same session, but the project_dir changes between events.
         // In reverse-chrono: event with /proj/b is seen first.
         let events = vec![idle(1, "s1", "/proj/a"), idle(2, "s1", "/proj/b")];
-        let (_, items) = build(events);
+        let items = build(events);
 
         // Two headers: one for /proj/b (seen first), one for /proj/a.
         let headers: Vec<_> = items
@@ -454,7 +446,7 @@ mod tests {
             agent_turn(3, "s1", "t1", "/proj"),
         ];
         // build() uses an empty fold_state.
-        let (_, items) = build(events);
+        let items = build(events);
 
         let (_, turns, standalones) = counts(&items);
         assert_eq!(turns, 1, "one Turn");
@@ -525,7 +517,7 @@ mod tests {
             agent_turn(3, "s1", "t1", "/proj"),
         ];
         // Empty fold_state — turn is folded.
-        let (_, items) = build(events);
+        let items = build(events);
 
         let (headers, turns, standalones) = counts(&items);
         assert_eq!(headers, 1);
@@ -540,6 +532,173 @@ mod tests {
             turn_tool_calls(&items[1]),
             0,
             "tool_calls empty when folded"
+        );
+    }
+
+    // --- Test 8: agent_turn_completed with None turn_id column → Standalone ---
+
+    #[test]
+    fn agent_turn_with_null_turn_id_column_is_standalone() {
+        // Defensive test for the `let Some(turn_id) = record.turn_id.as_deref()
+        // else { Standalone }` arm. The AgentTurnCompleted payload carries a real
+        // turn_id, but make_record is called with turn_id: None so the persisted
+        // EventRecord.turn_id column is None (malformed / legacy ingest data).
+        let events = vec![make_record(
+            1,
+            "s1",
+            None, // column None despite payload having a turn_id
+            AcuityEvent::AgentTurnCompleted(AgentTurnCompleted {
+                session_id: "s1".to_string(),
+                turn_id: "t1".to_string(),
+                project_dir: "/proj".to_string(),
+                harness: "opencode".to_string(),
+                input_tokens: Some(10),
+                output_tokens: Some(20),
+            }),
+        )];
+        let items = build(events);
+
+        let (headers, turns, standalones) = counts(&items);
+        assert_eq!(headers, 1);
+        assert_eq!(turns, 0, "no Turn — column turn_id is None");
+        assert_eq!(standalones, 1, "malformed turn becomes Standalone");
+    }
+
+    // --- Test 9: tool_call with None turn_id column → Standalone ---
+
+    #[test]
+    fn tool_call_with_null_turn_id_column_is_standalone() {
+        // Same pattern as test 8 but for the tool_call_* arm. Column turn_id
+        // is None even though the ToolCallRequested payload has a turn_id.
+        let events = vec![make_record(
+            1,
+            "s1",
+            None, // column None
+            AcuityEvent::ToolCallRequested(ToolCallRequested {
+                session_id: "s1".to_string(),
+                turn_id: "t1".to_string(),
+                project_dir: "/proj".to_string(),
+                harness: "opencode".to_string(),
+                tool_call_id: "c1".to_string(),
+                tool_name: "bash".to_string(),
+                args: serde_json::Value::Null,
+            }),
+        )];
+        let items = build(events);
+
+        let (headers, turns, standalones) = counts(&items);
+        assert_eq!(headers, 1);
+        assert_eq!(turns, 0, "no Turn");
+        assert_eq!(standalones, 1, "malformed tool call becomes Standalone");
+        if let ActivityItem::Standalone(r) = &items[1] {
+            assert_eq!(r.event_type, "tool_call_requested");
+        } else {
+            panic!("expected Standalone at index 1");
+        }
+    }
+
+    // --- Test 10: empty events deque returns empty vec ---
+
+    #[test]
+    fn empty_events_returns_empty_vec() {
+        let items = build(vec![]);
+        assert!(items.is_empty(), "empty deque produces empty item list");
+    }
+
+    // --- Test 11: project_dir re-entry within same session emits third header ---
+
+    #[test]
+    fn project_dir_reentry_emits_third_header() {
+        // Chrono: /a, /b, /a — each is a context change from the previous in
+        // reverse-chrono order. Pins "compare against prev only" semantics: a
+        // future HashSet-of-seen-contexts optimisation would break this test.
+        let events = vec![
+            idle(1, "s1", "/proj/a"),
+            idle(2, "s1", "/proj/b"),
+            idle(3, "s1", "/proj/a"),
+        ];
+        let items = build(events);
+
+        let headers: Vec<_> = items
+            .iter()
+            .filter_map(|i| {
+                if let ActivityItem::SessionHeader { project_dir, .. } = i {
+                    Some(*project_dir)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        assert_eq!(
+            headers.len(),
+            3,
+            "re-entering a prior project_dir emits a fresh header"
+        );
+        assert_eq!(headers[0], "/proj/a", "newest first (seq 3)");
+        assert_eq!(headers[1], "/proj/b");
+        assert_eq!(headers[2], "/proj/a");
+    }
+
+    // --- Test 12: duplicate turn_id — newest turn receives tool calls ---
+
+    #[test]
+    fn duplicate_turn_id_newest_turn_receives_tool_calls() {
+        // Two agent_turn_completed events share the same (session_id, turn_id).
+        // The newer one (higher seq) is processed first in reverse-chrono order
+        // and wins the turn_map slot. Tool calls must attach to it.
+        //
+        // Chrono order (oldest first):
+        //   tool(1) - tool call for the turn
+        //   turn(2) - older duplicate agent_turn_completed
+        //   turn(3) - newer duplicate agent_turn_completed (seq 3 > seq 2)
+        //
+        // Reverse-chrono: turn(3), turn(2), tool(1)
+        let events = vec![
+            tool_done(1, "s1", "t1", "/proj"),
+            agent_turn(2, "s1", "t1", "/proj"), // older duplicate
+            agent_turn(3, "s1", "t1", "/proj"), // newer duplicate — should win
+        ];
+
+        let mut fold_state = HashSet::new();
+        fold_state.insert(("s1".to_string(), "t1".to_string()));
+
+        let items = build_with_fold(events, fold_state);
+
+        // Two Turn items are rendered (both duplicates push a Turn), but only the
+        // newer one (seen first in reverse-chrono) is in turn_map and can receive
+        // tool calls.
+        let (headers, turns, standalones) = counts(&items);
+        assert_eq!(headers, 1);
+        assert_eq!(turns, 2, "both duplicate turns render");
+        assert_eq!(standalones, 0, "tool call is not orphaned");
+
+        // The newer turn (seq 3) is first in the output (reverse-chrono).
+        // Find it by checking which Turn has tool calls attached.
+        let newer_turn_idx = items
+            .iter()
+            .position(|i| {
+                matches!(i, ActivityItem::Turn { agent_turn, .. }
+                    if agent_turn.seq == 3)
+            })
+            .unwrap();
+        let older_turn_idx = items
+            .iter()
+            .position(|i| {
+                matches!(i, ActivityItem::Turn { agent_turn, .. }
+                    if agent_turn.seq == 2)
+            })
+            .unwrap();
+
+        assert_eq!(
+            turn_tool_calls(&items[newer_turn_idx]),
+            1,
+            "newer turn owns the tool call"
+        );
+        assert_eq!(
+            turn_tool_calls(&items[older_turn_idx]),
+            0,
+            "older duplicate turn has no tool calls"
         );
     }
 }
