@@ -395,6 +395,7 @@ async fn handle_event(
                     turn_id = %e.turn_id,
                     input_tokens = ?e.input_tokens,
                     output_tokens = ?e.output_tokens,
+                    model = ?e.model,
                     "persisted event"
                 ),
                 Ev::SessionIdle(e) => info!(
