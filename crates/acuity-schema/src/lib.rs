@@ -34,6 +34,11 @@ pub struct AgentTurnCompleted {
     pub harness: String,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
+    /// Resolved model as `"providerID/modelID"`. Captured from the assistant
+    /// message (`info.providerID`/`info.modelID`) in the plugin's
+    /// `message.updated` handler. `None` if the plugin version predates this
+    /// field (forward-compat: unknown fields are silently ignored).
+    pub model: Option<String>,
 }
 
 /// Emitted when a tool call is dispatched by the agent.
@@ -197,6 +202,7 @@ mod tests {
             harness: "opencode".into(),
             input_tokens: Some(120),
             output_tokens: Some(340),
+            model: Some("anthropic/claude-sonnet".into()),
         })
     }
 
@@ -369,7 +375,7 @@ mod tests {
 
     #[test]
     fn agent_turn_completed_deserializes_from_raw_json() {
-        let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","input_tokens":120,"output_tokens":340}"#;
+        let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","input_tokens":120,"output_tokens":340,"model":"anthropic/claude-sonnet"}"#;
         let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
         assert_eq!(ev.event_type(), "agent_turn_completed");
         assert_eq!(ev.session_id(), "s1");
