@@ -1,6 +1,6 @@
 ---
 title: 'DB + EventRecord: project_dir and harness columns'
-status: open
+status: complete
 priority: high
 ---
 # DB + EventRecord: project_dir and harness columns

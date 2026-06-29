@@ -1,5 +1,5 @@
 ---
-status: open
+status: closed
 title: Curator Redesign
 ---
 Having used our MVP version of `curator`, I have learned a bit more

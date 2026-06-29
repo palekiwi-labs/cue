@@ -1,0 +1,12 @@
+{
+  "default": {
+    "artifacts": [
+      "./spec/index.md",
+      "./spec/log.md",
+      "plan/1782659497-0c2ff37/slice6a-collection.md",
+      "plan/1782659497-0c2ff37/slice6b-rendering.md"
+    ],
+    "include": [],
+    "instructions": null
+  }
+}

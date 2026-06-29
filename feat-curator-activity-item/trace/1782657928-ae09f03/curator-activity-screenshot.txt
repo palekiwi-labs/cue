@@ -1,0 +1,45 @@
+┌ Activity Feed ───────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┐
+│   ── cue (ses_0f14) ──                                                                                                                   │
+│   2026-06-28T14:56:31  session_idle              idle: feat/curator-activity-item | Slice 5 shipped                                      │
+│   2026-06-28T14:56:31  agent_turn_completed      turn: in=1 out=1433                                                                     │
+│   2026-06-28T14:56:00  tool_call_completed       done: task                                                                              │
+│   2026-06-28T14:56:00  agent_turn_completed      turn: in=1 out=7136                                                                     │
+│   ── cue (ses_0f14) ──                                                                                                                   │
+│   2026-06-28T14:56:00  session_idle              idle: GLM code review of curator activity branch (@diff-reviewer-glm subagent)          │
+│   2026-06-28T14:56:00  agent_turn_completed      turn: in=111 out=2997                                                                   │
+│   2026-06-28T14:54:56  agent_turn_completed      turn: in=157 out=55                                                                     │
+│   2026-06-28T14:54:56  tool_call_completed       done: bash                                                                              │
+│   2026-06-28T14:54:55  tool_call_requested       tool: bash                                                                              │
+│   ── cue (ses_0f14) ──                                                                                                                   │
+│   2026-06-28T14:54:48  tool_call_completed       done: task                                                                              │
+│   ── cue (ses_0f14) ──                                                                                                                   │
+│   2026-06-28T14:54:48  session_idle              idle: Opus code review of curator activity branch (@diff-reviewer-opus subagent)        │
+│   2026-06-28T14:54:48  agent_turn_completed      turn: in=2 out=7413                                                                     │
+│   ── cue (ses_0f14) ──                                                                                                                   │
+│   2026-06-28T14:54:48  agent_turn_completed      turn: in=663 out=91                                                                     │
+│   2026-06-28T14:54:48  tool_call_completed       done: bash                                                                              │
+│   2026-06-28T14:54:48  tool_call_requested       tool: bash                                                                              │
+│   2026-06-28T14:54:41  agent_turn_completed      turn: in=999 out=56                                                                     │
+│   2026-06-28T14:54:41  tool_call_completed       done: bash                                                                              │
+│   2026-06-28T14:54:40  tool_call_requested       tool: bash                                                                              │
+│   2026-06-28T14:54:32  agent_turn_completed      turn: in=6183 out=94                                                                    │
+│   2026-06-28T14:54:32  tool_call_completed       done: bash                                                                              │
+│   2026-06-28T14:54:32  tool_call_requested       tool: bash                                                                              │
+│   2026-06-28T14:54:32  tool_call_completed       done: read                                                                              │
+│   2026-06-28T14:54:32  tool_call_requested       tool: read                                                                              │
+│   2026-06-28T14:54:20  tool_call_completed       done: grep                                                                              │
+│   2026-06-28T14:54:20  tool_call_requested       tool: bash                                                                              │
+│   2026-06-28T14:54:20  agent_turn_completed      turn: in=19519 out=104                                                                  │
+│   2026-06-28T14:54:20  tool_call_completed       done: bash                                                                              │
+│   2026-06-28T14:54:20  tool_call_requested       tool: grep                                                                              │
+│   ── cue (ses_0f14) ──                                                                                                                   │
+│   2026-06-28T14:53:08  agent_turn_completed      turn: in=2 out=198                                                                      │
+│   2026-06-28T14:53:08  tool_call_completed       done: read                                                                              │
+│   2026-06-28T14:53:07  tool_call_requested       tool: read                                                                              │
+│   2026-06-28T14:53:04  agent_turn_completed      turn: in=2 out=169                                                                      │
+│   2026-06-28T14:53:04  tool_call_completed       done: bash                                                                              │
+│   2026-06-28T14:53:01  tool_call_requested       tool: bash                                                                              │
+│   2026-06-28T14:52:59  agent_turn_completed      turn: in=2 out=271                                                                      │
+│   2026-06-28T14:52:59  tool_call_completed       done: read                                                                              │
+│   2026-06-28T14:52:58  tool_call_completed       done: read                                                                              │
+└──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────┘

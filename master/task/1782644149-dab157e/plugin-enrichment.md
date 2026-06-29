@@ -1,6 +1,6 @@
 ---
 title: 'Plugin: emit project_dir and harness on all events'
-status: open
+status: complete
 priority: high
 ---
 # Plugin: emit project_dir and harness on all events

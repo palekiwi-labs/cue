@@ -1,0 +1,230 @@
+{
+  "events": [
+    {
+      "seq": 1,
+      "received_at": "2026-06-28T17:07:40Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":null,\"agent\":\"plan\",\"model\":null,\"title\":\"New session - 2026-06-28T17:07:40.592Z\"}"
+    },
+    {
+      "seq": 2,
+      "received_at": "2026-06-28T17:07:40Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":null,\"agent\":\"plan\",\"model\":null,\"title\":\"New session - 2026-06-28T17:07:40.592Z\"}"
+    },
+    {
+      "seq": 3,
+      "received_at": "2026-06-28T17:07:40Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":null,\"agent\":\"plan\",\"model\":null,\"title\":\"New session - 2026-06-28T17:07:40.592Z\"}"
+    },
+    {
+      "seq": 4,
+      "received_at": "2026-06-28T17:07:44Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":null,\"agent\":\"plan\",\"model\":null,\"title\":\"Ping check-in\"}"
+    },
+    {
+      "seq": 5,
+      "received_at": "2026-06-28T17:07:48Z",
+      "event_type": "agent_turn_completed",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": "msg_f0f337dd7002eJdcZE67miBoCU",
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"agent_turn_completed\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"turn_id\":\"msg_f0f337dd7002eJdcZE67miBoCU\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"input_tokens\":9456,\"output_tokens\":3}"
+    },
+    {
+      "seq": 6,
+      "received_at": "2026-06-28T17:07:48Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":null,\"agent\":\"plan\",\"model\":null,\"title\":\"Ping check-in\"}"
+    },
+    {
+      "seq": 7,
+      "received_at": "2026-06-28T17:07:48Z",
+      "event_type": "session_idle",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_idle\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"session_title\":\"Ping check-in\"}"
+    },
+    {
+      "seq": 8,
+      "received_at": "2026-06-28T17:07:55Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":null,\"agent\":\"plan\",\"model\":null,\"title\":\"Ping check-in\"}"
+    },
+    {
+      "seq": 9,
+      "received_at": "2026-06-28T17:07:55Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":null,\"agent\":\"plan\",\"model\":null,\"title\":\"Ping check-in\"}"
+    },
+    {
+      "seq": 10,
+      "received_at": "2026-06-28T17:08:11Z",
+      "event_type": "tool_call_requested",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": "msg_f0f33b822002s1mq7vd1oVxNks",
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"tool_call_requested\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"turn_id\":\"msg_f0f33b822002s1mq7vd1oVxNks\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"tool_call_id\":\"call_deef14bd8c5842da9116bfef\",\"tool_name\":\"task\",\"args\":{}}"
+    },
+    {
+      "seq": 11,
+      "received_at": "2026-06-28T17:08:11Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc0a1cffeZG4vLlw5vJmj6d",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc0a1cffeZG4vLlw5vJmj6d\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"agent\":\"general\",\"model\":null,\"title\":\"Respond pong to ping (@general subagent)\"}"
+    },
+    {
+      "seq": 12,
+      "received_at": "2026-06-28T17:08:11Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc0a1cffeZG4vLlw5vJmj6d",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc0a1cffeZG4vLlw5vJmj6d\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"agent\":\"general\",\"model\":null,\"title\":\"Respond pong to ping (@general subagent)\"}"
+    },
+    {
+      "seq": 13,
+      "received_at": "2026-06-28T17:08:11Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc0a1cffeZG4vLlw5vJmj6d",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc0a1cffeZG4vLlw5vJmj6d\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"agent\":\"general\",\"model\":null,\"title\":\"Respond pong to ping (@general subagent)\"}"
+    },
+    {
+      "seq": 14,
+      "received_at": "2026-06-28T17:08:21Z",
+      "event_type": "agent_turn_completed",
+      "session_id": "ses_0f0cc0a1cffeZG4vLlw5vJmj6d",
+      "turn_id": "msg_f0f33f610001UQpGLIz6loOVrh",
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"agent_turn_completed\",\"session_id\":\"ses_0f0cc0a1cffeZG4vLlw5vJmj6d\",\"turn_id\":\"msg_f0f33f610001UQpGLIz6loOVrh\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"input_tokens\":7568,\"output_tokens\":3}"
+    },
+    {
+      "seq": 15,
+      "received_at": "2026-06-28T17:08:21Z",
+      "event_type": "tool_call_completed",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": "msg_f0f33b822002s1mq7vd1oVxNks",
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"tool_call_completed\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"turn_id\":\"msg_f0f33b822002s1mq7vd1oVxNks\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"tool_call_id\":\"call_deef14bd8c5842da9116bfef\",\"tool_name\":\"task\",\"is_error\":false,\"error_text\":null}"
+    },
+    {
+      "seq": 16,
+      "received_at": "2026-06-28T17:08:21Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc0a1cffeZG4vLlw5vJmj6d",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc0a1cffeZG4vLlw5vJmj6d\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"agent\":\"general\",\"model\":null,\"title\":\"Respond pong to ping (@general subagent)\"}"
+    },
+    {
+      "seq": 17,
+      "received_at": "2026-06-28T17:08:21Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":null,\"agent\":\"plan\",\"model\":null,\"title\":\"Ping check-in\"}"
+    },
+    {
+      "seq": 18,
+      "received_at": "2026-06-28T17:08:21Z",
+      "event_type": "agent_turn_completed",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": "msg_f0f33b822002s1mq7vd1oVxNks",
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"agent_turn_completed\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"turn_id\":\"msg_f0f33b822002s1mq7vd1oVxNks\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"input_tokens\":324,\"output_tokens\":36}"
+    },
+    {
+      "seq": 19,
+      "received_at": "2026-06-28T17:08:21Z",
+      "event_type": "session_idle",
+      "session_id": "ses_0f0cc0a1cffeZG4vLlw5vJmj6d",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_idle\",\"session_id\":\"ses_0f0cc0a1cffeZG4vLlw5vJmj6d\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"session_title\":\"Respond pong to ping (@general subagent)\"}"
+    },
+    {
+      "seq": 20,
+      "received_at": "2026-06-28T17:08:39Z",
+      "event_type": "agent_turn_completed",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": "msg_f0f341e05002pSV4Vj00xpg0Zn",
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"agent_turn_completed\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"turn_id\":\"msg_f0f341e05002pSV4Vj00xpg0Zn\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"input_tokens\":230,\"output_tokens\":42}"
+    },
+    {
+      "seq": 21,
+      "received_at": "2026-06-28T17:08:39Z",
+      "event_type": "session_updated",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_updated\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"parent_id\":null,\"agent\":\"plan\",\"model\":null,\"title\":\"Ping check-in\"}"
+    },
+    {
+      "seq": 22,
+      "received_at": "2026-06-28T17:08:39Z",
+      "event_type": "session_idle",
+      "session_id": "ses_0f0cc824fffe0BWIz85ZesV7q2",
+      "turn_id": null,
+      "project_dir": "/home/pl/code/palekiwi-labs/cue",
+      "harness": "opencode",
+      "payload": "{\"type\":\"session_idle\",\"session_id\":\"ses_0f0cc824fffe0BWIz85ZesV7q2\",\"project_dir\":\"/home/pl/code/palekiwi-labs/cue\",\"harness\":\"opencode\",\"session_title\":\"Ping check-in\"}"
+    }
+  ],
+  "sqlite_sequence": [
+    {
+      "name": "events",
+      "seq": 22
+    }
+  ]
+}

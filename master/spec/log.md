@@ -337,3 +337,25 @@ Design session with user + Opus consultation produced a final roadmap for the cu
 - **Open:** Multi-project kanban — deferred to a later phase
 - **Open:** Hostname field — deferred pending CAST_HOSTNAME injection
 
+## [dab157e] Phase 7 of ecosystem-mvp deferred — curator UX improvements take priority
+
+Phases 0-6 of plan/ecosystem-mvp.md are complete. Phase 7 (auth/trust boundary, SQLite retention, second harness, multi-host config) is being explicitly deferred. The pivot is to plan/1782644149-dab157e/curator-improvements.md, which addresses critical UX gaps in curator that emerged from daily use post-Phase 6.
+
+- **Decided:** Phase 7 of plan/ecosystem-mvp.md is deferred indefinitely; it is not cancelled, only deprioritised below the curator improvements initiative
+- **Decided:** plan/1782644149-dab157e/curator-improvements.md is the active plan; its 8 slices (schema fields, DB columns, server filter, plugin, ActivityItem model, activity view, navigation, projects view) replace Phase 7 as the next body of work
+- **Decided:** plan/ecosystem-mvp.md status remains open rather than complete, as Phase 7 work is still owed; it must not be promoted to complete until hardening is addressed
+
+## [dd6f86b] feat/curator-improvements-schema merged to master
+
+Slices 1-3 of the curator improvements plan are merged. The branch delivered: project_dir + harness on all four acuity-schema event structs (+ accessors), DB layer columns + column-mismatch startup guard + EventFilter struct, project_dir filter on GET /events, and a post-merge fix for three missed test fixture constructors in curator (app.rs, ui.rs, sse.rs). Workspace fully green at merge.
+
+- **Decided:** Slice 4 (cue-plugins) is next — add project_dir and harness to all four event payload objects in acuity-plugin.ts
+
+## [325b779] [0371769] feat(acuity-plugin): Slice 4 complete — project_dir + harness in plugin
+
+acuity-plugin.ts updated: SessionIdle gains harness: "opencode"; AgentTurnCompleted, ToolCallRequested, and ToolCallCompleted gain both project_dir: directory and harness: "opencode". tsc --noEmit clean. Committed to cue-plugins dev branch at 0371769.
+
+- **Found:** SessionIdle already had project_dir: directory from a prior iteration — only harness was missing
+- **Found:** directory is already in the plugin closure at line 65, no new variable needed
+- **Decided:** harness hardcoded to "opencode" — this plugin is opencode-specific by definition
+

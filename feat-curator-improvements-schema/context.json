@@ -1,0 +1,12 @@
+{
+  "default": {
+    "artifacts": [
+      "../master/plan/1782644149-dab157e/curator-improvements.md",
+      "./spec/index.md",
+      "./spec/log.md",
+      "./plan/**/*.md"
+    ],
+    "include": [],
+    "instructions": null
+  }
+}

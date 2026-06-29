@@ -1,6 +1,6 @@
 ---
 title: 'Server: project_dir filter on GET /events'
-status: open
+status: complete
 priority: normal
 ---
 # Server: project_dir filter on GET /events
