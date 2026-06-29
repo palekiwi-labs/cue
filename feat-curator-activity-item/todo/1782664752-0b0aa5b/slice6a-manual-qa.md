@@ -1,8 +1,21 @@
 ---
-status: open
+status: complete
 priority: normal
 ---
 # Slice 6a Manual QA Checklist
+
+> **Completed** via live log file analysis against the hardened pipeline
+> (post-f3b11f7/db90d51/3aeb835). The QA was performed by running an opencode
+> session with a Task sub-agent (explore) and reading `tmp/acuity.log`.
+> Evidence: `session_updated` dedup collapsed from 5+ to 2 per session;
+> `agent_turn_completed` carries non-null `model` on every turn including
+> the subagent (`google/gemini-3-flash-preview`); parent_id lineage captured
+> correctly; title arrives before session_idle. See log entry [d590d61].
+>
+> Note: This checklist was written for the initial 6a baseline (3 commits)
+> and uses the old default DB path. The hardening plan's verification
+> checklist (slice6a-logging-and-plugin.md) covers the dedup and model
+> checks against the hardened pipeline.
 
 Manual end-to-end verification of the `SessionUpdated` collection layer.
 The automated tests (schema 25/25, curator 47/47, workspace clippy clean,

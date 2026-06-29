@@ -1,5 +1,5 @@
 ---
-status: open
+status: complete
 ---
 ## Foreword
 
@@ -124,65 +124,32 @@ visible in turn-level events. See the full investigation at
   (unlike the turn/call `dedup` which is cleared on `dedup.delete(sessionID)`).
   Commit: `fix(acuity-plugin): dedup session_updated events by metadata signature`
 
-- [ ] **4. Add model field to AgentTurnCompleted (cue repo, commit 3, TDD)**
+- [x] **4. Add model field to AgentTurnCompleted (cue repo, commit 3, TDD)**
 
-  Schema file: `crates/acuity-schema/src/lib.rs`
-  - RED: update the `agent_turn_completed()` test helper (line ~163) to include
-    `model: Some("anthropic/claude-sonnet".into())`. Update the existing
-    `agent_turn_completed_round_trip` and `agent_turn_completed_deserializes_from_raw_json`
-    tests to include `"model"` in the raw JSON string. Run `cargo test -p
-    acuity-schema` to confirm RED (missing field compile error).
-  - GREEN: add `pub model: Option<String>,` to the `AgentTurnCompleted` struct
-    (after `output_tokens`, around line 37). Re-run tests to confirm GREEN.
-  - Run `cargo clippy -p acuity-schema -- -D warnings`.
-  - Regenerate types.ts: `cargo run -p acuity-schema --bin codegen -- /home/pl/.config/opencode/plugin/palekiwi-labs/cue-plugins/src/generated/acuity`
-  - Commit: `feat(acuity-schema): add model field to AgentTurnCompleted`
+  Commit `abf7772`. Schema field added and tested. 25/25 green, clippy clean.
+  - RED/GREEN cycle completed for `crates/acuity-schema/src/lib.rs`.
+  - **Outstanding:** types.ts not yet regenerated; `model = ?e.model` not yet
+    added to the `AgentTurnCompleted` log arm in `main.rs`. Both are handled
+    as part of B3 follow-up steps in `slice6a-logging-and-plugin.md`.
 
-- [ ] **5. Capture model in plugin message.updated handler (cue-plugins repo, commit 4)**
+- [x] **5. Capture model in plugin message.updated handler (cue-plugins repo, commit 4)**
 
-  In `src/opencode/acuity-plugin.ts`, the `message.updated` handler (around line
-  90-110). The assistant message `info` has typed `modelID: string` and
-  `providerID: string`. Add to the `AgentTurnCompleted` payload:
-  ```typescript
-  model: `${info.providerID}/${info.modelID}`,
-  ```
-  (These are required fields on `AssistantMessage` — no cast needed, no null
-  guard needed. They are always present on a completed assistant message.)
-  Import `AgentTurnCompleted` is already present. Typecheck: `nix develop -c bash -c "bun run typecheck"`.
-  Commit: `feat(acuity-plugin): capture resolved model from assistant messages`
+  Commit `3aeb835`.
 
-- [ ] **6. Ingest model in curator (cue repo, commit 5, TDD)**
+- [x] **6. Ingest model in curator (cue repo, commit 5, TDD)**
 
-  Curator file: `crates/curator/src/app.rs`
-  - Update the `turn()` test helper (around line 427) — it constructs
-    `AgentTurnCompleted` — to include `model: Some("anthropic/claude-sonnet".to_string())`.
-  - RED: add a test `agent_turn_completed_sets_model` that pushes a turn and
-    asserts `app.sessions["s1"].model` equals the model string. Run `cargo test
-    -p curator` to confirm RED (the `agent_turn_completed` match arm doesn't
-    update model yet — but `SessionSummary.model` already exists from Slice 6a).
-  - GREEN: in the `agent_turn_completed` match arm of `push_event` (around line
-    217-224), add after the token accumulation:
-    ```rust
-    if let Some(m) = &ev.model {
-        entry.model = Some(m.clone());
-    }
-    ```
-    Re-run tests to confirm GREEN.
-  - Run `cargo clippy -p curator -- -D warnings`.
-  - Commit: `feat(curator): ingest model from AgentTurnCompleted`
+  Commit `d590d61`. RED/GREEN cycle completed. 48/48 curator tests pass.
+  Updated test helpers in activity.rs (x2) and ui.rs (x1) with `model: None`.
+  `turn()` helper in app.rs uses `model: Some("anthropic/claude-sonnet")`.
 
-- [ ] **7. Final verification**
+- [x] **7. Final verification**
 
-  - `cargo test --workspace` — all green
+  - `cargo test --workspace` — 304 tests, all green
   - `cargo clippy --workspace -- -D warnings` — clean
-  - `nix develop -c bash -c "bun run typecheck"` (from cue-plugins) — clean
-  - Manual: run an opencode session with a Task sub-agent, then query the DB:
-    ```bash
-    sqlite3 "file:.cue/feat-curator-activity-item/tmp/acuity-phase-6a/acuity/events.db?mode=ro&immutable=1" \
-      "SELECT event_type, count(*) FROM events GROUP BY event_type ORDER BY count(*) DESC;"
-    ```
-    Confirm: `session_updated` count is dramatically lower (no triplication),
-    and `agent_turn_completed` payloads contain non-null `model`.
+  - `nix develop -c bash -c "bun run typecheck"` (cue-plugins) — clean
+  - Live QA confirmed via `tmp/acuity.log`: session_updated dedup collapsed
+    from 5+ to 2 per session; agent_turn_completed carries non-null model
+    on every turn including subagents (google/gemini-3-flash-preview).
 
 ### Out of scope
 

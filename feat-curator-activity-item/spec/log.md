@@ -147,3 +147,127 @@ A full executive plan with 7 steps (5 commits across 2 repos) is saved at .cue/f
 - **Open:** After pinning to 1.17.11, verify whether the SDK Session type now declares agent?/model? — if so, drop the defensive casts in the SessionUpdated handler (plan step 2)
 - **Open:** Verify the 5-commit hardening plan produces clean dedup and non-null model via live QA against the running acuity instance at .cue/feat-curator-activity-item/tmp/acuity-phase-6a
 
+## [369a0d1] Phase A shipped — acuity per-variant logging + optional file output
+
+Commit 369a0d1 on feat/curator-activity-item. Refactored the tracing subscriber to dual-layer (stderr + optional file). Per-variant INFO fields replace the opaque single info! at the ingest site. DEBUG line adds raw+parsed delta. 39/39 acuity tests pass, clippy clean.
+
+- **Found:** Debug derive already present on all AcuityEvent variants — A1 was a no-op
+- **Found:** Mutex<BufWriter<File>> compiles cleanly as MakeWriter in tracing-subscriber 0.3 with the existing feature set
+- **Found:** The per-layer .with_filter() API works correctly with Option<Layer> in the registry composition
+- **Found:** AcuityEvent local alias (use acuity_schema::AcuityEvent as Ev) inside the match avoids repeating the full path per arm without adding an import at the module level
+- **Decided:** Truncate-on-start for the file layer (write+truncate, not append) — each cargo run is a clean experiment
+- **Decided:** Dual-filter: stderr at RUST_LOG/acuity=info, file at ACUITY_LOG_LEVEL/acuity=debug — terminal stays quiet, file is rich
+- **Decided:** ACUITY_LOG_FILE env var with no default path — user sets it explicitly to a path inside the workspace mount
+- **Decided:** model = ?e.model commented out from agent_turn_completed arm — will be uncommented in B3 after the field is added to the schema
+
+## [abf7772] 369a0d1 + abf7772 — Phase A and schema B3 shipped; plugin work not yet started
+
+Two commits on feat/curator-activity-item:\n\n1. 369a0d1 feat(acuity): structured per-variant logging + optional file output\n   - Dual-layer tracing subscriber: stderr at RUST_LOG/acuity=info; optional file at ACUITY_LOG_LEVEL/acuity=debug.\n   - ACUITY_LOG_FILE env var enables file layer (truncate-on-start, no default path).\n   - Per-variant INFO match replaces single opaque info! at the ingest site.\n   - debug! line with %payload + ?event for raw-vs-parsed triage.\n   - 39/39 acuity tests pass, clippy clean.\n\n2. abf7772 feat(acuity-schema): add model to AgentTurnCompleted\n   - pub model: Option<String> added after output_tokens.\n   - Test helper and raw-JSON deserialize test updated (TDD RED-GREEN).\n   - 25/25 acuity-schema tests pass, clippy clean.\n\nPlugin work (B1 SDK pin, B2 dedup, B4 model capture) not started. Two B3 follow-up tasks also outstanding: regenerate types.ts and add model = ?e.model to the log arm in main.rs.",
+
+- **Found:** Debug derive was already present on all AcuityEvent variants — A1 was a no-op
+- **Found:** Mutex<BufWriter<File>> works cleanly as MakeWriter in tracing-subscriber 0.3 with the existing feature set, no new dependency needed
+- **Found:** Per-layer .with_filter() composes correctly with Option<Layer> in the registry
+- **Found:** The AgentTurnCompleted log arm in 369a0d1 omits model because the field did not exist yet in the schema at that point — the arm needs a follow-up edit after abf7772
+- **Decided:** Truncate-on-start for file layer: each cargo run is a clean experiment
+- **Decided:** Dual-filter: stderr INFO for human, file DEBUG for agent analysis
+- **Decided:** ACUITY_LOG_FILE with no default: user sets explicitly to a workspace-mounted path
+- **Decided:** Curator model ingest deferred until plugin B1-B4 is live-verified via logs
+- **Open:** B3 follow-up: regenerate types.ts (codegen binary)
+- **Open:** B3 follow-up: add model = ?e.model to AgentTurnCompleted arm in main.rs
+- **Open:** B1: pin SDK to 1.17.11 and verify Session type gains agent?/model? fields
+- **Open:** B2: add lastSessionSig dedup Map to plugin session handler
+- **Open:** B4: add model field to AgentTurnCompleted payload in message.updated handler
+- **Open:** Live verification: run acuity with ACUITY_LOG_FILE set and observe per-variant log output
+
+## [f5c1695] Phase B shipped — plugin SDK pin, dedup, model capture; acuity log arm complete
+
+Four commits across two repos complete Phase B of slice6a-logging-and-plugin.md:
+
+Cue repo (1 commit):
+1. f5c1695 feat(acuity): log model field on AgentTurnCompleted
+   - Added `model = ?e.model` to the AgentTurnCompleted INFO log arm (omitted in 369a0d1 because the field didn't exist yet; abf7772 added it to the schema).
+   - Updated the insert_agent_turn_completed_turn_id_populated test helper in db.rs.
+   - 39/39 acuity tests pass, clippy clean.
+
+Cue-plugins repo (3 commits):
+2. f3b11f7 chore(acuity-plugin): pin opencode sdk/plugin to 1.17.11
+   - Pinned @opencode-ai/sdk and @opencode-ai/plugin from '*' (resolved 1.17.9) to 1.17.11.
+   - SDK 1.17.11 Session type STILL omits agent?/model? — defensive casts stay.
+   - Fixed the model cast field name: modelID → id (Session.model runtime shape is { id, providerID }, not { modelID, providerID }). This was a latent bug in the SessionUpdated handler.
+3. db90d51 fix(acuity-plugin): dedup session_updated by metadata signature
+   - Persistent lastSessionSig Map keyed by sessionID, signature over [parent_id, agent, model, title].
+   - Collapses identical consecutive session.created/session.updated events (was producing 5+ identical rows per session).
+   - NOT cleared on idle (unlike the turn/call dedup Map) — duplicates span idle boundaries.
+4. 3aeb835 feat(acuity-plugin): capture resolved model from assistant messages
+   - Added `model: \`${info.providerID}/${info.modelID}\`` to AgentTurnCompleted payload in the message.updated handler.
+   - AssistantMessage has providerID/modelID as required typed fields — no cast, no null guard.
+   - Regenerated types.ts (B3 follow-up) to include the model field.
+
+All commits typecheck clean (tsc --noEmit). Live QA pending: user needs to restart acuity with the new code and trigger an opencode session to verify dedup + model capture via the log file.
+
+- **Found:** SDK 1.17.11 Session type STILL does not declare agent?/model? — the defensive casts in the SessionUpdated handler must stay
+- **Found:** Session.model runtime shape is { id, providerID, variant? }, NOT { modelID, providerID } — the previous cast used modelID which was a latent bug (would always produce null model on SessionUpdated even for explicit-model sessions)
+- **Found:** AssistantMessage in SDK 1.17.11 has modelID: string and providerID: string as required typed fields (types.gen.d.ts:108-109) — no cast needed for B4
+- **Found:** git add -p with `s` (split) cleanly separates adjacent hunks that share context lines — used to split the B1b modelID→id payload fix from the B2 dedup logic in the same handler block
+- **Found:** types.ts regen and B4 model capture are tightly coupled — the regen makes model a required field on AgentTurnCompleted, so the plugin payload must supply it in the same commit or typecheck fails
+- **Decided:** Combined B1b into the B1 commit (f3b11f7) rather than a separate commit — both are SDK-version-driven changes to the same handler
+- **Decided:** Fixed the Session.model cast field name (modelID → id) as part of B1b even though SDK doesn't type the field — the plan's investigation established the runtime shape and the old cast was wrong
+- **Decided:** Committed types.ts regen + B4 together (3aeb835) — the regen creates the type requirement, B4 satisfies it; splitting would leave a non-typechecking intermediate state
+- **Decided:** Kept SessionUpdated.model rather than removing it — cooperates with AgentTurnCompleted.model via curator last-writer-wins, useful for explicit-model sessions
+- **Open:** Live QA: restart acuity with new code, trigger opencode session, verify dedup (session_updated count drops from 5+ to 1-2) and model capture (agent_turn_completed shows model=Some(...)) via log file
+- **Open:** Curator ingest of model from AgentTurnCompleted (hardening plan step 6) — deferred until Phase B is live-verified
+- **Open:** If 1.17.11 SDK later adds agent?/model? to Session type, the casts in SessionUpdated handler can be simplified
+
+## [d590d61] Slice 6a hardening complete — curator model ingest shipped, all steps done
+
+Commit d590d61 on feat/curator-activity-item. Final step of the slice6a-hardening plan (step 6, TDD).
+
+Added last-writer-wins model ingest to the agent_turn_completed match arm in curator's push_event (app.rs:255-259). SessionSummary.model is now populated from both event sources:
+- SessionUpdated (session-level, null for subagent sessions at creation)
+- AgentTurnCompleted (turn-level, always carries the resolved model from AssistantMessage.providerID/modelID)
+
+TDD cycle: RED confirmed (model left as None before the fix), GREEN confirmed (model set from ev.model). 48/48 curator tests pass. Full workspace: 304 tests pass, clippy clean across all crates.
+
+Updated test helpers: turn() in app.rs now includes model: Some("anthropic/claude-sonnet"), activity.rs and ui.rs helpers use model: None (they test layout/summary, not model ingest).
+
+This completes the entire slice6a-hardening plan. All 7 steps are now shipped:
+1. f3b11f7 (cue-plugins) — SDK pin to 1.17.11 + cast field name fix
+2. db90d51 (cue-plugins) — session_updated dedup
+3. f5c1695 (cue) — acuity log arm for model field
+4. abf7772 (cue, earlier) — schema model field on AgentTurnCompleted
+5. 3aeb835 (cue-plugins) — model capture from assistant messages
+6. d590d61 (cue) — curator ingest of model
+
+Live QA confirmed all fixes working: dedup collapsed session_updated from 5+ to 2 per session, model captures correctly on every agent_turn_completed (including subagents with google/gemini-3-flash-preview), wire-vs-deser delta clean.
+
+- **Found:** Three other test helpers (activity.rs x2, ui.rs x1) construct AgentTurnCompleted and needed model: None added — the schema field added in abf7772 is required, not optional in the struct literal
+- **Found:** The existing session_updated model handler (app.rs:242-243) already uses the same if-let-Some pattern, so the agent_turn_completed handler mirrors it exactly for consistency
+- **Decided:** Model ingest uses last-writer-wins (same as session_updated handler) — AgentTurnCompleted.model and SessionUpdated.model cooperate, whichever fires last with Some wins
+- **Decided:** turn() test helper gets model: Some(...) (realistic value for model-ingest tests), while activity.rs and ui.rs helpers get model: None (they test layout/summary formatting, not model ingest)
+
+## [d590d61] State-of-branch snapshot for handoff — spec/index.md created, all plans consistent
+
+All Slice 6a work (collection + logging + hardening) is shipped, live-verified, and marked complete. The branch is ready for Slice 6b (rendering).
+
+Created spec/index.md as the anchor document for this branch — a fresh agent should read that first for the complete picture.
+
+Git state:
+- cue repo (feat/curator-activity-item): HEAD at d590d61, 2 commits ahead of origin
+- cue-plugins repo (master): HEAD at 3aeb835
+
+All plan statuses verified consistent:
+- slice5-activity-item: complete
+- slice6-review-fixes: complete
+- slice6a-collection: complete
+- slice6a-hardening: complete
+- slice6a-logging-and-plugin: complete
+- slice6b-rendering: open (the next step)
+
+Next work item: Slice 6b rendering (plan/1782659497-0c2ff37/slice6b-rendering.md). The plan is intentionally light — it needs fleshing out now that 6a's live data is in hand. Key goals: kill the 8-char session-id truncation (ui.rs:214), surface title+agent+model+lineage in headers, add dev debug columns. Retains flat reverse-chrono layout; nested tree is stage C.
+
+- **Found:** spec/index.md did not exist for this branch — the only spec artifact was log.md. A fresh agent following the cue skill would look for spec/index.md first and find nothing
+- **Found:** slice6a-collection.md was still marked status: open despite being fully shipped — corrected to complete
+- **Found:** All 6 plans now have consistent statuses: 5 complete, 1 open (slice6b-rendering, the next step)
+- **Decided:** Created spec/index.md as the branch anchor document — it was missing and a fresh agent had no single document to understand the branch intent and current state
+- **Decided:** Marked slice6a-collection.md as complete — it was still open despite all steps being shipped and superseded by the hardening plan
+

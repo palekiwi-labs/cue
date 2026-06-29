@@ -15,3 +15,13 @@ For example:
   of work.
 - plans are related to tasks which are releated to specs which can be
   related to traces, todos, etc.
+
+Would it be possible for us to design and build such a service ourselves
+that is based on a graph database?
+
+I have clone the gh repo of a Rust crate for `neo4j` for reference in:
+`/home/pl/code/palekiwi-labs/cue/.ref/neo4rs/README.md`
+
+other related notes:
+- /home/pl/code/palekiwi-labs/cue/.cue/master/note/acumen-with-graph-db.md
+- /home/pl/code/palekiwi-labs/cue/.cue/master/note/acumen/cue-context-with-graph-db.md
