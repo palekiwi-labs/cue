@@ -255,6 +255,9 @@ impl App {
                 {
                     entry.input_tokens += ev.input_tokens.unwrap_or(0) as u64;
                     entry.output_tokens += ev.output_tokens.unwrap_or(0) as u64;
+                    if let Some(m) = &ev.model {
+                        entry.model = Some(m.clone());
+                    }
                 }
             }
             "tool_call_completed" => {
@@ -471,6 +474,7 @@ mod tests {
                 harness: "opencode".to_string(),
                 input_tokens: Some(input),
                 output_tokens: Some(output),
+                model: Some("anthropic/claude-sonnet".to_string()),
             }),
         )
     }
@@ -688,6 +692,16 @@ mod tests {
         assert_eq!(s.agent, None);
         assert_eq!(s.model, None);
         assert_eq!(s.session_title, None);
+    }
+
+    #[test]
+    fn agent_turn_completed_sets_model() {
+        let mut app = empty_app();
+        app.push_event(turn(1, "s1", 100, 200));
+        assert_eq!(
+            app.sessions["s1"].model.as_deref(),
+            Some("anthropic/claude-sonnet")
+        );
     }
 
     // --- diagnostics_len ---

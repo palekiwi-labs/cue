@@ -227,6 +227,7 @@ mod tests {
                 harness: "opencode".to_string(),
                 input_tokens: Some(10),
                 output_tokens: Some(20),
+                model: None,
             }),
         )
     }
@@ -554,6 +555,7 @@ mod tests {
                 harness: "opencode".to_string(),
                 input_tokens: Some(10),
                 output_tokens: Some(20),
+                model: None,
             }),
         )];
         let items = build(events);
