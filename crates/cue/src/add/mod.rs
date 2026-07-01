@@ -102,22 +102,61 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
     Ok(file_path)
 }
 
+/// Coerce a raw frontmatter string into a YAML scalar value.
+///
+/// Booleans, integers, and floats are recognized so they serialize unquoted
+/// (e.g. `count=3` -> `count: 3`). Any value that would parse as a YAML
+/// collection (Mapping/Sequence/Tagged) is forced back to a plain string so
+/// that values like `title=foo: bar` round-trip as a quoted scalar instead of
+/// being re-interpreted as structure. An empty value yields the empty string,
+/// not YAML `null`.
+fn coerce_scalar(v: &str) -> serde_yaml::Value {
+    if v.is_empty() {
+        return serde_yaml::Value::String(String::new());
+    }
+    match serde_yaml::from_str::<serde_yaml::Value>(v) {
+        Ok(serde_yaml::Value::Mapping(_))
+        | Ok(serde_yaml::Value::Sequence(_))
+        | Ok(serde_yaml::Value::Tagged(_)) => serde_yaml::Value::String(v.to_string()),
+        Ok(val) => val,
+        Err(_) => serde_yaml::Value::String(v.to_string()),
+    }
+}
+
+/// Serialize frontmatter fields into a `---\n...\n---\n` byte block.
+///
+/// A key supplied once becomes a scalar; a key repeated two or more times
+/// becomes a YAML Sequence of coerced scalars (in encounter order). Keys are
+/// emitted in first-seen order (`serde_yaml::Mapping` preserves insertion
+/// order). This is field-agnostic: the same rule applies to any key.
 pub fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
     let mut map = serde_yaml::Mapping::new();
     for (k, v) in fields {
-        // Parse the raw string to allow scalar type coercion (bool, int,
-        // float). However, if the parse yields a collection type (Mapping,
-        // Sequence, or Tagged) the user supplied a plain string that happens
-        // to contain YAML collection syntax. Force it back to a String so
-        // that serde_yaml will emit it as a properly quoted scalar.
-        let yaml_val: serde_yaml::Value = match serde_yaml::from_str(v) {
-            Ok(serde_yaml::Value::Mapping(_))
-            | Ok(serde_yaml::Value::Sequence(_))
-            | Ok(serde_yaml::Value::Tagged(_)) => serde_yaml::Value::String(v.clone()),
-            Ok(val) => val,
-            Err(_) => serde_yaml::Value::String(v.clone()),
-        };
-        map.insert(serde_yaml::Value::String(k.clone()), yaml_val);
+        let key = serde_yaml::Value::String(k.clone());
+        let elem = coerce_scalar(v);
+        match map.get_mut(&key) {
+            None => {
+                // First occurrence: store as a scalar. Its slot is fixed here
+                // and never moves, so first-seen key order is preserved.
+                map.insert(key, elem);
+            }
+            Some(existing) => {
+                // Second+ occurrence: promote the scalar to a Sequence and
+                // append, preserving encounter order within the key.
+                if let serde_yaml::Value::Sequence(seq) = existing {
+                    seq.push(elem);
+                } else {
+                    let first = std::mem::replace(
+                        existing,
+                        serde_yaml::Value::Sequence(Vec::with_capacity(2)),
+                    );
+                    if let serde_yaml::Value::Sequence(seq) = existing {
+                        seq.push(first);
+                        seq.push(elem);
+                    }
+                }
+            }
+        }
     }
     let yaml_str =
         serde_yaml::to_string(&map).context("Failed to serialize frontmatter to YAML")?;
