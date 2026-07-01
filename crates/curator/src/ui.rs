@@ -441,6 +441,7 @@ mod tests {
                 harness: "opencode".to_string(),
                 input_tokens: Some(100),
                 output_tokens: Some(200),
+                model: None,
             }),
         );
         assert_eq!(event_summary(&record), "turn: in=100 out=200");

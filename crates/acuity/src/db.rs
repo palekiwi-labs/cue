@@ -366,6 +366,7 @@ mod tests {
             harness: "opencode".into(),
             input_tokens: Some(120),
             output_tokens: Some(340),
+            model: None,
         });
         let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","input_tokens":120,"output_tokens":340}"#;
 
