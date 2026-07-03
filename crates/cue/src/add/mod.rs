@@ -106,9 +106,11 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
 ///
 /// Booleans, integers, and floats are recognized so they serialize unquoted
 /// (e.g. `count=3` -> `count: 3`). Any value that would parse as a YAML
-/// collection (Mapping/Sequence/Tagged) is forced back to a plain string so
-/// that values like `title=foo: bar` round-trip as a quoted scalar instead of
-/// being re-interpreted as structure. An empty value yields the empty string,
+/// collection (Mapping/Sequence/Tagged) or as YAML `null` (the tokens `null`,
+/// `~`, `Null`, `NULL`, a comment-only `#...`, or whitespace-only input) is
+/// forced back to a plain string so that values like `title=foo: bar` and
+/// `status=null` round-trip as quoted scalars instead of being re-interpreted
+/// as structure or as an absent value. An empty value yields the empty string,
 /// not YAML `null`.
 fn coerce_scalar(v: &str) -> serde_yaml::Value {
     if v.is_empty() {
@@ -117,7 +119,8 @@ fn coerce_scalar(v: &str) -> serde_yaml::Value {
     match serde_yaml::from_str::<serde_yaml::Value>(v) {
         Ok(serde_yaml::Value::Mapping(_))
         | Ok(serde_yaml::Value::Sequence(_))
-        | Ok(serde_yaml::Value::Tagged(_)) => serde_yaml::Value::String(v.to_string()),
+        | Ok(serde_yaml::Value::Tagged(_))
+        | Ok(serde_yaml::Value::Null) => serde_yaml::Value::String(v.to_string()),
         Ok(val) => val,
         Err(_) => serde_yaml::Value::String(v.to_string()),
     }

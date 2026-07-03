@@ -1427,3 +1427,110 @@ fn test_add_frontmatter_list_value_with_equals() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_add_frontmatter_null_keyword_stays_string() -> anyhow::Result<()> {
+    // YAML null tokens (`null`, `~`, `Null`, `NULL`) and comment-only values
+    // (`#c`) must round-trip as literal strings, NOT coerce to YAML null.
+    // Otherwise a user-supplied `-f k=null` silently becomes `k: null`.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("status=null")
+        .arg("-f")
+        .arg("tilde=~")
+        .arg("-f")
+        .arg("comment=#c")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    // Each value must parse back as a string equal to the literal input.
+    assert_eq!(
+        fm["status"].as_str(),
+        Some("null"),
+        "`null` must stay a string; got: {:?}",
+        fm["status"]
+    );
+    assert_eq!(
+        fm["tilde"].as_str(),
+        Some("~"),
+        "`~` must stay a string; got: {:?}",
+        fm["tilde"]
+    );
+    assert_eq!(
+        fm["comment"].as_str(),
+        Some("#c"),
+        "`#c` must stay a string; got: {:?}",
+        fm["comment"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_list_does_not_inject_null() -> anyhow::Result<()> {
+    // A null token as a repeated-key element must NOT inject a YAML null into
+    // the middle of the sequence. `refs=a.md -f refs=~ -f refs=b.md` must yield
+    // ["a.md", "~", "b.md"] as strings, never [a.md, null, b.md].
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("refs=a.md")
+        .arg("-f")
+        .arg("refs=~")
+        .arg("-f")
+        .arg("refs=b.md")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    let seq = fm["refs"].as_sequence().expect("refs should be a sequence");
+    assert_eq!(seq.len(), 3, "got: {:?}", seq);
+    assert_eq!(seq[0].as_str(), Some("a.md"));
+    assert_eq!(
+        seq[1].as_str(),
+        Some("~"),
+        "`~` element must stay a string, not null; got: {:?}",
+        seq[1]
+    );
+    assert_eq!(seq[2].as_str(), Some("b.md"));
+
+    Ok(())
+}
