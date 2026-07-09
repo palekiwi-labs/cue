@@ -71,7 +71,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
                 return Ok(()); // Silently exit
             }
 
-            let log_file_path = cue_path.join(&branch_dir).join("spec").join("log.md");
+            let log_file_path = cue_path.join(&branch_dir).join("log.md");
 
             match fs::read_to_string(&log_file_path) {
                 Ok(content) => print!("{}", content),

@@ -26,9 +26,9 @@ fn test_log_add_basic() -> anyhow::Result<()> {
         .arg("Test Title")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/main/spec/log.md\n"));
+        .stdout(predicate::str::diff(".test-mem/main/log.md\n"));
 
-    let log_path = env.root().join(".test-mem/main/spec/log.md");
+    let log_path = env.root().join(".test-mem/main/log.md");
     let content = fs::read_to_string(&log_path)?;
 
     assert!(content.contains("# Project Log"));
@@ -93,7 +93,7 @@ fn test_log_add_from_file() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let log_path = env.root().join(".test-mem/main/spec/log.md");
+    let log_path = env.root().join(".test-mem/main/log.md");
     let content = fs::read_to_string(&log_path)?;
 
     assert!(content.contains("JSON Title"));
@@ -225,11 +225,9 @@ fn test_log_add_file_with_branch() -> anyhow::Result<()> {
         .arg("feature/other")
         .assert()
         .success()
-        .stdout(predicate::str::diff(
-            ".test-mem/feature-other/spec/log.md\n",
-        ));
+        .stdout(predicate::str::diff(".test-mem/feature-other/log.md\n"));
 
-    let log_path = env.root().join(".test-mem/feature-other/spec/log.md");
+    let log_path = env.root().join(".test-mem/feature-other/log.md");
     let content = fs::read_to_string(&log_path)?;
     assert!(content.contains("File Branch Title"));
 
@@ -319,18 +317,16 @@ fn test_log_add_with_explicit_branch() -> anyhow::Result<()> {
         .arg("feature/other")
         .assert()
         .success()
-        .stdout(predicate::str::diff(
-            ".test-mem/feature-other/spec/log.md\n",
-        ));
+        .stdout(predicate::str::diff(".test-mem/feature-other/log.md\n"));
 
-    let log_path = env.root().join(".test-mem/feature-other/spec/log.md");
+    let log_path = env.root().join(".test-mem/feature-other/log.md");
     let content = fs::read_to_string(&log_path)?;
 
     assert!(content.contains("# Project Log"));
     assert!(content.contains("Branch Entry"));
 
     // Verify main branch log does not have this entry
-    let main_log = env.root().join(".test-mem/main/spec/log.md");
+    let main_log = env.root().join(".test-mem/main/log.md");
     assert!(!main_log.exists());
 
     Ok(())
