@@ -1534,3 +1534,96 @@ fn test_add_frontmatter_list_does_not_inject_null() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_add_frontmatter_list_collection_element_degrades_to_string() -> anyhow::Result<()> {
+    // An element whose text parses as a YAML collection (e.g. "[x, y]") must be
+    // forced to a literal string element-wise, exactly like the scalar colon
+    // case. This proves the collection guard applies to *each* element, not
+    // just the first or just the colon case.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("tags=alpha")
+        .arg("-f")
+        .arg("tags=[x, y]")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    let seq = fm["tags"].as_sequence().expect("tags should be a sequence");
+    assert_eq!(seq.len(), 2, "got: {:?}", seq);
+    assert_eq!(seq[0].as_str(), Some("alpha"));
+    assert_eq!(
+        seq[1].as_str(),
+        Some("[x, y]"),
+        "collection-like element must stay a string, not nest; got: {:?}",
+        seq[1]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_list_empty_element_stays_empty_string() -> anyhow::Result<()> {
+    // An empty value supplied for a repeated key must produce the empty string
+    // as that element (via the is_empty guard), never YAML null and never a
+    // skipped slot. `-f k= -f k=b` -> ["", "b"].
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("tags=")
+        .arg("-f")
+        .arg("tags=b")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    let seq = fm["tags"].as_sequence().expect("tags should be a sequence");
+    assert_eq!(seq.len(), 2, "got: {:?}", seq);
+    assert_eq!(
+        seq[0].as_str(),
+        Some(""),
+        "empty first element must be the empty string, not null; got: {:?}",
+        seq[0]
+    );
+    assert_eq!(seq[1].as_str(), Some("b"));
+
+    Ok(())
+}
