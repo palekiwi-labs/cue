@@ -1161,3 +1161,469 @@ fn test_add_rejects_path_traversal() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+// ── Frontmatter array values (repeated key → Sequence) ─────────────────────
+
+/// Extract the YAML frontmatter block (between `---` fences) from raw file
+/// content and parse it into a `serde_yaml::Value`. Panics if the fences are
+/// missing or the block is not valid YAML.
+fn parse_fm(raw: &str) -> serde_yaml::Value {
+    let start = raw.find("---\n").expect("opening fence") + 4;
+    let end = raw[start..].find("---\n").expect("closing fence") + start;
+    serde_yaml::from_str(&raw[start..end]).expect("frontmatter must be valid YAML")
+}
+
+#[test]
+fn test_add_frontmatter_repeated_key_becomes_list() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("refs=a.md")
+        .arg("-f")
+        .arg("refs=b.md")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    let seq = fm["refs"].as_sequence().expect("refs should be a sequence");
+    assert_eq!(seq.len(), 2, "refs should hold both values; got: {:?}", seq);
+    assert_eq!(seq[0].as_str(), Some("a.md"), "first element order");
+    assert_eq!(seq[1].as_str(), Some("b.md"), "second element order");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_single_key_stays_scalar() -> anyhow::Result<()> {
+    // A key supplied once MUST remain a scalar, not a one-element list.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("refs=a.md")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    assert!(
+        fm["refs"].as_sequence().is_none(),
+        "single occurrence must stay scalar; got: {:?}",
+        fm["refs"]
+    );
+    assert_eq!(fm["refs"].as_str(), Some("a.md"));
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_list_element_coercion() -> anyhow::Result<()> {
+    // Repeated values coerce element-wise the same way scalars do
+    // (string / bool / int), and never nest into collections.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("tags=alpha")
+        .arg("-f")
+        .arg("tags=true")
+        .arg("-f")
+        .arg("tags=3")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    let seq = fm["tags"].as_sequence().expect("tags should be a sequence");
+    assert_eq!(seq.len(), 3, "got: {:?}", seq);
+    assert_eq!(seq[0].as_str(), Some("alpha"));
+    assert_eq!(seq[1].as_bool(), Some(true), "bool coercion per element");
+    assert_eq!(seq[2].as_i64(), Some(3), "int coercion per element");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_list_preserves_key_order() -> anyhow::Result<()> {
+    // First-seen key order is preserved, and repeated values keep their
+    // encounter order within the sequence.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("alpha=1")
+        .arg("-f")
+        .arg("refs=x")
+        .arg("-f")
+        .arg("beta=2")
+        .arg("-f")
+        .arg("refs=y")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+
+    // Top-level keys emit in first-seen order: alpha, refs, beta.
+    let pos_alpha = raw.find("alpha:").expect("alpha key");
+    let pos_refs = raw.find("refs:").expect("refs key");
+    let pos_beta = raw.find("beta:").expect("beta key");
+    assert!(pos_alpha < pos_refs, "alpha before refs");
+    assert!(pos_refs < pos_beta, "refs before beta");
+
+    let fm = parse_fm(&raw);
+    let seq = fm["refs"].as_sequence().expect("refs should be a sequence");
+    assert_eq!(seq.len(), 2);
+    assert_eq!(seq[0].as_str(), Some("x"));
+    assert_eq!(seq[1].as_str(), Some("y"));
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_list_element_with_colon_stays_quoted() -> anyhow::Result<()> {
+    // The colon-protection guard (see test_add_frontmatter_colon_in_string_value)
+    // must apply element-wise so values like "foo: bar" round-trip as strings.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("notes=foo: bar")
+        .arg("-f")
+        .arg("notes=baz: qux")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    let seq = fm["notes"]
+        .as_sequence()
+        .expect("notes should be a sequence");
+    assert_eq!(seq.len(), 2);
+    assert_eq!(seq[0].as_str(), Some("foo: bar"));
+    assert_eq!(seq[1].as_str(), Some("baz: qux"));
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_list_value_with_equals() -> anyhow::Result<()> {
+    // split_once('=') keeps everything after the first '=' in the value,
+    // including further '=' characters. Must hold in the array path too.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("pairs=a=b")
+        .arg("-f")
+        .arg("pairs=c=d")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    let seq = fm["pairs"]
+        .as_sequence()
+        .expect("pairs should be a sequence");
+    assert_eq!(seq.len(), 2);
+    assert_eq!(seq[0].as_str(), Some("a=b"));
+    assert_eq!(seq[1].as_str(), Some("c=d"));
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_null_keyword_stays_string() -> anyhow::Result<()> {
+    // YAML null tokens (`null`, `~`, `Null`, `NULL`) and comment-only values
+    // (`#c`) must round-trip as literal strings, NOT coerce to YAML null.
+    // Otherwise a user-supplied `-f k=null` silently becomes `k: null`.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("status=null")
+        .arg("-f")
+        .arg("tilde=~")
+        .arg("-f")
+        .arg("comment=#c")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    // Each value must parse back as a string equal to the literal input.
+    assert_eq!(
+        fm["status"].as_str(),
+        Some("null"),
+        "`null` must stay a string; got: {:?}",
+        fm["status"]
+    );
+    assert_eq!(
+        fm["tilde"].as_str(),
+        Some("~"),
+        "`~` must stay a string; got: {:?}",
+        fm["tilde"]
+    );
+    assert_eq!(
+        fm["comment"].as_str(),
+        Some("#c"),
+        "`#c` must stay a string; got: {:?}",
+        fm["comment"]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_list_does_not_inject_null() -> anyhow::Result<()> {
+    // A null token as a repeated-key element must NOT inject a YAML null into
+    // the middle of the sequence. `refs=a.md -f refs=~ -f refs=b.md` must yield
+    // ["a.md", "~", "b.md"] as strings, never [a.md, null, b.md].
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("refs=a.md")
+        .arg("-f")
+        .arg("refs=~")
+        .arg("-f")
+        .arg("refs=b.md")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    let seq = fm["refs"].as_sequence().expect("refs should be a sequence");
+    assert_eq!(seq.len(), 3, "got: {:?}", seq);
+    assert_eq!(seq[0].as_str(), Some("a.md"));
+    assert_eq!(
+        seq[1].as_str(),
+        Some("~"),
+        "`~` element must stay a string, not null; got: {:?}",
+        seq[1]
+    );
+    assert_eq!(seq[2].as_str(), Some("b.md"));
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_list_collection_element_degrades_to_string() -> anyhow::Result<()> {
+    // An element whose text parses as a YAML collection (e.g. "[x, y]") must be
+    // forced to a literal string element-wise, exactly like the scalar colon
+    // case. This proves the collection guard applies to *each* element, not
+    // just the first or just the colon case.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("tags=alpha")
+        .arg("-f")
+        .arg("tags=[x, y]")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    let seq = fm["tags"].as_sequence().expect("tags should be a sequence");
+    assert_eq!(seq.len(), 2, "got: {:?}", seq);
+    assert_eq!(seq[0].as_str(), Some("alpha"));
+    assert_eq!(
+        seq[1].as_str(),
+        Some("[x, y]"),
+        "collection-like element must stay a string, not nest; got: {:?}",
+        seq[1]
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_add_frontmatter_list_empty_element_stays_empty_string() -> anyhow::Result<()> {
+    // An empty value supplied for a repeated key must produce the empty string
+    // as that element (via the is_empty guard), never YAML null and never a
+    // skipped slot. `-f k= -f k=b` -> ["", "b"].
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("note.md")
+        .arg("body")
+        .arg("-f")
+        .arg("tags=")
+        .arg("-f")
+        .arg("tags=b")
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let raw = fs::read_to_string(file_path)?;
+    let fm = parse_fm(&raw);
+
+    let seq = fm["tags"].as_sequence().expect("tags should be a sequence");
+    assert_eq!(seq.len(), 2, "got: {:?}", seq);
+    assert_eq!(
+        seq[0].as_str(),
+        Some(""),
+        "empty first element must be the empty string, not null; got: {:?}",
+        seq[0]
+    );
+    assert_eq!(seq[1].as_str(), Some("b"));
+
+    Ok(())
+}
