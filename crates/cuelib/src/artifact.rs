@@ -9,11 +9,20 @@ const FRONTMATTER_MAX_LINES: usize = 64;
 
 /// Canonical artifact types supported by cue out of the box.
 pub const CANONICAL_TYPES: &[&str] = &[
-    "spec", "plan", "trace", "doc", "todo", "bin", "tmp", "ref", "task", "note",
+    "bin",
+    "doc",
+    "note",
+    "plan",
+    "ref",
+    "spec",
+    "task",
+    "tmp",
+    "todo",
+    "trace",
 ];
 
 /// Default artifact types that are gitignored and not listed.
-pub const DEFAULT_IGNORED_TYPES: &[&str] = &["tmp", "ref"];
+pub const DEFAULT_IGNORED_TYPES: &[&str] = &["ref", "tmp", ];
 
 /// Canonical status values for todo artifacts, in kanban column order.
 #[derive(Debug, Clone, PartialEq, Eq)]
