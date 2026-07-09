@@ -1,6 +1,7 @@
+use crate::artifact::CANONICAL_TYPES;
 use figment::{
-    providers::{Env, Format, Json, Serialized},
     Figment,
+    providers::{Env, Format, Json, Serialized},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -35,7 +36,7 @@ impl Default for Config {
         Self {
             branch_name: "cue".into(),
             dir_name: ".cue".into(),
-            artifact_types: vec!["spec".into(), "trace".into(), "tmp".into(), "note".into()],
+            artifact_types: CANONICAL_TYPES.iter().map(|&s| s.to_string()).collect(),
             ignored_types: vec!["tmp".into()],
             context: HashMap::new(),
         }
@@ -71,7 +72,15 @@ mod tests {
     #[test]
     fn test_default_artifact_types() {
         let config = Config::default();
-        assert_eq!(config.artifact_types, vec!["spec", "trace", "tmp", "note"]);
+        // Defaults mirror the canonical artifact types
+        // (artifact.rs::CANONICAL_TYPES): every canonical type is a valid add
+        // target out of the box. Configuring a subset is done via cue.json.
+        assert_eq!(
+            config.artifact_types,
+            vec![
+                "spec", "plan", "trace", "doc", "todo", "bin", "tmp", "ref", "task", "note",
+            ]
+        );
     }
 
     #[test]
