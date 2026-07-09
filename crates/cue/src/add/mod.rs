@@ -145,17 +145,18 @@ pub fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
             }
             Some(existing) => {
                 // Second+ occurrence: promote the scalar to a Sequence and
-                // append, preserving encounter order within the key.
-                if let serde_yaml::Value::Sequence(seq) = existing {
-                    seq.push(elem);
-                } else {
-                    let first = std::mem::replace(
-                        existing,
-                        serde_yaml::Value::Sequence(Vec::with_capacity(2)),
-                    );
-                    if let serde_yaml::Value::Sequence(seq) = existing {
-                        seq.push(first);
-                        seq.push(elem);
+                // append, preserving encounter order within the key. We mutate
+                // in place through the existing reference so the key's slot
+                // (and thus first-seen order) never moves. The match is total:
+                // each arm fully handles its case, so there is no fallible or
+                // data-losing branch.
+                match existing {
+                    serde_yaml::Value::Sequence(seq) => seq.push(elem),
+                    other => {
+                        // Move the scalar out (leaving the default Null) and
+                        // rebuild the slot as a fresh two-element Sequence.
+                        let first = std::mem::take(other);
+                        *other = serde_yaml::Value::Sequence(vec![first, elem]);
                     }
                 }
             }
