@@ -61,7 +61,7 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
     }
     let branch_dir = git::sanitize_branch_name(&branch);
 
-    let log_file_path = cue_path.join(&branch_dir).join("spec").join("log.md");
+    let log_file_path = cue_path.join(&branch_dir).join("log.md");
 
     // 4. Open file and get metadata (to check if it's new) before building markdown
     if let Some(parent) = log_file_path.parent() {
