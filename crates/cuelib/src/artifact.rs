@@ -13,7 +13,7 @@ pub const CANONICAL_TYPES: &[&str] = &[
 ];
 
 /// Default artifact types that are gitignored and not listed.
-pub const DEFAULT_IGNORED_TYPES: &[&str] = &["tmp", "bin"];
+pub const DEFAULT_IGNORED_TYPES: &[&str] = &["tmp", "ref"];
 
 /// Canonical status values for todo artifacts, in kanban column order.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -297,7 +297,7 @@ mod tests {
 
     #[test]
     fn default_ignored_types() {
-        assert_eq!(DEFAULT_IGNORED_TYPES, &["tmp", "bin"]);
+        assert_eq!(DEFAULT_IGNORED_TYPES, &["tmp", "ref"]);
     }
 
     // ── TodoStatus ────────────────────────────────────────────────────────────

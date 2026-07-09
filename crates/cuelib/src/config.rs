@@ -1,4 +1,4 @@
-use crate::artifact::CANONICAL_TYPES;
+use crate::artifact::{CANONICAL_TYPES, DEFAULT_IGNORED_TYPES};
 use figment::{
     Figment,
     providers::{Env, Format, Json, Serialized},
@@ -37,7 +37,10 @@ impl Default for Config {
             branch_name: "cue".into(),
             dir_name: ".cue".into(),
             artifact_types: CANONICAL_TYPES.iter().map(|&s| s.to_string()).collect(),
-            ignored_types: vec!["tmp".into()],
+            ignored_types: DEFAULT_IGNORED_TYPES
+                .iter()
+                .map(|&s| s.to_string())
+                .collect(),
             context: HashMap::new(),
         }
     }
@@ -86,7 +89,10 @@ mod tests {
     #[test]
     fn test_default_ignored_types() {
         let config = Config::default();
-        assert_eq!(config.ignored_types, vec!["tmp"]);
+        // Defaults mirror the canonical ignored types
+        // (artifact.rs::DEFAULT_IGNORED_TYPES): tmp and ref are excluded from
+        // `cue list` and gitignored by the cue worktree init out of the box.
+        assert_eq!(config.ignored_types, vec!["tmp", "ref"]);
     }
 
     #[test]

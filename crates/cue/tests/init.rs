@@ -22,9 +22,14 @@ fn test_init_fresh_repo() -> anyhow::Result<()> {
     assert!(mem_dir.join(".gitignore").exists());
     assert!(mem_dir.join(".rgignore").exists());
 
-    // Default gitignore covers the default ignored_types: ["tmp"]
+    // Default gitignore covers the default ignored_types: ["tmp", "ref"]
     let gitignore = fs::read_to_string(mem_dir.join(".gitignore"))?;
     assert!(gitignore.contains("*/tmp/"));
+    assert!(gitignore.contains("*/ref/"));
+
+    let rgignore = fs::read_to_string(mem_dir.join(".rgignore"))?;
+    assert!(rgignore.contains("!*/tmp/"));
+    assert!(rgignore.contains("!*/ref/"));
 
     Ok(())
 }
