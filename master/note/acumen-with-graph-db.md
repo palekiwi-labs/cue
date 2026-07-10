@@ -1,6 +1,7 @@
 ---
 title: acumen with graph db
-status: open
+status: closed
+dissolved_into: "master/spec/acumen/index.md"
 ---
 Instead of a typical RAG that excells at semantic search,
 why not consider a solution that is based on a graph database?

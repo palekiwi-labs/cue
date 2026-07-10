@@ -1,5 +1,6 @@
 ---
-status: open
+status: closed
+dissolved_into: "master/spec/acumen/index.md"
 ---
 We currently use `cue context` subcommand to inject a manually
 composed combination of files into the context of the agent.

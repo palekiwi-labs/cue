@@ -271,3 +271,30 @@ Next work item: Slice 6b rendering (plan/1782659497-0c2ff37/slice6b-rendering.md
 - **Decided:** Created spec/index.md as the branch anchor document — it was missing and a fresh agent had no single document to understand the branch intent and current state
 - **Decided:** Marked slice6a-collection.md as complete — it was still open despite all steps being shipped and superseded by the hardening plan
 
+## [d590d61] acumen design discussion concluded, artifacts written
+
+Extended design discussion for the `acumen` graph index crate. Two external consultants (Opus, GLM) reviewed the design and surfaced critical gaps. The design was revised and finalized in response.
+
+- **Found:** refs: field does not exist anywhere in the current corpus -- relationships are in prose ## Source sections only
+- **Found:** acuity is telemetry-only today; cannot drive corpus sync without a new CorpusChanged event type
+- **Found:** neo4rs is not present in any Cargo.toml; Neo4j was not as established a dependency as assumed
+- **Found:** COLOCATED edges would be O(n^2) per dir with low signal value -- dropped
+- **Found:** Non-markdown artifacts (json, sh, log) have no frontmatter -- all frontmatter-derived node fields must be nullable
+- **Found:** The .cue/ worktree is an orphan branch of the same repo, not a separate repository
+- **Decided:** Use SQLite as the graph backend (embedded, daemon-free, .cue/.acumen/graph.db, gitignored)
+- **Decided:** Graph DB is a materialized view -- fully deterministically reconstructable from committed .cue/ markdown files alone
+- **Decided:** refs: as a flat list of paths in frontmatter -- no typed relationship syntax
+- **Decided:** git_branch: field in spec/index.md only, written by branch-init shell script
+- **Decided:** No updated: frontmatter field -- source updated_at from git log / fs mtime
+- **Decided:** PRECEDES edges only for plan/ and trace/ types where sequence is meaningful
+- **Decided:** COLOCATED edges dropped entirely
+- **Decided:** Full rebuild sync strategy (idempotent); manual trigger for MVP
+- **Decided:** GraphBackend trait keeps Neo4j as a future option
+- **Decided:** acuity CorpusChanged event is a valid future evolution target, not MVP
+- **Decided:** Gardening delegated to LLM agents, not programmatic for now
+- **Decided:** Semantic search deferred
+- **Decided:** Handoff skill: new concept, runs at session end, ensures spec/index.md and refs: are complete
+- **Open:** Phase 0 (refs: in RawFrontmatter + branch-init script) has not been started
+- **Open:** Handoff skill needs to be written in cue-plugins
+- **Open:** acumen crate does not exist in the workspace yet
+

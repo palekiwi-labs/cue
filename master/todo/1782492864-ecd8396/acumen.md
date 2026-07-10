@@ -1,7 +1,8 @@
 ---
 priority: normal
 title: acumen
-status: open
+status: closed
+dissolved_into: "master/spec/acumen/index.md"
 ---
 the "cue" framework produces a lot of content that eventually
 piles up and is increasingly difficult for the agent to query
