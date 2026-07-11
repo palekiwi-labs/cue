@@ -112,6 +112,18 @@ pub struct SessionSummary {
     pub agent: Option<String>,
     /// Flat `"providerID/modelID"` string. Last-writer-wins.
     pub model: Option<String>,
+    /// Count of visible (non-hidden) events for this session currently in
+    /// the ring buffer. Maintained incrementally in `push_event` (increment
+    /// on append, decrement on eviction) so `session_event_len` is O(1).
+    pub visible_event_count: u32,
+    /// Unique agent identifiers seen for this session, in first-seen order.
+    /// Accumulated in `push_event`; survives ring-buffer eviction (unlike
+    /// the old scan-the-ring-buffer approach which lost data on eviction).
+    pub unique_agents: Vec<String>,
+    /// Unique model identifiers seen for this session, in first-seen order.
+    /// Accumulated in `push_event` from both `session_updated` and
+    /// `agent_turn_completed` events.
+    pub unique_models: Vec<String>,
 }
 
 /// Maximum number of events retained in the ring buffer.
@@ -227,6 +239,9 @@ impl App {
                 parent_id: None,
                 agent: None,
                 model: None,
+                visible_event_count: 0,
+                unique_agents: Vec::new(),
+                unique_models: Vec::new(),
             });
 
         // Always update last_seen if this event is newer.
@@ -263,9 +278,15 @@ impl App {
                     }
                     if let Some(v) = &ev.agent {
                         entry.agent = Some(v.clone());
+                        if !entry.unique_agents.contains(v) {
+                            entry.unique_agents.push(v.clone());
+                        }
                     }
                     if let Some(v) = &ev.model {
                         entry.model = Some(v.clone());
+                        if !entry.unique_models.contains(v) {
+                            entry.unique_models.push(v.clone());
+                        }
                     }
                     // parent_id is set-once-if-some: a later null must not
                     // clobber a known parent (mirrors the project_dir guard).
@@ -282,6 +303,9 @@ impl App {
                     entry.output_tokens += ev.output_tokens.unwrap_or(0) as u64;
                     if let Some(m) = &ev.model {
                         entry.model = Some(m.clone());
+                        if !entry.unique_models.contains(m) {
+                            entry.unique_models.push(m.clone());
+                        }
                     }
                 }
             }
@@ -297,12 +321,23 @@ impl App {
         }
 
         // --- 2. Evict oldest if at capacity ---
-        if self.events.len() >= EVENT_CAP {
-            self.events.pop_front();
+        if self.events.len() >= EVENT_CAP
+            && let Some(evicted) = self.events.pop_front()
+            && !crate::ui::is_hidden_in_activity(&evicted.event_type)
+            && let Some(s) = self.sessions.get_mut(&evicted.session_id)
+        {
+            s.visible_event_count = s.visible_event_count.saturating_sub(1);
         }
 
-        // --- 3. Append ---
+        // --- 3. Append + maintain visible count ---
+        let is_visible = !crate::ui::is_hidden_in_activity(&record.event_type);
+        let rec_session_id = record.session_id.clone();
         self.events.push_back(record);
+        if is_visible
+            && let Some(s) = self.sessions.get_mut(&rec_session_id)
+        {
+            s.visible_event_count += 1;
+        }
     }
 
     /// Number of events that pass the Diagnostics filter (`tool_call_*`).
@@ -330,15 +365,14 @@ impl App {
 
     /// Number of visible (non-hidden) events for a single session.
     ///
+    /// Reads from the cached `visible_event_count` on `SessionSummary`
+    /// (maintained incrementally in `push_event`) — O(1), not a ring scan.
     /// Used by the two-pane Events pane to clamp `sel_activity`.
     pub fn session_event_len(&self, session_id: &str) -> usize {
-        self.events
-            .iter()
-            .filter(|e| {
-                e.session_id == session_id
-                    && !crate::ui::is_hidden_in_activity(&e.event_type)
-            })
-            .count()
+        self.sessions
+            .get(session_id)
+            .map(|s| s.visible_event_count as usize)
+            .unwrap_or(0)
     }
 
     /// Return a sorted list of sessions that have at least one visible event.
@@ -1055,6 +1089,9 @@ mod tests {
                 parent_id: None,
                 agent: None,
                 model: None,
+                visible_event_count: 0,
+                unique_agents: Vec::new(),
+                unique_models: Vec::new(),
             }
         });
         if received_at < entry.first_seen.as_str() {
@@ -1063,6 +1100,8 @@ mod tests {
         if received_at > entry.last_seen.as_str() {
             entry.last_seen = received_at.to_string();
         }
+        // push_turn_at bypasses push_event, so maintain the visible count manually.
+        entry.visible_event_count += 1;
     }
 
     #[test]
@@ -1114,6 +1153,77 @@ mod tests {
         app.push_event(session_updated(2, "s1", None, None, None, None));
         // 1 visible (turn), 1 hidden (session_updated).
         assert_eq!(app.session_event_len("s1"), 1);
+    }
+
+    #[test]
+    fn visible_event_count_tracks_eviction() {
+        let mut app = empty_app();
+        for i in 0..5 {
+            app.push_event(turn(i, "s1", 1, 1));
+        }
+        assert_eq!(app.session_event_len("s1"), 5);
+        // Fill the ring buffer to evict 2 of s1's 5 events.
+        // 5 s1 + 1995 s2 = 2000 (at cap); each additional s2 evicts one from front.
+        for i in 0..1997 {
+            app.push_event(turn(100 + i, "s2", 1, 1));
+        }
+        assert_eq!(app.session_event_len("s1"), 3);
+        assert_eq!(app.session_event_len("s2"), 1997);
+    }
+
+    #[test]
+    fn unique_agents_accumulate_and_survive_eviction() {
+        let mut app = empty_app();
+        app.push_event(session_updated(
+            1, "s1", None, Some("plan"), None, Some("t1"),
+        ));
+        app.push_event(session_updated(
+            2, "s1", None, Some("build"), None, None,
+        ));
+        assert_eq!(app.sessions["s1"].unique_agents, vec!["plan", "build"]);
+        // Evict all s1 events by filling the buffer with s2 turns.
+        for i in 0..(EVENT_CAP + 1) {
+            app.push_event(turn(100 + i as i64, "s2", 1, 1));
+        }
+        // unique_agents survives eviction (cached on summary, not ring buffer).
+        assert_eq!(app.sessions["s1"].unique_agents, vec!["plan", "build"]);
+    }
+
+    #[test]
+    fn unique_models_accumulate_from_turn_and_session_updated() {
+        let mut app = empty_app();
+        // turn() carries model "anthropic/claude-sonnet".
+        app.push_event(turn(1, "s1", 1, 1));
+        // session_updated with a different model.
+        app.push_event(session_updated(
+            2, "s1", None, None, Some("google/gemini-flash"), None,
+        ));
+        assert_eq!(
+            app.sessions["s1"].unique_models,
+            vec!["anthropic/claude-sonnet", "google/gemini-flash"],
+        );
+    }
+
+    #[test]
+    fn unique_agents_dedup_repeats() {
+        let mut app = empty_app();
+        app.push_event(session_updated(
+            1, "s1", None, Some("plan"), None, Some("t1"),
+        ));
+        app.push_event(session_updated(2, "s1", None, Some("plan"), None, None));
+        assert_eq!(app.sessions["s1"].unique_agents, vec!["plan"]);
+    }
+
+    #[test]
+    fn unique_models_dedup_same_model_across_turns() {
+        let mut app = empty_app();
+        // Both turns use the same model from the turn() helper.
+        app.push_event(turn(1, "s1", 1, 1));
+        app.push_event(turn(2, "s1", 1, 1));
+        assert_eq!(
+            app.sessions["s1"].unique_models,
+            vec!["anthropic/claude-sonnet"],
+        );
     }
 
     // --- ensure_session_selection ---

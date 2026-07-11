@@ -837,6 +837,9 @@ mod tests {
             parent_id: None,
             agent: None,
             model: None,
+            visible_event_count: 0,
+            unique_agents: Vec::new(),
+            unique_models: Vec::new(),
         }
     }
 
@@ -1074,53 +1077,29 @@ pub(crate) fn format_event_datetime(ts: &str) -> String {
     local.format("%Y-%m-%d %H:%M:%S").to_string()
 }
 
-/// Collect unique agent identifiers for a session by scanning ring-buffer events.
+/// Collect unique agent identifiers for a session.
 ///
-/// Scans `session_updated` events (which carry the per-session agent field).
-/// Order is first-seen within the ring buffer.
+/// Reads from the cached `unique_agents` on `SessionSummary` (accumulated
+/// incrementally in `push_event`). Order is first-seen. Survives ring-buffer
+/// eviction (the cache lives on the summary, not the ring buffer).
 pub(crate) fn session_unique_agents(app: &App, session_id: &str) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    let mut result = Vec::new();
-    for ev in app
-        .events
-        .iter()
-        .filter(|e| e.session_id == session_id && e.event_type == "session_updated")
-    {
-        if let Ok(AcuityEvent::SessionUpdated(e)) = serde_json::from_str(&ev.payload)
-            && let Some(agent) = e.agent
-            && seen.insert(agent.clone())
-        {
-            result.push(agent);
-        }
-    }
-    // Fall back to SessionSummary.agent if no session_updated events in ring buffer.
-    if result.is_empty()
-        && let Some(s) = app.sessions.get(session_id)
-        && let Some(a) = &s.agent
-    {
-        result.push(a.clone());
-    }
-    result
+    app.sessions
+        .get(session_id)
+        .map(|s| s.unique_agents.clone())
+        .unwrap_or_default()
 }
 
-/// Collect unique model identifiers for a session by scanning ring-buffer events.
+/// Collect unique model identifiers for a session.
 ///
-/// Scans `agent_turn_completed` events (which carry the per-turn resolved model).
-/// Order is first-seen within the ring buffer.
+/// Reads from the cached `unique_models` on `SessionSummary` (accumulated
+/// incrementally in `push_event` from both `session_updated` and
+/// `agent_turn_completed` events). Order is first-seen. Survives ring-buffer
+/// eviction.
 pub(crate) fn session_unique_models(app: &App, session_id: &str) -> Vec<String> {
-    let mut seen = std::collections::HashSet::new();
-    let mut result = Vec::new();
-    for ev in app.events.iter().filter(|e| {
-        e.session_id == session_id && e.event_type == "agent_turn_completed"
-    }) {
-        if let Ok(AcuityEvent::AgentTurnCompleted(e)) = serde_json::from_str(&ev.payload)
-            && let Some(model) = e.model
-            && seen.insert(model.clone())
-        {
-            result.push(model);
-        }
-    }
-    result
+    app.sessions
+        .get(session_id)
+        .map(|s| s.unique_models.clone())
+        .unwrap_or_default()
 }
 
 // ---------------------------------------------------------------------------
