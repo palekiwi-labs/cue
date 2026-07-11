@@ -1,4 +1,4 @@
-use crate::app::{AcuityStatus, App, Column, View};
+use crate::app::{AcuityStatus, App, Column, SessionSummary, View};
 use acuity_api::{AcuityEvent, EventRecord};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -375,6 +375,37 @@ pub(crate) fn is_diagnostic(event_type: &str) -> bool {
     event_type.starts_with("tool_call_")
 }
 
+/// Build the session-group label for an Activity Feed header.
+///
+/// Returns `(text, is_placeholder)`. When a non-empty title is known (from
+/// `SessionSummary.session_title`, populated via `session_updated`), the title
+/// is used directly and `is_placeholder` is `false`. Otherwise the label falls
+/// back to an **id suffix** (last ~8 chars of the session id, prefixed with
+/// `…`) — the unique part of opencode session ids, which share a per-run
+/// prefix. This fixes the old `.get(..8)` prefix-collision bug
+/// (`ui.rs:214`).
+///
+/// `is_placeholder` lets the renderer dim the label until a real title arrives,
+/// making the title-flip a visible verification signal.
+#[allow(dead_code)] // wired in Slice 6b step 6 (render_activity rebuild)
+pub(crate) fn session_label(
+    summary: Option<&SessionSummary>,
+    session_id: &str,
+) -> (String, bool) {
+    if let Some(s) = summary
+        && let Some(title) = &s.session_title
+        && !title.is_empty()
+    {
+        return (title.clone(), false);
+    }
+    // Suffix: last ~8 chars. `get` is boundary-guarded (returns None at a
+    // non-char-boundary); `unwrap_or` falls back to the full id. Session ids
+    // are ASCII in practice, so this is exact.
+    let start = session_id.len().saturating_sub(8);
+    let suffix = session_id.get(start..).unwrap_or(session_id);
+    (format!("\u{2026}{suffix}"), true)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -509,6 +540,63 @@ mod tests {
         assert!(!is_diagnostic("session_idle"));
         assert!(!is_diagnostic("agent_turn_completed"));
         assert!(!is_diagnostic("tool_other")); // "tool_" prefix not enough
+    }
+
+    // --- session_label ---
+
+    fn summary(title: Option<&str>) -> SessionSummary {
+        SessionSummary {
+            session_id: String::new(),
+            project_dir: String::new(),
+            session_title: title.map(str::to_string),
+            first_seen: String::new(),
+            last_seen: String::new(),
+            input_tokens: 0,
+            output_tokens: 0,
+            error_count: 0,
+            harness: String::new(),
+            parent_id: None,
+            agent: None,
+            model: None,
+        }
+    }
+
+    #[test]
+    fn session_label_title_present() {
+        let s = summary(Some("Build the activity feed"));
+        let (label, is_placeholder) = session_label(Some(&s), "ses_0f14abc123");
+        assert_eq!(label, "Build the activity feed");
+        assert!(!is_placeholder);
+    }
+
+    #[test]
+    fn session_label_title_none() {
+        let s = summary(None);
+        let (label, is_placeholder) = session_label(Some(&s), "ses_0f14abc123");
+        // "ses_0f14abc123" is 14 chars; last 8 = "14abc123".
+        assert_eq!(label, "\u{2026}14abc123");
+        assert!(is_placeholder);
+    }
+
+    #[test]
+    fn session_label_title_empty_string_is_placeholder() {
+        // An empty title string should fall through to the id-suffix
+        // placeholder (mirrors the plugin's `info.title || null` guard).
+        let s = summary(Some(""));
+        let (label, is_placeholder) = session_label(Some(&s), "ses_0f14abc123");
+        assert_eq!(label, "\u{2026}14abc123");
+        assert!(is_placeholder);
+    }
+
+    #[test]
+    fn session_label_prefix_sharing_ids_are_distinct() {
+        // Regression for ui.rs:214 — `.get(..8)` took the PREFIX, so two
+        // opencode sessions sharing a per-run prefix (`ses_0f14...`) rendered
+        // identically. The suffix-based label must distinguish them.
+        let s = summary(None);
+        let (a, _) = session_label(Some(&s), "ses_0f14aaaaaa");
+        let (b, _) = session_label(Some(&s), "ses_0f14bbbbbb");
+        assert_ne!(a, b, "distinct suffixes must yield distinct labels");
     }
 }
 
