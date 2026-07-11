@@ -784,6 +784,41 @@ mod tests {
         assert_ne!(a, b, "distinct suffixes must yield distinct labels");
     }
 
+    // --- format_datetime ---
+
+    #[test]
+    fn format_datetime_invalid_falls_back_to_first_16_chars() {
+        let ts = "not-a-timestamp-but-long-enough";
+        assert_eq!(format_datetime(ts), "not-a-timestamp-");
+    }
+
+    #[test]
+    fn format_datetime_invalid_short_falls_back_to_full_string() {
+        let ts = "bad";
+        assert_eq!(format_datetime(ts), "bad");
+    }
+
+    #[test]
+    fn format_datetime_past_date_contains_colon() {
+        let ts = "2020-01-15T09:30:00Z";
+        assert!(format_datetime(ts).contains(':'), "non-today format should contain ':'");
+    }
+
+    // --- harness_abbrev ---
+
+    #[test]
+    fn harness_abbrev_known_values() {
+        assert_eq!(harness_abbrev("opencode"), "oc");
+        assert_eq!(harness_abbrev("claudecode"), "cc");
+        assert_eq!(harness_abbrev("pi"), "pi");
+    }
+
+    #[test]
+    fn harness_abbrev_unknown_falls_back_to_question_marks() {
+        assert_eq!(harness_abbrev("unknown"), "??");
+        assert_eq!(harness_abbrev(""), "??");
+    }
+
     // --- project_basename ---
 
     #[test]
@@ -807,6 +842,40 @@ mod tests {
     #[test]
     fn project_basename_root_slash_falls_back_to_full() {
         assert_eq!(project_basename("/"), "/");
+    }
+}
+
+/// Format a UTC ISO-8601 timestamp string for display in the sessions pane.
+///
+/// Converts to the host local timezone. Returns:
+/// - `"HH:MM"` (5 chars) when the date is today
+/// - `"Mmm DD HH:MM"` (12 chars) for other days
+///
+/// Falls back to the first 16 chars of `ts` if parsing fails (or the full
+/// string if it is shorter than 16 chars).
+#[allow(dead_code)] // wired in step 2 (render_sessions_pane)
+pub(crate) fn format_datetime(ts: &str) -> String {
+    use chrono::{DateTime, Local, Utc};
+    let Ok(dt_utc) = ts.parse::<DateTime<Utc>>() else {
+        return ts.get(..16).unwrap_or(ts).to_string();
+    };
+    let local = dt_utc.with_timezone(&Local);
+    let today = Local::now().date_naive();
+    if local.date_naive() == today {
+        local.format("%H:%M").to_string()
+    } else {
+        local.format("%b %d %H:%M").to_string()
+    }
+}
+
+/// Map a harness identifier to its two-letter abbreviation for the sessions pane.
+#[allow(dead_code)] // wired in step 2 (render_sessions_pane)
+pub(crate) fn harness_abbrev(harness: &str) -> &'static str {
+    match harness {
+        "opencode" => "oc",
+        "claudecode" => "cc",
+        "pi" => "pi",
+        _ => "??",
     }
 }
 
