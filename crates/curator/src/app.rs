@@ -1172,6 +1172,22 @@ mod tests {
     }
 
     #[test]
+    fn visible_event_count_recovers_after_full_eviction() {
+        // A session whose events are fully evicted (count reaches 0) must
+        // correctly increment back to 1 when a new event arrives.
+        let mut app = empty_app();
+        app.push_event(turn(1, "s1", 1, 1));
+        // Fill buffer to fully evict s1's single event.
+        for i in 0..EVENT_CAP {
+            app.push_event(turn(100 + i as i64, "s2", 1, 1));
+        }
+        assert_eq!(app.session_event_len("s1"), 0);
+        // Push a new s1 event — count must go 0 -> 1.
+        app.push_event(turn(999, "s1", 1, 1));
+        assert_eq!(app.session_event_len("s1"), 1);
+    }
+
+    #[test]
     fn unique_agents_accumulate_and_survive_eviction() {
         let mut app = empty_app();
         app.push_event(session_updated(
