@@ -336,7 +336,10 @@ pub(crate) fn event_summary(record: &EventRecord) -> String {
             {
                 let input = ev.input_tokens.unwrap_or(0);
                 let output = ev.output_tokens.unwrap_or(0);
-                format!("turn: in={input} out={output}")
+                match ev.model {
+                    Some(m) => format!("turn: in={input} out={output} \u{00b7} {m}"),
+                    None => format!("turn: in={input} out={output}"),
+                }
             } else {
                 "turn".to_string()
             }
@@ -475,7 +478,29 @@ mod tests {
                 model: None,
             }),
         );
+        // No model -> no appended segment.
         assert_eq!(event_summary(&record), "turn: in=100 out=200");
+    }
+
+    #[test]
+    fn event_summary_agent_turn_completed_with_model() {
+        let record = make_record(
+            2,
+            AcuityEvent::AgentTurnCompleted(AgentTurnCompleted {
+                session_id: "s1".to_string(),
+                turn_id: "t1".to_string(),
+                project_dir: "/my/project".to_string(),
+                harness: "opencode".to_string(),
+                input_tokens: Some(100),
+                output_tokens: Some(200),
+                model: Some("anthropic/claude-sonnet".to_string()),
+            }),
+        );
+        // Per-turn model appended as " · {model}".
+        assert_eq!(
+            event_summary(&record),
+            "turn: in=100 out=200 \u{00b7} anthropic/claude-sonnet"
+        );
     }
 
     #[test]
