@@ -191,7 +191,9 @@ fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
     let items: Vec<ListItem> = sessions
         .iter()
         .map(|s| {
-            let project = project_basename(&s.project_dir);
+            let project = format!("{:<8}", project_basename(&s.project_dir));
+            let datetime = format!("{:<12}", format_datetime(&s.last_seen));
+            let hx = harness_abbrev(&s.harness);
             let (label, is_placeholder) = session_label(Some(s), &s.session_id);
             let title_style = if is_placeholder {
                 Style::default().fg(Color::DarkGray)
@@ -201,9 +203,11 @@ fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD)
             };
             let line = Line::from(vec![
-                Span::styled(project.to_string(), Style::default().fg(Color::Magenta)),
+                Span::styled(project, Style::default().fg(Color::Magenta)),
                 Span::raw("  "),
-                Span::styled(s.harness.clone(), Style::default().fg(Color::Blue)),
+                Span::styled(datetime, Style::default().fg(Color::Cyan)),
+                Span::raw("  "),
+                Span::styled(hx.to_string(), Style::default().fg(Color::Blue)),
                 Span::raw("  "),
                 Span::styled(label, title_style),
             ]);
@@ -853,7 +857,6 @@ mod tests {
 ///
 /// Falls back to the first 16 chars of `ts` if parsing fails (or the full
 /// string if it is shorter than 16 chars).
-#[allow(dead_code)] // wired in step 2 (render_sessions_pane)
 pub(crate) fn format_datetime(ts: &str) -> String {
     use chrono::{DateTime, Local, Utc};
     let Ok(dt_utc) = ts.parse::<DateTime<Utc>>() else {
@@ -869,7 +872,6 @@ pub(crate) fn format_datetime(ts: &str) -> String {
 }
 
 /// Map a harness identifier to its two-letter abbreviation for the sessions pane.
-#[allow(dead_code)] // wired in step 2 (render_sessions_pane)
 pub(crate) fn harness_abbrev(harness: &str) -> &'static str {
     match harness {
         "opencode" => "oc",
