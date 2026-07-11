@@ -206,10 +206,10 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
                 .unwrap_or("");
 
             // Wrapped title: up to 2 lines, char-wrapped to inner_width.
+            // Blank top-padding line gives each card breathing room.
             let title_lines = wrap_title(&task.meta.title, inner_width);
-            let mut lines: Vec<Line> = title_lines
-                .into_iter()
-                .map(|s| Line::from(Span::raw(s)))
+            let mut lines: Vec<Line> = std::iter::once(Line::default())
+                .chain(title_lines.into_iter().map(|s| Line::from(Span::raw(s))))
                 .collect();
 
             // Line 3: [priority]  basename
