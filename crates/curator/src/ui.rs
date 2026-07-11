@@ -206,10 +206,10 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
                 .and_then(|n| n.to_str())
                 .unwrap_or("");
 
-            // Selected card: title highlighted in yellow instead of a
-            // whole-item background highlight.
-            let title_style = if idx == sel {
-                Style::default().fg(Color::Yellow)
+            // Selected card in the active column: title highlighted in cyan.
+            // Inactive columns show no title highlight.
+            let title_style = if is_active && idx == sel {
+                Style::default().fg(Color::Cyan)
             } else {
                 Style::default()
             };
@@ -222,15 +222,15 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
                 .map(|s| Line::from(Span::styled(format!(" {s}"), title_style)))
                 .collect();
 
-            // Line 3: " [priority]  basename"
+            // Line 3: " project  priority"
             lines.push(Line::from(vec![
                 Span::raw(" "),
                 Span::styled(
-                    format!("[{priority_label}]"),
-                    Style::default().fg(colour),
+                    proj_name.to_string(),
+                    Style::default().fg(Color::Magenta),
                 ),
                 Span::raw("  "),
-                Span::styled(proj_name.to_string(), Style::default().fg(Color::DarkGray)),
+                Span::styled(priority_label.to_string(), Style::default().fg(colour)),
             ]));
 
             // Bottom padding: blank line for breathing room between cards.
@@ -711,31 +711,75 @@ pub(crate) fn session_label(
     (format!("\u{2026}{suffix}"), true)
 }
 
-/// Char-wrap `title` to at most `width` display columns, capping at 2 lines.
+/// Word-wrap `title` to at most `width` display columns, capping at 2 lines.
 ///
-/// - If `title` fits in `width` chars, returns a single-element `Vec`.
-/// - If it overflows, line 1 is the first `width` chars; line 2 is the next
-///   up to `width` chars. If line 2 would still overflow, the last visible
-///   char is replaced with `…` (U+2026, counts as 1 column).
+/// - Words are accumulated per line until the next word would exceed `width`.
+/// - A single word longer than `width` is char-broken into `width`-sized chunks.
+/// - If the title produces more than 2 lines, line 2 is truncated with `…`
+///   (U+2026, counts as 1 column).
 /// - An empty `title` or `width == 0` returns `vec!["".to_string()]`.
 pub(crate) fn wrap_title(title: &str, width: usize) -> Vec<String> {
     if width == 0 || title.is_empty() {
         return vec![title.to_string()];
     }
-    let chars: Vec<char> = title.chars().collect();
-    if chars.len() <= width {
-        return vec![title.to_string()];
+
+    // Word-wrap: accumulate words per line, char-break words longer than width.
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for word in title.split_whitespace() {
+        let word_chars: Vec<char> = word.chars().collect();
+
+        if current.is_empty() {
+            if word_chars.len() <= width {
+                current = word.to_string();
+            } else {
+                // Char-break long word into width-sized chunks.
+                for chunk in word_chars.chunks(width) {
+                    lines.push(chunk.iter().collect());
+                }
+                // current stays empty; next word starts a fresh line.
+            }
+        } else {
+            let candidate_len = current.chars().count() + 1 + word_chars.len();
+            if candidate_len <= width {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                lines.push(std::mem::take(&mut current));
+                if word_chars.len() <= width {
+                    current = word.to_string();
+                } else {
+                    for chunk in word_chars.chunks(width) {
+                        lines.push(chunk.iter().collect());
+                    }
+                }
+            }
+        }
     }
-    let line1: String = chars[..width].iter().collect();
-    let rest = &chars[width..];
-    if rest.len() <= width {
-        let line2: String = rest.iter().collect();
-        vec![line1, line2]
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    if lines.is_empty() {
+        return vec![String::new()];
+    }
+
+    // Cap at 2 lines; append ellipsis to line 2 if content was truncated.
+    if lines.len() <= 2 {
+        return lines;
+    }
+
+    let line1 = lines[0].clone();
+    let line2_str = &lines[1];
+    let mut line2: String = if line2_str.chars().count() >= width {
+        let take = width.saturating_sub(1);
+        line2_str.chars().take(take).collect()
     } else {
-        // rest overflows: take width-1 chars + ellipsis
-        let line2: String = rest[..width.saturating_sub(1)].iter().collect::<String>() + "\u{2026}";
-        vec![line1, line2]
-    }
+        line2_str.clone()
+    };
+    line2.push('\u{2026}');
+    vec![line1, line2]
 }
 
 /// Extract the basename (last path component) from a project_dir string.
@@ -1132,25 +1176,44 @@ mod tests {
 
     #[test]
     fn wrap_title_wraps_to_two_lines() {
-        // "hello world" at width 5: rest=" world" (6 chars > 5), so ellipsis
-        // path: line2 = " wor" + "…"
+        // "hello world" at width 5: word-wrap puts each word on its own line.
         let result = wrap_title("hello world", 5);
-        assert_eq!(result, vec!["hello".to_string(), " wor\u{2026}".to_string()]);
+        assert_eq!(result, vec!["hello".to_string(), "world".to_string()]);
     }
 
     #[test]
     fn wrap_title_two_line_second_exact() {
-        // "abcdefghij" width 5 -> ["abcde", "fghij"] — second line exact fit.
+        // "abcdefghij" width 5 -> ["abcde", "fghij"] — single word char-broken.
         let result = wrap_title("abcdefghij", 5);
         assert_eq!(result, vec!["abcde".to_string(), "fghij".to_string()]);
     }
 
     #[test]
     fn wrap_title_overflow_with_ellipsis() {
-        // 11 chars at width 5: line1="abcde", rest="fghij " (6 chars > 5)
+        // 11 chars at width 5: line1="abcde", rest="fghij!" (6 chars > 5)
         // line2 = first 4 chars + ellipsis = "fghi\u{2026}"
         let result = wrap_title("abcdefghij!", 5);
         assert_eq!(result, vec!["abcde".to_string(), "fghi\u{2026}".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_word_wrap_multiple_words() {
+        // "the quick brown fox" width 10: fits in 2 lines, no ellipsis.
+        let result = wrap_title("the quick brown fox", 10);
+        assert_eq!(
+            result,
+            vec!["the quick".to_string(), "brown fox".to_string()]
+        );
+    }
+
+    #[test]
+    fn wrap_title_word_wrap_truncated_with_ellipsis() {
+        // "the quick brown fox jumps" width 10: 3 lines worth, line 2 truncated.
+        let result = wrap_title("the quick brown fox jumps", 10);
+        assert_eq!(
+            result,
+            vec!["the quick".to_string(), "brown fox\u{2026}".to_string()]
+        );
     }
 
     // --- project_basename ---
