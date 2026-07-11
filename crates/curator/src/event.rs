@@ -8,6 +8,8 @@ pub enum Action {
     Up,
     Left,
     Right,
+    Enter,
+    Escape,
     /// Switch the active view (keys 1/2/3).
     SwitchView(View),
     /// Force-reload artifacts from disk (`r` key).

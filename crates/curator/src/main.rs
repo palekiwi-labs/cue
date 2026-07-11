@@ -1,4 +1,5 @@
 // curator: TUI kanban board for cue artifacts.
+mod activity;
 mod app;
 mod event;
 mod input;
@@ -8,7 +9,7 @@ mod tui;
 mod ui;
 
 use anyhow::Result;
-use app::{App, View};
+use app::{ActivityLayout, App, View};
 use clap::Parser;
 use cuelib::artifact::read_artifacts;
 use event::Action;
@@ -135,19 +136,48 @@ fn process_msg(msg: Msg, app: &mut App, root: &Path, branch: &str) -> Result<Loo
         Msg::Input(Action::Refresh) => reload_tasks(app, root, branch)?,
         Msg::Input(Action::Down) => match app.active_view {
             View::Kanban => app.scroll_down(),
-            View::Activity => app.scroll_down_activity(),
+            View::Activity => match app.activity_layout {
+                ActivityLayout::DetailFull => app.scroll_down_activity(),
+                _ => app.scroll_down_sessions(),
+            },
             View::Diagnostics => app.scroll_down_diagnostics(),
         },
         Msg::Input(Action::Up) => match app.active_view {
             View::Kanban => app.scroll_up(),
-            View::Activity => app.scroll_up_activity(),
+            View::Activity => match app.activity_layout {
+                ActivityLayout::DetailFull => app.scroll_up_activity(),
+                _ => app.scroll_up_sessions(),
+            },
             View::Diagnostics => app.scroll_up_diagnostics(),
         },
-        Msg::Input(Action::Left) => app.move_left(),
-        Msg::Input(Action::Right) => app.move_right(),
+        Msg::Input(Action::Left) => {
+            // Left navigates kanban columns only. No-op in Activity (user spec)
+            // and Diagnostics.
+            if app.active_view == View::Kanban {
+                app.move_left();
+            }
+        }
+        Msg::Input(Action::Right) => match app.active_view {
+            View::Kanban => app.move_right(),
+            View::Activity => app.enter_detail_full(),
+            View::Diagnostics => {}
+        },
+        Msg::Input(Action::Enter) => {
+            if app.active_view == View::Activity {
+                app.toggle_detail_pane();
+            }
+        }
+        Msg::Input(Action::Escape) => {
+            if app.active_view == View::Activity {
+                app.return_from_detail_full();
+            }
+        }
         Msg::Input(Action::None) => {}
         Msg::Redraw => {}
-        Msg::Sse(record) => app.push_event(record),
+        Msg::Sse(record) => {
+            app.push_event(record);
+            app.ensure_session_selection();
+        }
         Msg::SseStatus(s) => app.acuity_status = s.into(),
     }
     Ok(LoopControl::Continue)

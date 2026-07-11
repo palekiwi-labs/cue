@@ -19,7 +19,8 @@ use axum::{
 use serde::Deserialize;
 use serde_json::json;
 use sqlx::SqlitePool;
-use tracing::{error, info};
+use tracing::{debug, error, info};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[derive(Clone)]
 struct AppState {
@@ -197,12 +198,47 @@ async fn sse_handler(
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(
-            tracing_subscriber::EnvFilter::try_from_default_env()
-                .unwrap_or_else(|_| "acuity=info".into()),
-        )
+    // Stderr layer: quiet for the human operator.
+    // Filter from RUST_LOG; default acuity=info.
+    let stderr_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("acuity=info"));
+    let stderr_layer = fmt::layer()
+        .with_writer(std::io::stderr)
+        .with_filter(stderr_filter);
+
+    // Optional file layer: rich debug output for automated analysis.
+    // Enabled by setting ACUITY_LOG_FILE to a writable path.
+    // Filter from ACUITY_LOG_LEVEL; default acuity=debug.
+    // The file is truncated on startup — each cargo run is a fresh
+    // observable experiment. Set ACUITY_LOG_LEVEL to override verbosity.
+    //
+    // Security note: tool-call args and raw payloads (logged at DEBUG) may
+    // contain secrets. The DB already stores the same bytes verbatim in the
+    // payload column. Redaction is out of scope for the local-dev threat model.
+    let file_layer = std::env::var("ACUITY_LOG_FILE").ok().map(|path| {
+        let f = std::fs::OpenOptions::new()
+            .create(true)
+            .write(true)
+            .truncate(true)
+            .open(&path)
+            .unwrap_or_else(|e| panic!("ACUITY_LOG_FILE ({path}): {e}"));
+        let writer = std::sync::Mutex::new(std::io::BufWriter::new(f));
+        let file_filter = EnvFilter::try_from_env("ACUITY_LOG_LEVEL")
+            .unwrap_or_else(|_| EnvFilter::new("acuity=debug"));
+        fmt::layer()
+            .with_writer(writer)
+            .with_ansi(false)
+            .with_filter(file_filter)
+    });
+
+    tracing_subscriber::registry()
+        .with(stderr_layer)
+        .with(file_layer)
         .init();
+
+    if let Ok(path) = std::env::var("ACUITY_LOG_FILE") {
+        info!("file logging enabled: {path}");
+    }
 
     let cfg = config::Config::load()?;
 
@@ -337,12 +373,60 @@ async fn handle_event(
     // 5. Persist to SQLite — failure returns 500
     match db::insert_event(&state.db, &event, received_at, &payload).await {
         Ok(seq) => {
-            info!(
-                seq,
-                event_type = event.event_type(),
-                session_id = event.session_id(),
-                "persisted event"
-            );
+            // Per-variant structured fields so key data is individually
+            // queryable in the log (not buried in a single summary string).
+            // Option<String> uses `?` (Debug) — Option<T> has no Display impl.
+            use acuity_schema::AcuityEvent as Ev;
+            match &event {
+                Ev::SessionUpdated(e) => info!(
+                    seq,
+                    event_type = "session_updated",
+                    session_id = %e.session_id,
+                    parent_id = ?e.parent_id,
+                    agent = ?e.agent,
+                    model = ?e.model,
+                    title = ?e.title,
+                    "persisted event"
+                ),
+                Ev::AgentTurnCompleted(e) => info!(
+                    seq,
+                    event_type = "agent_turn_completed",
+                    session_id = %e.session_id,
+                    turn_id = %e.turn_id,
+                    input_tokens = ?e.input_tokens,
+                    output_tokens = ?e.output_tokens,
+                    model = ?e.model,
+                    "persisted event"
+                ),
+                Ev::SessionIdle(e) => info!(
+                    seq,
+                    event_type = "session_idle",
+                    session_id = %e.session_id,
+                    title = ?e.session_title,
+                    "persisted event"
+                ),
+                Ev::ToolCallRequested(e) => info!(
+                    seq,
+                    event_type = "tool_call_requested",
+                    session_id = %e.session_id,
+                    turn_id = %e.turn_id,
+                    tool = %e.tool_name,
+                    "persisted event"
+                ),
+                Ev::ToolCallCompleted(e) => info!(
+                    seq,
+                    event_type = "tool_call_completed",
+                    session_id = %e.session_id,
+                    turn_id = %e.turn_id,
+                    tool = %e.tool_name,
+                    is_error = e.is_error,
+                    "persisted event"
+                ),
+            }
+            // DEBUG: raw wire payload alongside the parsed event.
+            // Comparing the two reveals whether a missing field is a plugin
+            // bug (absent from payload) vs a schema bug (dropped in deser).
+            debug!(seq, payload = %payload, event = ?event, "raw payload + parsed event");
         }
         Err(err) => {
             error!("failed to persist event: {}", err);

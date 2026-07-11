@@ -23,3 +23,9 @@ This project strictly follows the `cue` protocol for its own development:
 
 - `/home/pl/code/palekiwi-labs/cue.nvim`: a neovim plugin for cue
 - `/home/pl/.config/opencode/plugin/palekiwi-labs/cue-plugins`: cue plugins for agent harnesses
+
+<important>
+In order to access depencencies of projects in external directories,
+use `nix develop` from within those directories to mak use of devshells
+defined in their `flake.nix`
+</important>

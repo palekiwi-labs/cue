@@ -34,6 +34,11 @@ pub struct AgentTurnCompleted {
     pub harness: String,
     pub input_tokens: Option<u32>,
     pub output_tokens: Option<u32>,
+    /// Resolved model as `"providerID/modelID"`. Captured from the assistant
+    /// message (`info.providerID`/`info.modelID`) in the plugin's
+    /// `message.updated` handler. `None` if the plugin version predates this
+    /// field (forward-compat: unknown fields are silently ignored).
+    pub model: Option<String>,
 }
 
 /// Emitted when a tool call is dispatched by the agent.
@@ -76,6 +81,28 @@ pub struct ToolCallCompleted {
     pub error_text: Option<String>,
 }
 
+/// Emitted on `session.created` / `session.updated` to carry session lineage
+/// and display metadata: `parent_id` (the spawning session, for sub-agents),
+/// `agent`, `model`, and `title`. Like every variant it carries the
+/// `project_dir` / `harness` envelope so the enum accessors stay exhaustive
+/// and `insert_event`'s NOT NULL column binds remain valid.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize, TS)]
+#[ts(export_to = "types.ts")]
+pub struct SessionUpdated {
+    pub session_id: String,
+    pub project_dir: String,
+    pub harness: String,
+    /// The session that spawned this one (sub-agent back-edge). `None` for
+    /// primary sessions. Set-once-if-some in the curator summary.
+    pub parent_id: Option<String>,
+    /// Agent identifier, e.g. `"claude"`. Last-writer-wins in the summary.
+    pub agent: Option<String>,
+    /// Flat `"providerID/modelID"` string. Last-writer-wins in the summary.
+    pub model: Option<String>,
+    /// Human-readable session title. Last-writer-wins in the summary.
+    pub title: Option<String>,
+}
+
 /// Harness-agnostic discriminated union of all acuity event types.
 ///
 /// The `type` field in the JSON payload is the discriminant, using
@@ -92,6 +119,7 @@ pub enum AcuityEvent {
     AgentTurnCompleted(AgentTurnCompleted),
     ToolCallRequested(ToolCallRequested),
     ToolCallCompleted(ToolCallCompleted),
+    SessionUpdated(SessionUpdated),
 }
 
 impl AcuityEvent {
@@ -102,6 +130,7 @@ impl AcuityEvent {
             AcuityEvent::AgentTurnCompleted(_) => "agent_turn_completed",
             AcuityEvent::ToolCallRequested(_) => "tool_call_requested",
             AcuityEvent::ToolCallCompleted(_) => "tool_call_completed",
+            AcuityEvent::SessionUpdated(_) => "session_updated",
         }
     }
 
@@ -112,6 +141,7 @@ impl AcuityEvent {
             AcuityEvent::AgentTurnCompleted(e) => &e.session_id,
             AcuityEvent::ToolCallRequested(e) => &e.session_id,
             AcuityEvent::ToolCallCompleted(e) => &e.session_id,
+            AcuityEvent::SessionUpdated(e) => &e.session_id,
         }
     }
 
@@ -122,6 +152,7 @@ impl AcuityEvent {
             AcuityEvent::AgentTurnCompleted(e) => &e.project_dir,
             AcuityEvent::ToolCallRequested(e) => &e.project_dir,
             AcuityEvent::ToolCallCompleted(e) => &e.project_dir,
+            AcuityEvent::SessionUpdated(e) => &e.project_dir,
         }
     }
 
@@ -132,16 +163,19 @@ impl AcuityEvent {
             AcuityEvent::AgentTurnCompleted(e) => &e.harness,
             AcuityEvent::ToolCallRequested(e) => &e.harness,
             AcuityEvent::ToolCallCompleted(e) => &e.harness,
+            AcuityEvent::SessionUpdated(e) => &e.harness,
         }
     }
 
-    /// Returns `None` for `SessionIdle`; `Some(&turn_id)` for all other variants.
+    /// Returns `None` for `SessionIdle` and `SessionUpdated`; `Some(&turn_id)`
+    /// for the turn/tool-call variants.
     pub fn turn_id(&self) -> Option<&str> {
         match self {
             AcuityEvent::SessionIdle(_) => None,
             AcuityEvent::AgentTurnCompleted(e) => Some(&e.turn_id),
             AcuityEvent::ToolCallRequested(e) => Some(&e.turn_id),
             AcuityEvent::ToolCallCompleted(e) => Some(&e.turn_id),
+            AcuityEvent::SessionUpdated(_) => None,
         }
     }
 }
@@ -168,6 +202,7 @@ mod tests {
             harness: "opencode".into(),
             input_tokens: Some(120),
             output_tokens: Some(340),
+            model: Some("anthropic/claude-sonnet".into()),
         })
     }
 
@@ -193,6 +228,18 @@ mod tests {
             tool_name: "bash".into(),
             is_error: true,
             error_text: Some("command not found: fd".into()),
+        })
+    }
+
+    fn session_updated() -> AcuityEvent {
+        AcuityEvent::SessionUpdated(SessionUpdated {
+            session_id: "s1".into(),
+            project_dir: "/home/pl/code".into(),
+            harness: "opencode".into(),
+            parent_id: Some("ses_parent".into()),
+            agent: Some("claude".into()),
+            model: Some("anthropic/claude-sonnet".into()),
+            title: Some("hack".into()),
         })
     }
 
@@ -230,6 +277,14 @@ mod tests {
         assert_eq!(ev, back);
     }
 
+    #[test]
+    fn session_updated_round_trip() {
+        let ev = session_updated();
+        let json = serde_json::to_string(&ev).unwrap();
+        let back: AcuityEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(ev, back);
+    }
+
     // --- event_type() matches the serialized "type" field ---
 
     fn serialized_type(ev: &AcuityEvent) -> String {
@@ -261,6 +316,12 @@ mod tests {
         assert_eq!(ev.event_type(), serialized_type(&ev));
     }
 
+    #[test]
+    fn event_type_matches_discriminant_session_updated() {
+        let ev = session_updated();
+        assert_eq!(ev.event_type(), serialized_type(&ev));
+    }
+
     // --- turn_id() accessor ---
 
     #[test]
@@ -283,6 +344,11 @@ mod tests {
         assert_eq!(tool_call_completed().turn_id(), Some("t1"));
     }
 
+    #[test]
+    fn turn_id_none_for_session_updated() {
+        assert_eq!(session_updated().turn_id(), None);
+    }
+
     // --- session_id() accessor ---
 
     #[test]
@@ -291,6 +357,7 @@ mod tests {
         assert_eq!(agent_turn_completed().session_id(), "s1");
         assert_eq!(tool_call_requested().session_id(), "s1");
         assert_eq!(tool_call_completed().session_id(), "s1");
+        assert_eq!(session_updated().session_id(), "s1");
     }
 
     // --- raw wire-format deserialization (primary Axum handler path) ---
@@ -308,7 +375,7 @@ mod tests {
 
     #[test]
     fn agent_turn_completed_deserializes_from_raw_json() {
-        let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","input_tokens":120,"output_tokens":340}"#;
+        let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","project_dir":"/home/pl/code","harness":"opencode","input_tokens":120,"output_tokens":340,"model":"anthropic/claude-sonnet"}"#;
         let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
         assert_eq!(ev.event_type(), "agent_turn_completed");
         assert_eq!(ev.session_id(), "s1");
@@ -339,6 +406,28 @@ mod tests {
         assert_eq!(ev.turn_id(), Some("t1"));
     }
 
+    #[test]
+    fn session_updated_deserializes_from_raw_json() {
+        let raw = r#"{"type":"session_updated","session_id":"s1","project_dir":"/home/pl/code","harness":"opencode","parent_id":"ses_parent","agent":"claude","model":"anthropic/claude-sonnet","title":"hack"}"#;
+        let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
+        assert_eq!(ev.event_type(), "session_updated");
+        assert_eq!(ev.session_id(), "s1");
+        assert_eq!(ev.project_dir(), "/home/pl/code");
+        assert_eq!(ev.harness(), "opencode");
+        assert_eq!(ev.turn_id(), None);
+    }
+
+    #[test]
+    fn session_updated_all_optional_fields_null_round_trip() {
+        // A primary session carries no lineage: parent_id/agent/model/title
+        // are all null. Must deserialize and re-serialize faithfully.
+        let raw = r#"{"type":"session_updated","session_id":"s1","project_dir":"/p","harness":"opencode","parent_id":null,"agent":null,"model":null,"title":null}"#;
+        let ev: AcuityEvent = serde_json::from_str(raw).unwrap();
+        let back = serde_json::to_string(&ev).unwrap();
+        let ev2: AcuityEvent = serde_json::from_str(&back).unwrap();
+        assert_eq!(ev, ev2);
+    }
+
     // --- project_dir() and harness() accessors ---
 
     #[test]
@@ -347,6 +436,7 @@ mod tests {
         assert_eq!(agent_turn_completed().project_dir(), "/home/pl/code");
         assert_eq!(tool_call_requested().project_dir(), "/home/pl/code");
         assert_eq!(tool_call_completed().project_dir(), "/home/pl/code");
+        assert_eq!(session_updated().project_dir(), "/home/pl/code");
     }
 
     #[test]
@@ -355,6 +445,7 @@ mod tests {
         assert_eq!(agent_turn_completed().harness(), "opencode");
         assert_eq!(tool_call_requested().harness(), "opencode");
         assert_eq!(tool_call_completed().harness(), "opencode");
+        assert_eq!(session_updated().harness(), "opencode");
     }
 
     // --- forward-compat: unknown fields are silently ignored ---
