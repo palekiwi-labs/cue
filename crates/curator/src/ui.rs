@@ -208,7 +208,7 @@ fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::DarkGray)
             } else {
                 Style::default()
-                    .fg(Color::Cyan)
+                    .fg(Color::White)
                     .add_modifier(Modifier::BOLD)
             };
             let line = Line::from(vec![
