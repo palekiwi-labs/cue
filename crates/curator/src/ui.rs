@@ -256,7 +256,7 @@ fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Render the session Info block (top section of the detail pane).
 ///
-/// Always static — never focused. Height is fixed at 10 rows (8 data + 2 border).
+/// Always static — never focused. Height is fixed at 11 rows (9 data + 2 border).
 /// Shows title, session id, project path, agents, models, parent_id, token
 /// totals, and error count from the selected session's `SessionSummary`.
 fn render_session_info(frame: &mut Frame, app: &App, area: Rect) {

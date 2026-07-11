@@ -377,6 +377,16 @@ impl App {
                 .first()
                 .map(|s| s.session_id.clone());
             self.sel_activity = 0;
+        } else if let Some(id) = self.sel_session_id.as_deref() {
+            // Clamp sel_activity against the current visible event count so a
+            // stale index (from ring-buffer eviction shrinking the session's
+            // visible events below sel_activity) doesn't strand the highlight.
+            // The renderer masks this via .min(len-1), but the stored index
+            // must be corrected or scroll-up appears broken.
+            let len = self.session_event_len(id);
+            if len > 0 {
+                self.sel_activity = self.sel_activity.min(len - 1);
+            }
         }
     }
 
@@ -1137,12 +1147,32 @@ mod tests {
     #[test]
     fn ensure_session_selection_is_idempotent() {
         let mut app = empty_app();
-        app.push_event(turn(1, "s1", 10, 20));
+        for i in 0..10 {
+            app.push_event(turn(i, "s1", 10, 20));
+        }
         app.ensure_session_selection();
-        app.sel_activity = 5; // Simulate the user scrolling.
+        app.sel_activity = 3; // Valid scroll position within 10 events.
         app.ensure_session_selection(); // Second call — s1 still valid.
-        // sel_activity must NOT be reset (session is still valid).
-        assert_eq!(app.sel_activity, 5);
+        // sel_activity must NOT change when it's a valid index.
+        assert_eq!(app.sel_activity, 3);
+    }
+
+    #[test]
+    fn ensure_session_selection_clamps_stale_sel_activity() {
+        // After partial ring-buffer eviction, sel_activity can exceed the
+        // session's current visible event count. ensure_session_selection
+        // must clamp it so the highlight doesn't appear stranded.
+        let mut app = empty_app();
+        for i in 0..5 {
+            app.push_event(turn(i, "ses_A", 1, 1));
+        }
+        app.sel_session_id = Some("ses_A".to_string());
+        app.sel_activity = 39; // Stale — far beyond the 5 visible events.
+        app.ensure_session_selection();
+        assert_eq!(
+            app.sel_activity, 4,
+            "stale sel_activity clamped to visible count - 1"
+        );
     }
 
     // --- scroll_down_sessions / scroll_up_sessions ---
