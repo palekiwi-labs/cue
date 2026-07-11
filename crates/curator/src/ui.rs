@@ -149,27 +149,61 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
 // ---------------------------------------------------------------------------
 
 /// Render the Activity Feed (View 2).
+///
+/// Iterates the **filtered** set (hiding `session_updated` rows whose payload
+/// is already in `SessionSummary`), driving both header injection and the
+/// `sel_activity → visual` mapping off the filtered enumeration. Mirrors
+/// `render_diagnostics` for the filtered-selection model.
 fn render_activity(frame: &mut Frame, app: &App) {
     let (list_area, help_area) = layout_with_help(frame.area());
 
+    // Collect visible events in reverse-chrono (newest first), hiding
+    // session_updated rows whose payload is already absorbed into
+    // SessionSummary before render.
+    let visible: Vec<&EventRecord> = app
+        .events
+        .iter()
+        .rev()
+        .filter(|e| !is_hidden_in_activity(&e.event_type))
+        .collect();
+
     let mut items: Vec<ListItem> = Vec::new();
     let mut selected_visual: Option<usize> = None;
-    let mut prev_session: Option<String> = None;
+    let mut prev_session: Option<&str> = None;
 
-    for (idx, record) in app.events.iter().rev().enumerate() {
+    // Selection indexes the filtered set; clamp to the last visible row and
+    // select None when the feed is empty (mirrors render_diagnostics).
+    let sel = if visible.is_empty() {
+        None
+    } else {
+        Some(app.sel_activity.min(visible.len() - 1))
+    };
+
+    for (idx, record) in visible.iter().enumerate() {
         // Inject a session header whenever the session_id changes.
-        if prev_session.as_deref() != Some(record.session_id.as_str()) {
-            let header = session_header(record, app);
+        if prev_session != Some(record.session_id.as_str()) {
+            let summary = app.sessions.get(record.session_id.as_str());
+            let (label, is_placeholder) = session_label(summary, &record.session_id);
+            // Dim placeholder until a real title arrives via session_updated;
+            // bright/bold once the title is known — the flip is a visible
+            // verification signal that 6a title-capture round-trips to the UI.
+            let header_style = if is_placeholder {
+                Style::default().fg(Color::DarkGray)
+            } else {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            };
             items.push(ListItem::new(Line::from(Span::styled(
-                header,
-                Style::default().fg(Color::DarkGray),
+                format!(" \u{2500}\u{2500} {label} \u{2500}\u{2500}"),
+                header_style,
             ))));
-            prev_session = Some(record.session_id.clone());
+            prev_session = Some(record.session_id.as_str());
         }
 
-        // Map the event index to the visual list position (accounting for
-        // injected header rows).
-        if idx == app.sel_activity {
+        // Map the filtered-set index to the visual list position (accounting
+        // for injected header rows).
+        if Some(idx) == sel {
             selected_visual = Some(items.len());
         }
 
@@ -192,7 +226,7 @@ fn render_activity(frame: &mut Frame, app: &App) {
     let list = List::new(items)
         .block(
             Block::default()
-                .title(" Activity Feed ")
+                .title(activity_block_title(app))
                 .borders(Borders::ALL),
         )
         .highlight_style(
@@ -207,30 +241,6 @@ fn render_activity(frame: &mut Frame, app: &App) {
     frame.render_stateful_widget(list, list_area, &mut list_state);
 
     frame.render_widget(status_help_line(&app.acuity_status), help_area);
-}
-
-/// Build the session group header line for the Activity Feed.
-fn session_header(record: &EventRecord, app: &App) -> String {
-    let short_id = record.session_id.get(..8).unwrap_or(&record.session_id);
-    let project = app
-        .sessions
-        .get(&record.session_id)
-        .and_then(|s| {
-            if s.project_dir.is_empty() {
-                None
-            } else {
-                // Basename of the project_dir path.
-                Some(
-                    s.project_dir
-                        .rsplit('/')
-                        .next()
-                        .unwrap_or(s.project_dir.as_str())
-                        .to_string(),
-                )
-            }
-        })
-        .unwrap_or_else(|| short_id.to_string());
-    format!(" \u{2500}\u{2500} {project} ({short_id}) \u{2500}\u{2500}")
 }
 
 // ---------------------------------------------------------------------------
@@ -383,7 +393,6 @@ pub(crate) fn is_diagnostic(event_type: &str) -> bool {
 /// `session_updated` rows are pure noise: `push_event` absorbs their payload
 /// into `SessionSummary` synchronously (`app.rs:230-250`) before render, so the
 /// session header already shows their content. Mirrors `is_diagnostic`.
-#[allow(dead_code)] // wired in Slice 6b step 6 (render_activity rebuild)
 pub(crate) fn is_hidden_in_activity(event_type: &str) -> bool {
     event_type == "session_updated"
 }
@@ -400,7 +409,6 @@ pub(crate) fn is_hidden_in_activity(event_type: &str) -> bool {
 ///
 /// `is_placeholder` lets the renderer dim the label until a real title arrives,
 /// making the title-flip a visible verification signal.
-#[allow(dead_code)] // wired in Slice 6b step 6 (render_activity rebuild)
 pub(crate) fn session_label(
     summary: Option<&SessionSummary>,
     session_id: &str,
@@ -425,7 +433,6 @@ pub(crate) fn session_label(
 /// present (harness and project are workspace-constant today); `" Activity Feed "`
 /// when no sessions are known yet. The harness/project appear once here, not
 /// per header — a second harness ('pi') would make per-header a one-line change.
-#[allow(dead_code)] // wired in Slice 6b step 6 (render_activity rebuild)
 fn activity_block_title(app: &App) -> String {
     let Some(s) = app.sessions.values().next() else {
         return " Activity Feed ".to_string();

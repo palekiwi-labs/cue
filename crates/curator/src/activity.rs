@@ -62,6 +62,16 @@ pub enum ActivityItem<'a> {
 ///
 /// Both `events` and `sessions` are borrowed for `'a`. The returned vec holds
 /// `&'a EventRecord` and `&'a str` slices into those collections.
+///
+/// # Unwired — Stage C owns the rewrite
+///
+/// This function is **not called** by `render_activity` (Slice 6b renders via
+/// inline filtered iteration in `ui.rs`, not via `build_activity_items`). The
+/// `(session_id, project_dir)` header key is **degenerate**: `project_dir` is
+/// workspace-constant (every event shares it), so the key collapses to
+/// `session_id` alone. Stage C rewrites this with `parent_id`-based nesting to
+/// fold child sessions under their parent's turns, at which point this module
+/// will be wired in and the degenerate key replaced.
 #[allow(dead_code)] // called by the renderer in Slice 6
 pub fn build_activity_items<'a>(
     events: &'a VecDeque<EventRecord>,
