@@ -200,8 +200,8 @@ fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
     let items: Vec<ListItem> = sessions
         .iter()
         .map(|s| {
-            let project = format!("{:<8}", project_basename(&s.project_dir));
-            let datetime = format!("{:<12}", format_datetime(&s.last_seen));
+            let project = trunc_pad(project_basename(&s.project_dir), 20);
+            let datetime = format!("{:<10}", format_datetime(&s.last_seen));
             let hx = harness_abbrev(&s.harness);
             let (label, is_placeholder) = session_label(Some(s), &s.session_id);
             let title_style = if is_placeholder {
@@ -257,43 +257,65 @@ fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
 
 /// Render the session Info block (top section of the detail pane).
 ///
-/// Always static — never focused. Height is fixed at 8 rows (6 data + 2 border).
-/// Shows title, agent, model, parent_id, token totals, and error count from
-/// the selected session's `SessionSummary`.
+/// Always static — never focused. Height is fixed at 10 rows (8 data + 2 border).
+/// Shows title, session id, project path, agents, models, parent_id, token
+/// totals, and error count from the selected session's `SessionSummary`.
 fn render_session_info(frame: &mut Frame, app: &App, area: Rect) {
     let content: Vec<Line> = if let Some(id) = app.sel_session_id.as_deref()
         && let Some(s) = app.sessions.get(id)
     {
         let title = s.session_title.as_deref().unwrap_or("(no title)");
-        let agent = s.agent.as_deref().unwrap_or("\u{2014}");
-        let model = s.model.as_deref().unwrap_or("\u{2014}");
+        let agents = session_unique_agents(app, id);
+        let agents_str = if agents.is_empty() {
+            "\u{2014}".to_string()
+        } else {
+            agents.join(", ")
+        };
+        let models = session_unique_models(app, id);
+        let models_str = if models.is_empty() {
+            "\u{2014}".to_string()
+        } else {
+            models.join(", ")
+        };
         let parent = s.parent_id.as_deref().unwrap_or("\u{2014}");
         vec![
             Line::from(vec![
-                Span::styled(" Title:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" Title:   ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     title.to_string(),
                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
-                Span::styled(" Agent:  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(agent.to_string()),
+                Span::styled(" ID:      ", Style::default().fg(Color::DarkGray)),
+                Span::raw(id.to_string()),
             ]),
             Line::from(vec![
-                Span::styled(" Model:  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(model.to_string()),
+                Span::styled(" Project: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(s.project_dir.clone(), Style::default().fg(Color::Magenta)),
             ]),
             Line::from(vec![
-                Span::styled(" Parent: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" Agents:  ", Style::default().fg(Color::DarkGray)),
+                Span::raw(agents_str),
+            ]),
+            Line::from(vec![
+                Span::styled(" Models:  ", Style::default().fg(Color::DarkGray)),
+                Span::raw(models_str),
+            ]),
+            Line::from(vec![
+                Span::styled(" Parent:  ", Style::default().fg(Color::DarkGray)),
                 Span::raw(parent.to_string()),
             ]),
             Line::from(vec![
-                Span::styled(" Tokens: ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format!("in={}  out={}", s.input_tokens, s.output_tokens)),
+                Span::styled(" Tokens:  ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!(
+                    "in={}  out={}",
+                    format_tokens(s.input_tokens),
+                    format_tokens(s.output_tokens)
+                )),
             ]),
             Line::from(vec![
-                Span::styled(" Errors: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" Errors:  ", Style::default().fg(Color::DarkGray)),
                 Span::raw(format!("{}", s.error_count)),
             ]),
         ]
@@ -305,7 +327,7 @@ fn render_session_info(frame: &mut Frame, app: &App, area: Rect) {
     };
 
     let block = Block::default()
-        .title(" Session ")
+        .title(" Session Info ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(Color::DarkGray));
     let para = Paragraph::new(content).block(block);
@@ -319,7 +341,7 @@ fn render_session_info(frame: &mut Frame, app: &App, area: Rect) {
 fn render_detail_pane(frame: &mut Frame, app: &App, area: Rect, is_focused: bool) {
     let [info_area, events_area] = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(8), Constraint::Min(0)])
+        .constraints([Constraint::Length(10), Constraint::Min(0)])
         .areas(area);
 
     render_session_info(frame, app, info_area);
@@ -367,15 +389,12 @@ fn render_detail_pane(frame: &mut Frame, app: &App, area: Rect, is_focused: bool
         visible
             .iter()
             .map(|record| {
-                let ts = record
-                    .received_at
-                    .get(..19)
-                    .unwrap_or(record.received_at.as_str());
+                let ts = format_event_datetime(&record.received_at);
                 let summary = event_summary(record);
                 let line = Line::from(vec![
                     Span::styled(
                         format!(" {ts}  "),
-                        Style::default().fg(Color::DarkGray),
+                        Style::default().fg(Color::Yellow),
                     ),
                     Span::styled(
                         format!("{:<24}", record.event_type),
@@ -864,9 +883,9 @@ mod tests {
     // --- format_datetime ---
 
     #[test]
-    fn format_datetime_invalid_falls_back_to_first_16_chars() {
+    fn format_datetime_invalid_falls_back_to_first_10_chars() {
         let ts = "not-a-timestamp-but-long-enough";
-        assert_eq!(format_datetime(ts), "not-a-timestamp-");
+        assert_eq!(format_datetime(ts), "not-a-time");
     }
 
     #[test]
@@ -876,9 +895,70 @@ mod tests {
     }
 
     #[test]
-    fn format_datetime_past_date_contains_colon() {
+    fn format_datetime_past_date_is_yyyy_mm_dd() {
         let ts = "2020-01-15T09:30:00Z";
-        assert!(format_datetime(ts).contains(':'), "non-today format should contain ':'");
+        let result = format_datetime(ts);
+        // Other-day format is YYYY-MM-DD (10 chars, no time component).
+        assert_eq!(result.len(), 10, "other-day format must be 10 chars: {result}");
+        assert!(result.contains('-'), "other-day format must contain '-': {result}");
+        assert!(!result.contains(':'), "other-day format must not contain ':': {result}");
+    }
+
+    // --- trunc_pad ---
+
+    #[test]
+    fn trunc_pad_short_string_is_padded() {
+        assert_eq!(trunc_pad("cue", 10), "cue       ");
+    }
+
+    #[test]
+    fn trunc_pad_exact_width_unchanged() {
+        assert_eq!(trunc_pad("palekiwi", 8), "palekiwi");
+    }
+
+    #[test]
+    fn trunc_pad_long_string_is_truncated() {
+        assert_eq!(trunc_pad("palekiwi-labs-cue", 8), "palekiwi");
+    }
+
+    // --- format_tokens ---
+
+    #[test]
+    fn format_tokens_zero() {
+        assert_eq!(format_tokens(0), "0");
+    }
+
+    #[test]
+    fn format_tokens_small_no_comma() {
+        assert_eq!(format_tokens(999), "999");
+    }
+
+    #[test]
+    fn format_tokens_thousands() {
+        assert_eq!(format_tokens(1_000), "1,000");
+    }
+
+    #[test]
+    fn format_tokens_millions() {
+        assert_eq!(format_tokens(1_234_567), "1,234,567");
+    }
+
+    // --- format_event_datetime ---
+
+    #[test]
+    fn format_event_datetime_invalid_falls_back_to_first_19_chars() {
+        let ts = "not-a-timestamp-but-long-enough";
+        assert_eq!(format_event_datetime(ts), "not-a-timestamp-but");
+    }
+
+    #[test]
+    fn format_event_datetime_valid_has_date_and_time() {
+        let ts = "2020-06-15T09:30:45Z";
+        let result = format_event_datetime(ts);
+        // YYYY-MM-DD HH:MM:SS = 19 chars; contains both '-' and ':'
+        assert_eq!(result.len(), 19, "event datetime must be 19 chars: {result}");
+        assert!(result.contains('-'));
+        assert!(result.contains(':'));
     }
 
     // --- harness_abbrev ---
@@ -925,22 +1005,22 @@ mod tests {
 /// Format a UTC ISO-8601 timestamp string for display in the sessions pane.
 ///
 /// Converts to the host local timezone. Returns:
-/// - `"HH:MM"` (5 chars) when the date is today
-/// - `"Mmm DD HH:MM"` (12 chars) for other days
+/// - `"HH:MM:SS"` (8 chars) when the date is today
+/// - `"YYYY-MM-DD"` (10 chars) for other days
 ///
-/// Falls back to the first 16 chars of `ts` if parsing fails (or the full
-/// string if it is shorter than 16 chars).
+/// Falls back to the first 10 chars of `ts` if parsing fails (or the full
+/// string if it is shorter than 10 chars).
 pub(crate) fn format_datetime(ts: &str) -> String {
     use chrono::{DateTime, Local, Utc};
     let Ok(dt_utc) = ts.parse::<DateTime<Utc>>() else {
-        return ts.get(..16).unwrap_or(ts).to_string();
+        return ts.get(..10).unwrap_or(ts).to_string();
     };
     let local = dt_utc.with_timezone(&Local);
     let today = Local::now().date_naive();
     if local.date_naive() == today {
-        local.format("%H:%M").to_string()
+        local.format("%H:%M:%S").to_string()
     } else {
-        local.format("%b %d %H:%M").to_string()
+        local.format("%Y-%m-%d").to_string()
     }
 }
 
@@ -952,6 +1032,97 @@ pub(crate) fn harness_abbrev(harness: &str) -> &'static str {
         "pi" => "pi",
         _ => "??",
     }
+}
+
+/// Truncate `s` to at most `width` chars and left-pad to exactly `width`.
+///
+/// Unlike `format!("{:<width$}")`, this also truncates strings that are
+/// already longer than `width`, producing a fixed-width column.
+pub(crate) fn trunc_pad(s: &str, width: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count >= width {
+        s.chars().take(width).collect()
+    } else {
+        format!("{s:<width$}")
+    }
+}
+
+/// Format an integer with thousands-separator commas (e.g. `1234567` → `"1,234,567"`).
+pub(crate) fn format_tokens(n: u64) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let total = bytes.len();
+    let mut result = String::with_capacity(total + total / 3);
+    for (i, b) in bytes.iter().enumerate() {
+        let remaining = total - i;
+        if i > 0 && remaining.is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(*b as char);
+    }
+    result
+}
+
+/// Format a UTC ISO-8601 timestamp for display in the events pane.
+///
+/// Converts to host local timezone and returns `"YYYY-MM-DD HH:MM:SS"` (19 chars).
+/// Falls back to the first 19 chars of the raw string on parse error.
+pub(crate) fn format_event_datetime(ts: &str) -> String {
+    use chrono::{DateTime, Local, Utc};
+    let Ok(dt_utc) = ts.parse::<DateTime<Utc>>() else {
+        return ts.get(..19).unwrap_or(ts).to_string();
+    };
+    let local = dt_utc.with_timezone(&Local);
+    local.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// Collect unique agent identifiers for a session by scanning ring-buffer events.
+///
+/// Scans `session_updated` events (which carry the per-session agent field).
+/// Order is first-seen within the ring buffer.
+pub(crate) fn session_unique_agents(app: &App, session_id: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for ev in app
+        .events
+        .iter()
+        .filter(|e| e.session_id == session_id && e.event_type == "session_updated")
+    {
+        if let Ok(AcuityEvent::SessionUpdated(e)) = serde_json::from_str(&ev.payload)
+            && let Some(agent) = e.agent
+            && seen.insert(agent.clone())
+        {
+            result.push(agent);
+        }
+    }
+    // Fall back to SessionSummary.agent if no session_updated events in ring buffer.
+    if result.is_empty()
+        && let Some(s) = app.sessions.get(session_id)
+        && let Some(a) = &s.agent
+    {
+        result.push(a.clone());
+    }
+    result
+}
+
+/// Collect unique model identifiers for a session by scanning ring-buffer events.
+///
+/// Scans `agent_turn_completed` events (which carry the per-turn resolved model).
+/// Order is first-seen within the ring buffer.
+pub(crate) fn session_unique_models(app: &App, session_id: &str) -> Vec<String> {
+    let mut seen = std::collections::HashSet::new();
+    let mut result = Vec::new();
+    for ev in app.events.iter().filter(|e| {
+        e.session_id == session_id && e.event_type == "agent_turn_completed"
+    }) {
+        if let Ok(AcuityEvent::AgentTurnCompleted(e)) = serde_json::from_str(&ev.payload)
+            && let Some(model) = e.model
+            && seen.insert(model.clone())
+        {
+            result.push(model);
+        }
+    }
+    result
 }
 
 // ---------------------------------------------------------------------------
