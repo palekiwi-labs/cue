@@ -184,11 +184,8 @@ fn render_activity(frame: &mut Frame, app: &App) {
 /// Render the Sessions pane (Pane 1 — left 1/3).
 ///
 /// One row per session, sorted newest-first by `sorted_sessions()`.
-/// Row format: `<project>  <harness>  <title-or-placeholder>`.
+/// Row format: `<harness>  <datetime>  <project>  <title-or-placeholder>`.
 fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
-    // Sessions pane is only rendered when it is the focused element.
-    let is_active = true;
-
     let sessions = app.sorted_sessions();
 
     // Find the visual index of the selected session.
@@ -197,11 +194,15 @@ fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
         .as_deref()
         .and_then(|id| sessions.iter().position(|s| s.session_id == id));
 
+    // Compute today once per frame so every row agrees (avoids per-row clock
+    // reads and midnight-boundary disagreement across rows).
+    let today = chrono::Local::now().date_naive();
+
     let items: Vec<ListItem> = sessions
         .iter()
         .map(|s| {
             let project = trunc_pad(project_basename(&s.project_dir), 20);
-            let datetime = format!("{:<10}", format_datetime(&s.last_seen));
+            let datetime = format!("{:<10}", format_datetime_on(&s.last_seen, today));
             let hx = harness_abbrev(&s.harness);
             let (label, is_placeholder) = session_label(Some(s), &s.session_id);
             let title_style = if is_placeholder {
@@ -224,21 +225,13 @@ fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
         })
         .collect();
 
-    let highlight_style = if is_active {
-        Style::default()
-            .bg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().add_modifier(Modifier::DIM)
-    };
-
-    let border_style = if is_active {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().fg(Color::DarkGray)
-    };
+    // Sessions pane is only rendered when focused — always use active styles.
+    let highlight_style = Style::default()
+        .bg(Color::DarkGray)
+        .add_modifier(Modifier::BOLD);
+    let border_style = Style::default()
+        .fg(Color::Cyan)
+        .add_modifier(Modifier::BOLD);
 
     let list = List::new(items)
         .block(
@@ -886,19 +879,22 @@ mod tests {
     #[test]
     fn format_datetime_invalid_falls_back_to_first_10_chars() {
         let ts = "not-a-timestamp-but-long-enough";
-        assert_eq!(format_datetime(ts), "not-a-time");
+        let today = chrono::Local::now().date_naive();
+        assert_eq!(format_datetime_on(ts, today), "not-a-time");
     }
 
     #[test]
     fn format_datetime_invalid_short_falls_back_to_full_string() {
         let ts = "bad";
-        assert_eq!(format_datetime(ts), "bad");
+        let today = chrono::Local::now().date_naive();
+        assert_eq!(format_datetime_on(ts, today), "bad");
     }
 
     #[test]
     fn format_datetime_past_date_is_yyyy_mm_dd() {
         let ts = "2020-01-15T09:30:00Z";
-        let result = format_datetime(ts);
+        let today = chrono::Local::now().date_naive();
+        let result = format_datetime_on(ts, today);
         // Other-day format is YYYY-MM-DD (10 chars, no time component).
         assert_eq!(result.len(), 10, "other-day format must be 10 chars: {result}");
         assert!(result.contains('-'), "other-day format must contain '-': {result}");
@@ -1011,13 +1007,16 @@ mod tests {
 ///
 /// Falls back to the first 10 chars of `ts` if parsing fails (or the full
 /// string if it is shorter than 10 chars).
-pub(crate) fn format_datetime(ts: &str) -> String {
+///
+/// Takes a precomputed `today` so the caller can compute
+/// `Local::now().date_naive()` once per frame and reuse it across all rows
+/// (avoids per-row clock reads and midnight-boundary disagreement).
+pub(crate) fn format_datetime_on(ts: &str, today: chrono::NaiveDate) -> String {
     use chrono::{DateTime, Local, Utc};
     let Ok(dt_utc) = ts.parse::<DateTime<Utc>>() else {
         return ts.get(..10).unwrap_or(ts).to_string();
     };
     let local = dt_utc.with_timezone(&Local);
-    let today = Local::now().date_naive();
     if local.date_naive() == today {
         local.format("%H:%M:%S").to_string()
     } else {
