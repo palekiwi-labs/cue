@@ -292,7 +292,6 @@ impl App {
     ///
     /// Hides `session_updated` rows whose payload is already absorbed into
     /// `SessionSummary` before render. Mirrors `diagnostics_len`.
-    #[allow(dead_code)] // wired in Slice 6b step 6 (render_activity rebuild)
     pub fn activity_len(&self) -> usize {
         self.events
             .iter()
@@ -368,8 +367,13 @@ impl App {
     }
 
     /// Move the Activity Feed selection down (newest-first display order).
+    ///
+    /// Clamps at `activity_len()-1` — the last **visible** row — because
+    /// `session_updated` events are hidden from the feed (their payload is
+    /// already in `SessionSummary`). Indexing against `events.len()` would let
+    /// the selection drift onto hidden rows.
     pub fn scroll_down_activity(&mut self) {
-        let len = self.events.len();
+        let len = self.activity_len();
         if len > 0 {
             self.sel_activity = (self.sel_activity + 1).min(len - 1);
         }
@@ -746,6 +750,36 @@ mod tests {
         app.push_event(session_updated(1, "s1", None, None, None, None));
         app.push_event(session_updated(2, "s1", None, None, None, Some("x")));
         assert_eq!(app.activity_len(), 0);
+    }
+
+    // --- scroll_down_activity clamp (correctness keystone) ---
+
+    #[test]
+    fn scroll_down_activity_clamps_at_activity_len_not_events_len() {
+        // 4 events, 2 hidden (session_updated) -> 2 visible.
+        let mut app = empty_app();
+        app.push_event(session_updated(1, "s1", None, None, None, Some("a")));
+        app.push_event(turn(2, "s1", 10, 20));
+        app.push_event(session_updated(3, "s1", None, None, None, Some("b")));
+        app.push_event(tool_done(4, "s1", false));
+        assert_eq!(app.activity_len(), 2);
+
+        // Scrolling down past the end must clamp at activity_len()-1 == 1,
+        // never reach index 2 or 3 (which point at hidden events).
+        app.scroll_down_activity();
+        app.scroll_down_activity();
+        app.scroll_down_activity();
+        assert_eq!(app.sel_activity, 1, "clamps at last visible index");
+    }
+
+    #[test]
+    fn scroll_down_activity_no_op_when_all_hidden() {
+        let mut app = empty_app();
+        app.push_event(session_updated(1, "s1", None, None, None, None));
+        assert_eq!(app.activity_len(), 0);
+        // No visible events — scroll must be a no-op (stays at 0).
+        app.scroll_down_activity();
+        assert_eq!(app.sel_activity, 0);
     }
 
     // --- priority sort (Slice 8 Tier 1) ---
