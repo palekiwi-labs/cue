@@ -32,6 +32,17 @@ pub enum ActivityLayout {
     DetailFull,
 }
 
+/// Two-state layout for the Kanban view.
+///
+/// Transitions: `ColumnsFull` ↔ Enter ↔ `Split`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KanbanLayout {
+    /// Default: three columns fullscreen.
+    ColumnsFull,
+    /// Bottom detail pane visible; columns constrained to upper portion.
+    Split,
+}
+
 /// Which kanban column is currently active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Column {
@@ -187,6 +198,10 @@ pub struct App {
     /// Selection index for the Diagnostics view.
     pub sel_diagnostics: usize,
 
+    // --- Kanban layout state ---
+    /// Layout state of the Kanban view.
+    pub kanban_layout: KanbanLayout,
+
     // --- Two-pane Activity view state ---
     /// Layout state of the Activity view.
     pub activity_layout: ActivityLayout,
@@ -214,6 +229,7 @@ impl App {
             sel_complete: 0,
 
             active_view: View::Kanban,
+            kanban_layout: KanbanLayout::ColumnsFull,
             acuity_status: AcuityStatus::Disabled,
             events: VecDeque::new(),
             sessions: HashMap::new(),
@@ -486,6 +502,14 @@ impl App {
         };
         self.sel_session_id = Some(sessions[prev_pos].session_id.clone());
         self.sel_activity = 0;
+    }
+
+    /// Toggle the kanban detail pane: `ColumnsFull ↔ Split`.
+    pub fn toggle_kanban_detail(&mut self) {
+        self.kanban_layout = match self.kanban_layout {
+            KanbanLayout::ColumnsFull => KanbanLayout::Split,
+            KanbanLayout::Split => KanbanLayout::ColumnsFull,
+        };
     }
 
     /// Toggle the detail pane visibility: `SessionsFull ↔ Split`.
@@ -1417,6 +1441,24 @@ mod tests {
         assert_eq!(app.sel_session_id, None);
         app.scroll_up_sessions();
         assert_eq!(app.sel_session_id, None);
+    }
+
+    // --- KanbanLayout transitions ---
+
+    #[test]
+    fn toggle_kanban_detail_columns_full_to_split() {
+        let mut app = empty_app();
+        assert_eq!(app.kanban_layout, KanbanLayout::ColumnsFull);
+        app.toggle_kanban_detail();
+        assert_eq!(app.kanban_layout, KanbanLayout::Split);
+    }
+
+    #[test]
+    fn toggle_kanban_detail_split_to_columns_full() {
+        let mut app = empty_app();
+        app.kanban_layout = KanbanLayout::Split;
+        app.toggle_kanban_detail();
+        assert_eq!(app.kanban_layout, KanbanLayout::ColumnsFull);
     }
 
     // --- ActivityLayout transitions ---

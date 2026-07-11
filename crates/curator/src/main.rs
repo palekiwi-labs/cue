@@ -150,11 +150,11 @@ fn process_msg(msg: Msg, app: &mut App, branch: &str) -> Result<LoopControl> {
             View::Activity => app.enter_detail_full(),
             View::Diagnostics => {}
         },
-        Msg::Input(Action::Enter) => {
-            if app.active_view == View::Activity {
-                app.toggle_detail_pane();
-            }
-        }
+        Msg::Input(Action::Enter) => match app.active_view {
+            View::Kanban => app.toggle_kanban_detail(),
+            View::Activity => app.toggle_detail_pane(),
+            View::Diagnostics => {}
+        },
         Msg::Input(Action::Escape) => {
             if app.active_view == View::Activity {
                 app.return_from_detail_full();

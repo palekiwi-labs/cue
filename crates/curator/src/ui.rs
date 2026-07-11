@@ -1,4 +1,4 @@
-use crate::app::{AcuityStatus, ActivityLayout, App, Column, SessionSummary, View};
+use crate::app::{AcuityStatus, ActivityLayout, App, Column, KanbanLayout, KanbanTask, SessionSummary, View};
 use acuity_api::{AcuityEvent, EventRecord};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -43,24 +43,25 @@ fn render_kanban(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let (board_area, help_area) = layout_with_help(area);
 
-    // Three equal columns.
-    let [open_area, in_progress_area, complete_area] = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Ratio(1, 3),
-            Constraint::Ratio(1, 3),
-            Constraint::Ratio(1, 3),
-        ])
-        .areas(board_area);
-
-    for (col, col_area) in [
-        (Column::Open, open_area),
-        (Column::InProgress, in_progress_area),
-        (Column::Complete, complete_area),
-    ] {
-        render_column(frame, app, col, col_area);
+    match app.kanban_layout {
+        KanbanLayout::ColumnsFull => {
+            render_kanban_columns(frame, app, board_area);
+        }
+        KanbanLayout::Split => {
+            // Split: columns on top (~70%), detail pane below (~30%).
+            let [cols_area, detail_area] = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Ratio(7, 10), Constraint::Ratio(3, 10)])
+                .areas(board_area);
+            render_kanban_columns(frame, app, cols_area);
+            render_kanban_detail(frame, app, detail_area);
+        }
     }
 
+    let enter_hint = match app.kanban_layout {
+        KanbanLayout::ColumnsFull => "detail",
+        KanbanLayout::Split => "close",
+    };
     let help = Line::from(vec![
         Span::styled(" q", Style::default().fg(Color::Yellow)),
         Span::raw(" quit  "),
@@ -70,10 +71,89 @@ fn render_kanban(frame: &mut Frame, app: &App) {
         Span::raw(" column  "),
         Span::styled("j/k ↑ ↓", Style::default().fg(Color::Yellow)),
         Span::raw(" navigate  "),
+        Span::styled("Enter", Style::default().fg(Color::Yellow)),
+        Span::raw(format!(" {enter_hint}  ")),
         Span::styled("r", Style::default().fg(Color::Yellow)),
         Span::raw(" reload"),
     ]);
     frame.render_widget(help, help_area);
+}
+
+/// Render the three kanban columns into `area`.
+fn render_kanban_columns(frame: &mut Frame, app: &App, area: Rect) {
+    let [open_area, in_progress_area, complete_area] = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+            Constraint::Ratio(1, 3),
+        ])
+        .areas(area);
+
+    for (col, col_area) in [
+        (Column::Open, open_area),
+        (Column::InProgress, in_progress_area),
+        (Column::Complete, complete_area),
+    ] {
+        render_column(frame, app, col, col_area);
+    }
+}
+
+/// Render the kanban detail pane (reflective — shows the selected card's info).
+fn render_kanban_detail(frame: &mut Frame, app: &App, area: Rect) {
+    // Resolve the selected task for the active column.
+    let task: Option<&KanbanTask> = {
+        let tasks = app.column_tasks(app.active_col);
+        let sel = app.column_sel(app.active_col);
+        tasks.get(sel)
+    };
+
+    let content: Vec<Line> = if let Some(t) = task {
+        let priority = t.meta.priority_raw.as_deref().unwrap_or("normal");
+        let status = t.meta.status_raw.as_deref().unwrap_or("\u{2014}");
+        let full_path = t.meta.path.to_string_lossy().into_owned();
+        let project_path = t.project_root.to_string_lossy().into_owned();
+        vec![
+            Line::from(vec![
+                Span::styled(" Title:    ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    t.meta.title.clone(),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" Status:   ", Style::default().fg(Color::DarkGray)),
+                Span::raw(status.to_string()),
+            ]),
+            Line::from(vec![
+                Span::styled(" Priority: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    priority.to_string(),
+                    Style::default().fg(priority_colour(t.meta.priority_raw.as_deref())),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" Project:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(project_path, Style::default().fg(Color::Magenta)),
+            ]),
+            Line::from(vec![
+                Span::styled(" File:     ", Style::default().fg(Color::DarkGray)),
+                Span::raw(full_path),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            "  (no task selected)",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
+
+    let block = Block::default()
+        .title(" Task Detail ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let para = Paragraph::new(content).block(block);
+    frame.render_widget(para, area);
 }
 
 /// Colour scheme for priority badges.
