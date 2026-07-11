@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, BorderType, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -189,12 +189,15 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
         })
         .border_style(border_style);
 
-    // Inner width: area − 2 borders − 2 chars for the "> " highlight symbol.
+    // Inner width: area − 2 borders − 1 leading space pad − 1 right margin.
     let inner_width = (area.width as usize).saturating_sub(4);
 
+    // Each card is rendered as two ListItems: a blank separator (never
+    // selected → never highlighted) followed by the 3-line card content.
+    // This gives true margin semantics: the gap sits outside the highlight.
     let items: Vec<ListItem> = tasks
         .iter()
-        .map(|task| {
+        .flat_map(|task| {
             let priority_label = task.meta.priority_raw.as_deref().unwrap_or("normal");
             let colour = priority_colour(task.meta.priority_raw.as_deref());
 
@@ -206,14 +209,16 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
                 .unwrap_or("");
 
             // Wrapped title: up to 2 lines, char-wrapped to inner_width.
-            // Blank top-padding line gives each card breathing room.
+            // Leading space provides 1-char left padding inside the highlight.
             let title_lines = wrap_title(&task.meta.title, inner_width);
-            let mut lines: Vec<Line> = std::iter::once(Line::default())
-                .chain(title_lines.into_iter().map(|s| Line::from(Span::raw(s))))
+            let mut lines: Vec<Line> = title_lines
+                .into_iter()
+                .map(|s| Line::from(Span::raw(format!(" {s}"))))
                 .collect();
 
-            // Line 3: [priority]  basename
+            // Line 3: " [priority]  basename"
             lines.push(Line::from(vec![
+                Span::raw(" "),
                 Span::styled(
                     format!("[{priority_label}]"),
                     Style::default().fg(colour),
@@ -222,7 +227,8 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
                 Span::styled(proj_name.to_string(), Style::default().fg(Color::DarkGray)),
             ]));
 
-            ListItem::new(lines)
+            // Blank separator (margin) + card content.
+            [ListItem::new(Line::default()), ListItem::new(lines)]
         })
         .collect();
 
@@ -237,11 +243,13 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
     let list = List::new(items)
         .block(block)
         .highlight_style(highlight_style)
-        .highlight_symbol("> ");
+        .highlight_spacing(HighlightSpacing::Never);
 
+    // Visual index: logical card index * 2 + 1 (always the card row,
+    // never the blank separator row).
     let mut list_state = ListState::default();
     if !tasks.is_empty() {
-        list_state.select(Some(sel));
+        list_state.select(Some(sel * 2 + 1));
     }
 
     frame.render_stateful_widget(list, area, &mut list_state);
