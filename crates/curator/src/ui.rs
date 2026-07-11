@@ -212,11 +212,11 @@ fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
                     .add_modifier(Modifier::BOLD)
             };
             let line = Line::from(vec![
-                Span::styled(project, Style::default().fg(Color::Magenta)),
-                Span::raw("  "),
-                Span::styled(datetime, Style::default().fg(Color::Cyan)),
-                Span::raw("  "),
                 Span::styled(hx.to_string(), Style::default().fg(Color::Blue)),
+                Span::raw("  "),
+                Span::styled(datetime, Style::default().fg(Color::LightCyan)),
+                Span::raw("  "),
+                Span::styled(project, Style::default().fg(Color::Magenta)),
                 Span::raw("  "),
                 Span::styled(label, title_style),
             ]);
@@ -247,8 +247,7 @@ fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
                 .borders(Borders::ALL)
                 .border_style(border_style),
         )
-        .highlight_style(highlight_style)
-        .highlight_symbol("> ");
+        .highlight_style(highlight_style);
 
     let mut list_state = ListState::default();
     list_state.select(sel_visual);
@@ -280,42 +279,42 @@ fn render_session_info(frame: &mut Frame, app: &App, area: Rect) {
         let parent = s.parent_id.as_deref().unwrap_or("\u{2014}");
         vec![
             Line::from(vec![
-                Span::styled(" Title:   ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" Title:      ", Style::default().fg(Color::DarkGray)),
                 Span::styled(
                     title.to_string(),
                     Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
                 ),
             ]),
             Line::from(vec![
-                Span::styled(" ID:      ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" ID:         ", Style::default().fg(Color::DarkGray)),
                 Span::raw(id.to_string()),
             ]),
             Line::from(vec![
-                Span::styled(" Project: ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" Project:    ", Style::default().fg(Color::DarkGray)),
                 Span::styled(s.project_dir.clone(), Style::default().fg(Color::Magenta)),
             ]),
             Line::from(vec![
-                Span::styled(" Agents:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" Agents:     ", Style::default().fg(Color::DarkGray)),
                 Span::raw(agents_str),
             ]),
             Line::from(vec![
-                Span::styled(" Models:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" Models:     ", Style::default().fg(Color::DarkGray)),
                 Span::raw(models_str),
             ]),
             Line::from(vec![
-                Span::styled(" Parent:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" Parent:     ", Style::default().fg(Color::DarkGray)),
                 Span::raw(parent.to_string()),
             ]),
             Line::from(vec![
-                Span::styled(" Tokens:  ", Style::default().fg(Color::DarkGray)),
-                Span::raw(format!(
-                    "in={}  out={}",
-                    format_tokens(s.input_tokens),
-                    format_tokens(s.output_tokens)
-                )),
+                Span::styled(" Tokens In:  ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format_tokens(s.input_tokens)),
             ]),
             Line::from(vec![
-                Span::styled(" Errors:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(" Tokens Out: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format_tokens(s.output_tokens)),
+            ]),
+            Line::from(vec![
+                Span::styled(" Errors:     ", Style::default().fg(Color::DarkGray)),
                 Span::raw(format!("{}", s.error_count)),
             ]),
         ]
@@ -341,7 +340,7 @@ fn render_session_info(frame: &mut Frame, app: &App, area: Rect) {
 fn render_detail_pane(frame: &mut Frame, app: &App, area: Rect, is_focused: bool) {
     let [info_area, events_area] = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(10), Constraint::Min(0)])
+        .constraints([Constraint::Length(11), Constraint::Min(0)])
         .areas(area);
 
     render_session_info(frame, app, info_area);
@@ -394,7 +393,7 @@ fn render_detail_pane(frame: &mut Frame, app: &App, area: Rect, is_focused: bool
                 let line = Line::from(vec![
                     Span::styled(
                         format!(" {ts}  "),
-                        Style::default().fg(Color::Yellow),
+                        Style::default().fg(Color::LightCyan),
                     ),
                     Span::styled(
                         format!("{:<24}", record.event_type),
@@ -420,8 +419,7 @@ fn render_detail_pane(frame: &mut Frame, app: &App, area: Rect, is_focused: bool
                 .borders(Borders::ALL)
                 .border_style(border_style),
         )
-        .highlight_style(highlight_style)
-        .highlight_symbol("> ");
+        .highlight_style(highlight_style);
 
     let mut list_state = ListState::default();
     list_state.select(sel_visual);
