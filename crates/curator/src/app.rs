@@ -13,6 +13,13 @@ pub enum View {
     Diagnostics,
 }
 
+/// Which pane of the two-pane Activity view is active.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ActivityPane {
+    Sessions,
+    Events,
+}
+
 /// Which kanban column is currently active.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Column {
@@ -74,14 +81,12 @@ impl From<SseStatus> for AcuityStatus {
 /// so totals survive even when old events are evicted from the ring buffer.
 #[derive(Debug, Clone)]
 pub struct SessionSummary {
-    /// Stored for Slice 8 unit tests; not yet read by rendering code.
-    #[allow(dead_code)]
+    /// Session identifier; read by sorted_sessions and rendering code.
     pub session_id: String,
     pub project_dir: String,
     pub session_title: Option<String>,
     /// ISO-8601 timestamp of the earliest received event for this session.
-    /// Stored for Slice 8 unit tests and future display; not yet read by rendering.
-    #[allow(dead_code)]
+    /// Read by sorted_sessions for newest-first ordering.
     pub first_seen: String,
     /// ISO-8601 timestamp of the most recently received event for this session.
     pub last_seen: String,
@@ -135,10 +140,20 @@ pub struct App {
     /// before ring-buffer eviction so totals survive eviction.
     pub sessions: HashMap<String, SessionSummary>,
 
-    /// Selection index for the Activity Feed view.
+    /// Selection index for the Activity Feed view (indexes the visible events
+    /// of the selected session).
     pub sel_activity: usize,
     /// Selection index for the Diagnostics view.
     pub sel_diagnostics: usize,
+
+    // --- Two-pane Activity view state ---
+    /// Which pane of the Activity view is currently focused.
+    pub active_activity_pane: ActivityPane,
+    /// Identity-based session selection: tracks the session_id of the selected
+    /// session in Pane 1. `None` until at least one event has arrived.
+    pub sel_session_id: Option<String>,
+    /// When `true`, the active pane expands to fill the full activity area.
+    pub pane_expanded: bool,
 }
 
 impl App {
@@ -164,6 +179,9 @@ impl App {
             sessions: HashMap::new(),
             sel_activity: 0,
             sel_diagnostics: 0,
+            active_activity_pane: ActivityPane::Sessions,
+            sel_session_id: None,
+            pane_expanded: false,
         }
     }
 
@@ -292,11 +310,124 @@ impl App {
     ///
     /// Hides `session_updated` rows whose payload is already absorbed into
     /// `SessionSummary` before render. Mirrors `diagnostics_len`.
+    ///
+    /// Kept for its two unit tests; no longer called in production (the
+    /// two-pane view uses `session_event_len` per session instead).
+    #[allow(dead_code)]
     pub fn activity_len(&self) -> usize {
         self.events
             .iter()
             .filter(|e| !crate::ui::is_hidden_in_activity(&e.event_type))
             .count()
+    }
+
+    /// Number of visible (non-hidden) events for a single session.
+    ///
+    /// Used by the two-pane Events pane to clamp `sel_activity`.
+    pub fn session_event_len(&self, session_id: &str) -> usize {
+        self.events
+            .iter()
+            .filter(|e| {
+                e.session_id == session_id
+                    && !crate::ui::is_hidden_in_activity(&e.event_type)
+            })
+            .count()
+    }
+
+    /// Return a sorted list of sessions that have at least one visible event.
+    ///
+    /// Sorted newest-`first_seen` first, then `session_id` ascending as a
+    /// deterministic tiebreak (HashMap iteration order is non-deterministic).
+    pub fn sorted_sessions(&self) -> Vec<&SessionSummary> {
+        let mut sessions: Vec<&SessionSummary> = self
+            .sessions
+            .values()
+            .filter(|s| self.session_event_len(&s.session_id) > 0)
+            .collect();
+        // Newest first; tiebreak by session_id for determinism.
+        sessions.sort_by(|a, b| {
+            b.first_seen
+                .cmp(&a.first_seen)
+                .then_with(|| a.session_id.cmp(&b.session_id))
+        });
+        sessions
+    }
+
+    /// Ensure a valid session is selected in Pane 1.
+    ///
+    /// If `sel_session_id` is `None` or its session has no visible events,
+    /// auto-select the first session from `sorted_sessions()` and reset
+    /// `sel_activity = 0`. Safe to call after every event arrival —
+    /// idempotent when a valid session is already selected.
+    pub fn ensure_session_selection(&mut self) {
+        let needs_reset = match &self.sel_session_id {
+            None => true,
+            Some(id) => self.session_event_len(id) == 0,
+        };
+        if needs_reset {
+            self.sel_session_id = self
+                .sorted_sessions()
+                .first()
+                .map(|s| s.session_id.clone());
+            self.sel_activity = 0;
+        }
+    }
+
+    /// Move the session selection down in Pane 1 (one step toward older sessions).
+    ///
+    /// Updates `sel_session_id` to the next session in `sorted_sessions()` and
+    /// resets `sel_activity = 0`. No-op when at the last session or list is empty.
+    pub fn scroll_down_sessions(&mut self) {
+        let sessions = self.sorted_sessions();
+        if sessions.is_empty() {
+            return;
+        }
+        let current_pos = self
+            .sel_session_id
+            .as_deref()
+            .and_then(|id| sessions.iter().position(|s| s.session_id == id));
+        let next_pos = match current_pos {
+            Some(pos) if pos + 1 < sessions.len() => pos + 1,
+            Some(_) => return, // already at last
+            None => 0,
+        };
+        self.sel_session_id = Some(sessions[next_pos].session_id.clone());
+        self.sel_activity = 0;
+    }
+
+    /// Move the session selection up in Pane 1 (one step toward newer sessions).
+    ///
+    /// Updates `sel_session_id` to the previous session and resets
+    /// `sel_activity = 0`. No-op when at the first session or list is empty.
+    pub fn scroll_up_sessions(&mut self) {
+        let sessions = self.sorted_sessions();
+        if sessions.is_empty() {
+            return;
+        }
+        let current_pos = self
+            .sel_session_id
+            .as_deref()
+            .and_then(|id| sessions.iter().position(|s| s.session_id == id));
+        let prev_pos = match current_pos {
+            Some(0) => return, // already at first
+            Some(pos) => pos - 1,
+            None => 0,
+        };
+        self.sel_session_id = Some(sessions[prev_pos].session_id.clone());
+        self.sel_activity = 0;
+    }
+
+    /// Toggle the active Activity pane between Sessions and Events.
+    pub fn switch_activity_pane(&mut self) {
+        self.active_activity_pane = match self.active_activity_pane {
+            ActivityPane::Sessions => ActivityPane::Events,
+            ActivityPane::Events => ActivityPane::Sessions,
+        };
+    }
+
+    /// Toggle the expanded/split layout for the Activity view.
+    pub fn toggle_pane_expand(&mut self) {
+        self.pane_expanded = !self.pane_expanded;
     }
 
     /// Move the selection down within the active column.
@@ -366,14 +497,17 @@ impl App {
         }
     }
 
-    /// Move the Activity Feed selection down (newest-first display order).
+    /// Move the Activity Feed (Events pane) selection down.
     ///
-    /// Clamps at `activity_len()-1` — the last **visible** row — because
-    /// `session_updated` events are hidden from the feed (their payload is
-    /// already in `SessionSummary`). Indexing against `events.len()` would let
-    /// the selection drift onto hidden rows.
+    /// Clamps at `session_event_len(sel_session_id)-1` — the last visible row
+    /// for the selected session. No-op when no session is selected or the
+    /// session has no visible events.
     pub fn scroll_down_activity(&mut self) {
-        let len = self.activity_len();
+        let len = self
+            .sel_session_id
+            .as_deref()
+            .map(|id| self.session_event_len(id))
+            .unwrap_or(0);
         if len > 0 {
             self.sel_activity = (self.sel_activity + 1).min(len - 1);
         }
@@ -756,15 +890,18 @@ mod tests {
 
     #[test]
     fn scroll_down_activity_clamps_at_activity_len_not_events_len() {
-        // 4 events, 2 hidden (session_updated) -> 2 visible.
+        // 4 events in session s1, 2 hidden (session_updated) -> 2 visible.
         let mut app = empty_app();
         app.push_event(session_updated(1, "s1", None, None, None, Some("a")));
         app.push_event(turn(2, "s1", 10, 20));
         app.push_event(session_updated(3, "s1", None, None, None, Some("b")));
         app.push_event(tool_done(4, "s1", false));
-        assert_eq!(app.activity_len(), 2);
+        assert_eq!(app.session_event_len("s1"), 2);
 
-        // Scrolling down past the end must clamp at activity_len()-1 == 1,
+        // Point sel_session_id at s1 so scroll_down_activity uses s1's count.
+        app.sel_session_id = Some("s1".to_string());
+
+        // Scrolling down past the end must clamp at session_event_len-1 == 1,
         // never reach index 2 or 3 (which point at hidden events).
         app.scroll_down_activity();
         app.scroll_down_activity();
@@ -776,8 +913,8 @@ mod tests {
     fn scroll_down_activity_no_op_when_all_hidden() {
         let mut app = empty_app();
         app.push_event(session_updated(1, "s1", None, None, None, None));
-        assert_eq!(app.activity_len(), 0);
-        // No visible events — scroll must be a no-op (stays at 0).
+        assert_eq!(app.session_event_len("s1"), 0);
+        // sel_session_id = None -> session_event_len returns 0 -> no-op.
         app.scroll_down_activity();
         assert_eq!(app.sel_activity, 0);
     }
@@ -844,5 +981,229 @@ mod tests {
         assert_eq!(app.sel_open, 0);
         assert_eq!(app.sel_in_progress, 0);
         assert_eq!(app.sel_complete, 0);
+    }
+
+    // --- sorted_sessions ---
+
+    /// Push a non-hidden event into the app with a specific received_at time.
+    fn push_turn_at(app: &mut App, seq: i64, session_id: &str, received_at: &str) {
+        use acuity_schema::AgentTurnCompleted;
+        let event = AcuityEvent::AgentTurnCompleted(AgentTurnCompleted {
+            session_id: session_id.to_string(),
+            turn_id: "t1".to_string(),
+            project_dir: "/p".to_string(),
+            harness: "opencode".to_string(),
+            input_tokens: Some(1),
+            output_tokens: Some(1),
+            model: None,
+        });
+        app.events.push_back(EventRecord {
+            seq,
+            received_at: received_at.to_string(),
+            event_type: event.event_type().to_string(),
+            session_id: session_id.to_string(),
+            turn_id: event.turn_id().map(str::to_string),
+            project_dir: "/p".to_string(),
+            harness: "opencode".to_string(),
+            payload: serde_json::to_string(&event).unwrap(),
+        });
+        // Manually set first_seen for deterministic ordering tests.
+        let entry = app.sessions.entry(session_id.to_string()).or_insert_with(|| {
+            SessionSummary {
+                session_id: session_id.to_string(),
+                project_dir: "/p".to_string(),
+                session_title: None,
+                first_seen: received_at.to_string(),
+                last_seen: received_at.to_string(),
+                input_tokens: 0,
+                output_tokens: 0,
+                error_count: 0,
+                harness: "opencode".to_string(),
+                parent_id: None,
+                agent: None,
+                model: None,
+            }
+        });
+        if received_at < entry.first_seen.as_str() {
+            entry.first_seen = received_at.to_string();
+        }
+        if received_at > entry.last_seen.as_str() {
+            entry.last_seen = received_at.to_string();
+        }
+    }
+
+    #[test]
+    fn sorted_sessions_newest_first() {
+        let mut app = empty_app();
+        push_turn_at(&mut app, 1, "s_older", "2026-01-01T00:00:01Z");
+        push_turn_at(&mut app, 2, "s_newer", "2026-01-01T00:00:02Z");
+        let ids: Vec<&str> = app.sorted_sessions().iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["s_newer", "s_older"]);
+    }
+
+    #[test]
+    fn sorted_sessions_tiebreak_by_session_id() {
+        let mut app = empty_app();
+        // Both sessions get the same first_seen timestamp.
+        push_turn_at(&mut app, 1, "ses_b", "2026-01-01T00:00:01Z");
+        push_turn_at(&mut app, 2, "ses_a", "2026-01-01T00:00:01Z");
+        let ids: Vec<&str> = app.sorted_sessions().iter().map(|s| s.session_id.as_str()).collect();
+        // Alphabetical ascending tiebreak -> ses_a before ses_b.
+        assert_eq!(ids, vec!["ses_a", "ses_b"]);
+    }
+
+    #[test]
+    fn sorted_sessions_excludes_sessions_with_no_visible_events() {
+        let mut app = empty_app();
+        // s1 has a turn (visible). s2 only has session_updated (hidden).
+        app.push_event(turn(1, "s1", 10, 20));
+        app.push_event(session_updated(2, "s2", None, None, None, Some("t")));
+        let ids: Vec<&str> = app.sorted_sessions().iter().map(|s| s.session_id.as_str()).collect();
+        assert_eq!(ids, vec!["s1"]);
+    }
+
+    // --- session_event_len ---
+
+    #[test]
+    fn session_event_len_counts_only_target_session() {
+        let mut app = empty_app();
+        app.push_event(turn(1, "s1", 10, 20));
+        app.push_event(turn(2, "s2", 10, 20));
+        app.push_event(turn(3, "s2", 10, 20));
+        assert_eq!(app.session_event_len("s1"), 1);
+        assert_eq!(app.session_event_len("s2"), 2);
+    }
+
+    #[test]
+    fn session_event_len_excludes_hidden_events() {
+        let mut app = empty_app();
+        app.push_event(turn(1, "s1", 10, 20));
+        app.push_event(session_updated(2, "s1", None, None, None, None));
+        // 1 visible (turn), 1 hidden (session_updated).
+        assert_eq!(app.session_event_len("s1"), 1);
+    }
+
+    // --- ensure_session_selection ---
+
+    #[test]
+    fn ensure_session_selection_sets_top_on_none() {
+        let mut app = empty_app();
+        app.push_event(turn(1, "s1", 10, 20));
+        assert_eq!(app.sel_session_id, None);
+        app.ensure_session_selection();
+        assert_eq!(app.sel_session_id.as_deref(), Some("s1"));
+        assert_eq!(app.sel_activity, 0);
+    }
+
+    #[test]
+    fn ensure_session_selection_resets_on_eviction() {
+        // sel points to a session whose events have all been evicted.
+        let mut app = empty_app();
+        app.push_event(turn(1, "s1", 10, 20));
+        app.push_event(turn(2, "s2", 10, 20));
+        // Force sel to s_evicted (a session with zero visible events).
+        app.sel_session_id = Some("s_evicted".to_string());
+        app.ensure_session_selection();
+        // Should auto-select the top visible session (s2 newer than s1).
+        let sel = app.sel_session_id.as_deref();
+        assert!(sel == Some("s1") || sel == Some("s2"),
+            "should auto-select a session with events, got {sel:?}");
+        assert_eq!(app.sel_activity, 0);
+    }
+
+    #[test]
+    fn ensure_session_selection_is_idempotent() {
+        let mut app = empty_app();
+        app.push_event(turn(1, "s1", 10, 20));
+        app.ensure_session_selection();
+        app.sel_activity = 5; // Simulate the user scrolling.
+        app.ensure_session_selection(); // Second call — s1 still valid.
+        // sel_activity must NOT be reset (session is still valid).
+        assert_eq!(app.sel_activity, 5);
+    }
+
+    // --- scroll_down_sessions / scroll_up_sessions ---
+
+    #[test]
+    fn scroll_down_sessions_advances_identity() {
+        let mut app = empty_app();
+        push_turn_at(&mut app, 1, "s_newer", "2026-01-01T00:00:02Z");
+        push_turn_at(&mut app, 2, "s_older", "2026-01-01T00:00:01Z");
+        app.sel_session_id = Some("s_newer".to_string());
+        app.scroll_down_sessions();
+        assert_eq!(app.sel_session_id.as_deref(), Some("s_older"));
+    }
+
+    #[test]
+    fn scroll_down_sessions_resets_sel_activity() {
+        let mut app = empty_app();
+        push_turn_at(&mut app, 1, "s_newer", "2026-01-01T00:00:02Z");
+        push_turn_at(&mut app, 2, "s_older", "2026-01-01T00:00:01Z");
+        app.sel_session_id = Some("s_newer".to_string());
+        app.sel_activity = 3;
+        app.scroll_down_sessions();
+        assert_eq!(app.sel_activity, 0, "sel_activity resets on session change");
+    }
+
+    #[test]
+    fn scroll_down_sessions_no_op_at_end() {
+        let mut app = empty_app();
+        push_turn_at(&mut app, 1, "s_newer", "2026-01-01T00:00:02Z");
+        push_turn_at(&mut app, 2, "s_older", "2026-01-01T00:00:01Z");
+        app.sel_session_id = Some("s_older".to_string());
+        app.scroll_down_sessions();
+        assert_eq!(app.sel_session_id.as_deref(), Some("s_older"), "no-op at last");
+    }
+
+    #[test]
+    fn scroll_up_sessions_retreats_identity() {
+        let mut app = empty_app();
+        push_turn_at(&mut app, 1, "s_newer", "2026-01-01T00:00:02Z");
+        push_turn_at(&mut app, 2, "s_older", "2026-01-01T00:00:01Z");
+        app.sel_session_id = Some("s_older".to_string());
+        app.scroll_up_sessions();
+        assert_eq!(app.sel_session_id.as_deref(), Some("s_newer"));
+    }
+
+    #[test]
+    fn scroll_up_sessions_no_op_at_start() {
+        let mut app = empty_app();
+        push_turn_at(&mut app, 1, "s_newer", "2026-01-01T00:00:02Z");
+        push_turn_at(&mut app, 2, "s_older", "2026-01-01T00:00:01Z");
+        app.sel_session_id = Some("s_newer".to_string());
+        app.scroll_up_sessions();
+        assert_eq!(app.sel_session_id.as_deref(), Some("s_newer"), "no-op at first");
+    }
+
+    #[test]
+    fn scroll_sessions_empty_list_no_op() {
+        let mut app = empty_app();
+        // No events — both scroll methods are no-ops.
+        app.scroll_down_sessions();
+        assert_eq!(app.sel_session_id, None);
+        app.scroll_up_sessions();
+        assert_eq!(app.sel_session_id, None);
+    }
+
+    // --- switch_activity_pane / toggle_pane_expand ---
+
+    #[test]
+    fn switch_activity_pane_toggles() {
+        let mut app = empty_app();
+        assert_eq!(app.active_activity_pane, ActivityPane::Sessions);
+        app.switch_activity_pane();
+        assert_eq!(app.active_activity_pane, ActivityPane::Events);
+        app.switch_activity_pane();
+        assert_eq!(app.active_activity_pane, ActivityPane::Sessions);
+    }
+
+    #[test]
+    fn toggle_pane_expand_toggles() {
+        let mut app = empty_app();
+        assert!(!app.pane_expanded);
+        app.toggle_pane_expand();
+        assert!(app.pane_expanded);
+        app.toggle_pane_expand();
+        assert!(!app.pane_expanded);
     }
 }

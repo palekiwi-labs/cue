@@ -63,15 +63,22 @@ pub enum ActivityItem<'a> {
 /// Both `events` and `sessions` are borrowed for `'a`. The returned vec holds
 /// `&'a EventRecord` and `&'a str` slices into those collections.
 ///
-/// # Unwired — Stage C owns the rewrite
+/// # Unwired — Stage C owns the wiring
 ///
-/// This function is **not called** by `render_activity` (Slice 6b renders via
-/// inline filtered iteration in `ui.rs`, not via `build_activity_items`). The
-/// `(session_id, project_dir)` header key is **degenerate**: `project_dir` is
-/// workspace-constant (every event shares it), so the key collapses to
-/// `session_id` alone. Stage C rewrites this with `parent_id`-based nesting to
-/// fold child sessions under their parent's turns, at which point this module
-/// will be wired in and the degenerate key replaced.
+/// This function is **not called** by the Slice 6c two-pane renderer.
+/// Stage-B Pane 2 (`render_events_pane` in `ui.rs`) uses a simpler per-session
+/// flat filter instead. Stage C will wire this function into Pane 2 by adding a
+/// `session_id: Option<&str>` filter at the top of the `events.iter().rev()`
+/// loop; whether to suppress `SessionHeader` items in single-session mode is an
+/// open design decision for stage C.
+///
+/// The `(session_id, project_dir)` header key is **degenerate**: `project_dir`
+/// is workspace-constant (every event shares it), so the key collapses to
+/// `session_id` alone. Stage C replaces this with `parent_id`-based nesting to
+/// fold child sessions under their parent's turns.
+///
+/// Note: this entire module may be replaced or cleaned up in the stage-C PR if
+/// the two-pane design renders the current grouping model obsolete.
 #[allow(dead_code)] // called by the renderer in Slice 6
 pub fn build_activity_items<'a>(
     events: &'a VecDeque<EventRecord>,

@@ -1,4 +1,4 @@
-use crate::app::{AcuityStatus, App, Column, SessionSummary, View};
+use crate::app::{AcuityStatus, ActivityPane, App, Column, SessionSummary, View};
 use acuity_api::{AcuityEvent, EventRecord};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -145,102 +145,199 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
 }
 
 // ---------------------------------------------------------------------------
-// Activity Feed view
+// Activity Feed view  (two-pane: Sessions left 1/3, Events right 2/3)
 // ---------------------------------------------------------------------------
 
 /// Render the Activity Feed (View 2).
 ///
-/// Iterates the **filtered** set (hiding `session_updated` rows whose payload
-/// is already in `SessionSummary`), driving both header injection and the
-/// `sel_activity → visual` mapping off the filtered enumeration. Mirrors
-/// `render_diagnostics` for the filtered-selection model.
+/// Two panes: Sessions (Pane 1, left 1/3) and Events (Pane 2, right 2/3).
+/// When `app.pane_expanded`, the active pane fills the full area.
+/// `Tab`/`Shift-Tab` switches panes; `z` toggles expand.
 fn render_activity(frame: &mut Frame, app: &App) {
-    let (list_area, help_area) = layout_with_help(frame.area());
+    let (view_area, help_area) = layout_with_help(frame.area());
 
-    // Collect visible events in reverse-chrono (newest first), hiding
-    // session_updated rows whose payload is already absorbed into
-    // SessionSummary before render.
-    let visible: Vec<&EventRecord> = app
-        .events
+    match (app.pane_expanded, app.active_activity_pane) {
+        (true, ActivityPane::Sessions) => render_sessions_pane(frame, app, view_area),
+        (true, ActivityPane::Events) => render_events_pane(frame, app, view_area),
+        (false, _) => {
+            let [sessions_area, events_area] = Layout::horizontal([
+                Constraint::Ratio(1, 3),
+                Constraint::Ratio(2, 3),
+            ])
+            .areas(view_area);
+            render_sessions_pane(frame, app, sessions_area);
+            render_events_pane(frame, app, events_area);
+        }
+    }
+
+    frame.render_widget(activity_help_line(&app.acuity_status), help_area);
+}
+
+/// Render the Sessions pane (Pane 1 — left 1/3).
+///
+/// One row per session, sorted newest-first by `sorted_sessions()`.
+/// Row format: `<project>  <harness>  <title-or-placeholder>`.
+fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
+    let is_active = app.active_activity_pane == ActivityPane::Sessions;
+
+    let sessions = app.sorted_sessions();
+
+    // Find the visual index of the selected session.
+    let sel_visual: Option<usize> = app
+        .sel_session_id
+        .as_deref()
+        .and_then(|id| sessions.iter().position(|s| s.session_id == id));
+
+    let items: Vec<ListItem> = sessions
         .iter()
-        .rev()
-        .filter(|e| !is_hidden_in_activity(&e.event_type))
-        .collect();
-
-    let mut items: Vec<ListItem> = Vec::new();
-    let mut selected_visual: Option<usize> = None;
-    let mut prev_session: Option<&str> = None;
-
-    // Selection indexes the filtered set; clamp to the last visible row and
-    // select None when the feed is empty (mirrors render_diagnostics).
-    let sel = if visible.is_empty() {
-        None
-    } else {
-        Some(app.sel_activity.min(visible.len() - 1))
-    };
-
-    for (idx, record) in visible.iter().enumerate() {
-        // Inject a session header whenever the session_id changes.
-        if prev_session != Some(record.session_id.as_str()) {
-            let summary = app.sessions.get(record.session_id.as_str());
-            let (label, is_placeholder) = session_label(summary, &record.session_id);
-            // Dim placeholder until a real title arrives via session_updated;
-            // bright/bold once the title is known — the flip is a visible
-            // verification signal that 6a title-capture round-trips to the UI.
-            let header_style = if is_placeholder {
+        .map(|s| {
+            let project = project_basename(&s.project_dir);
+            let (label, is_placeholder) = session_label(Some(s), &s.session_id);
+            let title_style = if is_placeholder {
                 Style::default().fg(Color::DarkGray)
             } else {
                 Style::default()
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD)
             };
-            items.push(ListItem::new(Line::from(Span::styled(
-                format!(" \u{2500}\u{2500} {label} \u{2500}\u{2500}"),
-                header_style,
-            ))));
-            prev_session = Some(record.session_id.as_str());
-        }
+            let line = Line::from(vec![
+                Span::styled(project.to_string(), Style::default().fg(Color::Magenta)),
+                Span::raw("  "),
+                Span::styled(s.harness.clone(), Style::default().fg(Color::Blue)),
+                Span::raw("  "),
+                Span::styled(label, title_style),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
 
-        // Map the filtered-set index to the visual list position (accounting
-        // for injected header rows).
-        if Some(idx) == sel {
-            selected_visual = Some(items.len());
-        }
+    let highlight_style = if is_active {
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().add_modifier(Modifier::DIM)
+    };
 
-        let ts = record
-            .received_at
-            .get(..19)
-            .unwrap_or(record.received_at.as_str());
-        let summary = event_summary(record);
-        let line = Line::from(vec![
-            Span::styled(format!(" {ts}  "), Style::default().fg(Color::DarkGray)),
-            Span::styled(
-                format!("{:<24}", record.event_type),
-                Style::default().fg(Color::White),
-            ),
-            Span::raw(format!("  {summary}")),
-        ]);
-        items.push(ListItem::new(line));
-    }
+    let border_style = if is_active {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
 
     let list = List::new(items)
         .block(
             Block::default()
-                .title(activity_block_title(app))
-                .borders(Borders::ALL),
+                .title(" Sessions ")
+                .borders(Borders::ALL)
+                .border_style(border_style),
         )
-        .highlight_style(
-            Style::default()
-                .bg(Color::DarkGray)
-                .add_modifier(Modifier::BOLD),
-        )
+        .highlight_style(highlight_style)
         .highlight_symbol("> ");
 
     let mut list_state = ListState::default();
-    list_state.select(selected_visual);
-    frame.render_stateful_widget(list, list_area, &mut list_state);
+    list_state.select(sel_visual);
+    frame.render_stateful_widget(list, area, &mut list_state);
+}
 
-    frame.render_widget(status_help_line(&app.acuity_status), help_area);
+/// Render the Events pane (Pane 2 — right 2/3).
+///
+/// Shows events for the selected session, reverse-chrono, hiding
+/// `session_updated` rows. Empty state shows a dim placeholder.
+fn render_events_pane(frame: &mut Frame, app: &App, area: Rect) {
+    let is_active = app.active_activity_pane == ActivityPane::Events;
+
+    let sel_id = app.sel_session_id.as_deref();
+
+    // Block title: " Events · <session label> ".
+    let block_title = match sel_id {
+        None => " Events ".to_string(),
+        Some(id) => {
+            let summary = app.sessions.get(id);
+            let (label, _) = session_label(summary, id);
+            format!(" Events \u{00b7} {label} ")
+        }
+    };
+
+    let border_style = if is_active {
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().fg(Color::DarkGray)
+    };
+
+    let highlight_style = if is_active {
+        Style::default()
+            .bg(Color::DarkGray)
+            .add_modifier(Modifier::BOLD)
+    } else {
+        Style::default().add_modifier(Modifier::DIM)
+    };
+
+    // Collect visible events for the selected session, reverse-chrono.
+    let visible: Vec<&EventRecord> = app
+        .events
+        .iter()
+        .rev()
+        .filter(|e| {
+            sel_id.is_some_and(|id| e.session_id == id)
+                && !is_hidden_in_activity(&e.event_type)
+        })
+        .collect();
+
+    let items: Vec<ListItem> = if visible.is_empty() {
+        vec![ListItem::new(Line::from(Span::styled(
+            "  (no events)",
+            Style::default().fg(Color::DarkGray),
+        )))]
+    } else {
+        visible
+            .iter()
+            .map(|record| {
+                let ts = record
+                    .received_at
+                    .get(..19)
+                    .unwrap_or(record.received_at.as_str());
+                let summary = event_summary(record);
+                let line = Line::from(vec![
+                    Span::styled(
+                        format!(" {ts}  "),
+                        Style::default().fg(Color::DarkGray),
+                    ),
+                    Span::styled(
+                        format!("{:<24}", record.event_type),
+                        Style::default().fg(Color::White),
+                    ),
+                    Span::raw(format!("  {summary}")),
+                ]);
+                ListItem::new(line)
+            })
+            .collect()
+    };
+
+    // Clamp selection to the visible list.
+    let sel_visual = if visible.is_empty() {
+        None
+    } else {
+        Some(app.sel_activity.min(visible.len() - 1))
+    };
+
+    let list = List::new(items)
+        .block(
+            Block::default()
+                .title(block_title)
+                .borders(Borders::ALL)
+                .border_style(border_style),
+        )
+        .highlight_style(highlight_style)
+        .highlight_symbol("> ");
+
+    let mut list_state = ListState::default();
+    list_state.select(sel_visual);
+    frame.render_stateful_widget(list, area, &mut list_state);
 }
 
 // ---------------------------------------------------------------------------
@@ -427,23 +524,38 @@ pub(crate) fn session_label(
     (format!("\u{2026}{suffix}"), true)
 }
 
-/// Build the block title for the Activity Feed pane.
+/// Extract the basename (last path component) from a project_dir string.
 ///
-/// `" Activity Feed · <harness> / <project-basename> "` when a session is
-/// present (harness and project are workspace-constant today); `" Activity Feed "`
-/// when no sessions are known yet. The harness/project appear once here, not
-/// per header — a second harness ('pi') would make per-header a one-line change.
-fn activity_block_title(app: &App) -> String {
-    let Some(s) = app.sessions.values().next() else {
-        return " Activity Feed ".to_string();
-    };
-    let project = s
-        .project_dir
+/// Returns the full `project_dir` if it has no `/` or the basename is empty.
+/// Used by `render_sessions_pane` to display a compact project name per row.
+pub(crate) fn project_basename(project_dir: &str) -> &str {
+    project_dir
         .rsplit('/')
         .next()
         .filter(|b| !b.is_empty())
-        .unwrap_or(&s.project_dir);
-    format!(" Activity Feed \u{00b7} {} / {} ", s.harness, project)
+        .unwrap_or(project_dir)
+}
+
+/// Build the help/status bar line for the Activity view.
+///
+/// Adds `Tab pane` and `z expand` hints that are specific to the two-pane
+/// Activity layout. Separate from `status_help_line` so the Diagnostics
+/// view's help bar is unaffected.
+fn activity_help_line(status: &AcuityStatus) -> Line<'static> {
+    let (text, color) = acuity_status_parts(status);
+    Line::from(vec![
+        Span::styled(" q", Style::default().fg(Color::Yellow)),
+        Span::raw(" quit  "),
+        Span::styled("1/2/3", Style::default().fg(Color::Yellow)),
+        Span::raw(" views  "),
+        Span::styled("Tab", Style::default().fg(Color::Yellow)),
+        Span::raw(" pane  "),
+        Span::styled("z", Style::default().fg(Color::Yellow)),
+        Span::raw(" expand  "),
+        Span::styled("j/k", Style::default().fg(Color::Yellow)),
+        Span::raw(" navigate  |  acuity: "),
+        Span::styled(text, Style::default().fg(color)),
+    ])
 }
 
 // ---------------------------------------------------------------------------
@@ -672,38 +784,29 @@ mod tests {
         assert_ne!(a, b, "distinct suffixes must yield distinct labels");
     }
 
-    // --- activity_block_title ---
+    // --- project_basename ---
 
     #[test]
-    fn activity_block_title_no_sessions() {
-        let app = App::new(vec![]);
-        assert_eq!(activity_block_title(&app), " Activity Feed ");
+    fn project_basename_extracts_last_component() {
+        assert_eq!(project_basename("/home/pl/code/palekiwi-labs/cue"), "cue");
     }
 
     #[test]
-    fn activity_block_title_with_session() {
-        let mut app = App::new(vec![]);
-        app.sessions.insert(
-            "s1".to_string(),
-            SessionSummary {
-                session_id: "s1".to_string(),
-                project_dir: "/home/pl/code/palekiwi-labs/cue".to_string(),
-                session_title: None,
-                first_seen: String::new(),
-                last_seen: String::new(),
-                input_tokens: 0,
-                output_tokens: 0,
-                error_count: 0,
-                harness: "opencode".to_string(),
-                parent_id: None,
-                agent: None,
-                model: None,
-            },
-        );
-        assert_eq!(
-            activity_block_title(&app),
-            " Activity Feed \u{00b7} opencode / cue "
-        );
+    fn project_basename_single_component() {
+        assert_eq!(project_basename("cue"), "cue");
+    }
+
+    #[test]
+    fn project_basename_trailing_slash_falls_back_to_full() {
+        // rsplit('/').next() on a trailing-slash path yields "" (the empty
+        // component after the last slash). filter(!empty) rejects it, so
+        // unwrap_or falls back to the full project_dir string.
+        assert_eq!(project_basename("/home/pl/code/"), "/home/pl/code/");
+    }
+
+    #[test]
+    fn project_basename_root_slash_falls_back_to_full() {
+        assert_eq!(project_basename("/"), "/");
     }
 }
 

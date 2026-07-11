@@ -47,6 +47,8 @@ fn map_key(code: KeyCode) -> Action {
         KeyCode::Char('2') => Action::SwitchView(View::Activity),
         KeyCode::Char('3') => Action::SwitchView(View::Diagnostics),
         KeyCode::Char('r') => Action::Refresh,
+        KeyCode::Tab | KeyCode::BackTab => Action::SwitchPane,
+        KeyCode::Char('z') => Action::ToggleExpand,
         _ => Action::None,
     }
 }

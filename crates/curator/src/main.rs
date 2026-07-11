@@ -9,7 +9,7 @@ mod tui;
 mod ui;
 
 use anyhow::Result;
-use app::{App, View};
+use app::{ActivityPane, App, View};
 use clap::Parser;
 use cuelib::artifact::read_artifacts;
 use event::Action;
@@ -136,19 +136,38 @@ fn process_msg(msg: Msg, app: &mut App, root: &Path, branch: &str) -> Result<Loo
         Msg::Input(Action::Refresh) => reload_tasks(app, root, branch)?,
         Msg::Input(Action::Down) => match app.active_view {
             View::Kanban => app.scroll_down(),
-            View::Activity => app.scroll_down_activity(),
+            View::Activity => match app.active_activity_pane {
+                ActivityPane::Sessions => app.scroll_down_sessions(),
+                ActivityPane::Events => app.scroll_down_activity(),
+            },
             View::Diagnostics => app.scroll_down_diagnostics(),
         },
         Msg::Input(Action::Up) => match app.active_view {
             View::Kanban => app.scroll_up(),
-            View::Activity => app.scroll_up_activity(),
+            View::Activity => match app.active_activity_pane {
+                ActivityPane::Sessions => app.scroll_up_sessions(),
+                ActivityPane::Events => app.scroll_up_activity(),
+            },
             View::Diagnostics => app.scroll_up_diagnostics(),
         },
         Msg::Input(Action::Left) => app.move_left(),
         Msg::Input(Action::Right) => app.move_right(),
+        Msg::Input(Action::SwitchPane) => {
+            if app.active_view == View::Activity {
+                app.switch_activity_pane();
+            }
+        }
+        Msg::Input(Action::ToggleExpand) => {
+            if app.active_view == View::Activity {
+                app.toggle_pane_expand();
+            }
+        }
         Msg::Input(Action::None) => {}
         Msg::Redraw => {}
-        Msg::Sse(record) => app.push_event(record),
+        Msg::Sse(record) => {
+            app.push_event(record);
+            app.ensure_session_selection();
+        }
         Msg::SseStatus(s) => app.acuity_status = s.into(),
     }
     Ok(LoopControl::Continue)
