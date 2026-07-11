@@ -419,6 +419,26 @@ pub(crate) fn session_label(
     (format!("\u{2026}{suffix}"), true)
 }
 
+/// Build the block title for the Activity Feed pane.
+///
+/// `" Activity Feed · <harness> / <project-basename> "` when a session is
+/// present (harness and project are workspace-constant today); `" Activity Feed "`
+/// when no sessions are known yet. The harness/project appear once here, not
+/// per header — a second harness ('pi') would make per-header a one-line change.
+#[allow(dead_code)] // wired in Slice 6b step 6 (render_activity rebuild)
+fn activity_block_title(app: &App) -> String {
+    let Some(s) = app.sessions.values().next() else {
+        return " Activity Feed ".to_string();
+    };
+    let project = s
+        .project_dir
+        .rsplit('/')
+        .next()
+        .filter(|b| !b.is_empty())
+        .unwrap_or(&s.project_dir);
+    format!(" Activity Feed \u{00b7} {} / {} ", s.harness, project)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -643,6 +663,40 @@ mod tests {
         let (a, _) = session_label(Some(&s), "ses_0f14aaaaaa");
         let (b, _) = session_label(Some(&s), "ses_0f14bbbbbb");
         assert_ne!(a, b, "distinct suffixes must yield distinct labels");
+    }
+
+    // --- activity_block_title ---
+
+    #[test]
+    fn activity_block_title_no_sessions() {
+        let app = App::new(vec![]);
+        assert_eq!(activity_block_title(&app), " Activity Feed ");
+    }
+
+    #[test]
+    fn activity_block_title_with_session() {
+        let mut app = App::new(vec![]);
+        app.sessions.insert(
+            "s1".to_string(),
+            SessionSummary {
+                session_id: "s1".to_string(),
+                project_dir: "/home/pl/code/palekiwi-labs/cue".to_string(),
+                session_title: None,
+                first_seen: String::new(),
+                last_seen: String::new(),
+                input_tokens: 0,
+                output_tokens: 0,
+                error_count: 0,
+                harness: "opencode".to_string(),
+                parent_id: None,
+                agent: None,
+                model: None,
+            },
+        );
+        assert_eq!(
+            activity_block_title(&app),
+            " Activity Feed \u{00b7} opencode / cue "
+        );
     }
 }
 
