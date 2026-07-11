@@ -8,13 +8,11 @@ pub enum Action {
     Up,
     Left,
     Right,
+    Enter,
+    Escape,
     /// Switch the active view (keys 1/2/3).
     SwitchView(View),
     /// Force-reload artifacts from disk (`r` key).
     Refresh,
-    /// Switch between Sessions and Events panes in the Activity view (Tab / Shift-Tab).
-    SwitchPane,
-    /// Toggle the active pane to fullwidth / restore split (`z` key).
-    ToggleExpand,
     None,
 }

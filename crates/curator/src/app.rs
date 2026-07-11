@@ -13,11 +13,21 @@ pub enum View {
     Diagnostics,
 }
 
-/// Which pane of the two-pane Activity view is active.
+/// Three-state layout for the Activity view.
+///
+/// Transitions:
+/// - `SessionsFull` ↔ Enter ↔ `Split`
+/// - `SessionsFull` | `Split` + Right → `DetailFull`
+/// - `DetailFull` + Escape → `Split`
+/// - Left: no-op in Activity view (user spec)
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ActivityPane {
-    Sessions,
-    Events,
+pub enum ActivityLayout {
+    /// Default: sessions list fullscreen. j/k navigates sessions.
+    SessionsFull,
+    /// Split: sessions pane left (focused, j/k), detail pane right (static).
+    Split,
+    /// Detail pane fullscreen. j/k navigates events list.
+    DetailFull,
 }
 
 /// Which kanban column is currently active.
@@ -147,13 +157,11 @@ pub struct App {
     pub sel_diagnostics: usize,
 
     // --- Two-pane Activity view state ---
-    /// Which pane of the Activity view is currently focused.
-    pub active_activity_pane: ActivityPane,
+    /// Layout state of the Activity view.
+    pub activity_layout: ActivityLayout,
     /// Identity-based session selection: tracks the session_id of the selected
     /// session in Pane 1. `None` until at least one event has arrived.
     pub sel_session_id: Option<String>,
-    /// When `true`, the active pane expands to fill the full activity area.
-    pub pane_expanded: bool,
 }
 
 impl App {
@@ -179,9 +187,8 @@ impl App {
             sessions: HashMap::new(),
             sel_activity: 0,
             sel_diagnostics: 0,
-            active_activity_pane: ActivityPane::Sessions,
+            activity_layout: ActivityLayout::SessionsFull,
             sel_session_id: None,
-            pane_expanded: false,
         }
     }
 
@@ -417,17 +424,33 @@ impl App {
         self.sel_activity = 0;
     }
 
-    /// Toggle the active Activity pane between Sessions and Events.
-    pub fn switch_activity_pane(&mut self) {
-        self.active_activity_pane = match self.active_activity_pane {
-            ActivityPane::Sessions => ActivityPane::Events,
-            ActivityPane::Events => ActivityPane::Sessions,
+    /// Toggle the detail pane visibility: `SessionsFull ↔ Split`.
+    /// No-op when in `DetailFull` (Escape handles the return from there).
+    pub fn toggle_detail_pane(&mut self) {
+        self.activity_layout = match self.activity_layout {
+            ActivityLayout::SessionsFull => ActivityLayout::Split,
+            ActivityLayout::Split => ActivityLayout::SessionsFull,
+            ActivityLayout::DetailFull => ActivityLayout::DetailFull,
         };
     }
 
-    /// Toggle the expanded/split layout for the Activity view.
-    pub fn toggle_pane_expand(&mut self) {
-        self.pane_expanded = !self.pane_expanded;
+    /// Enter the fullscreen detail view from any other layout state.
+    /// No-op if already in `DetailFull`.
+    pub fn enter_detail_full(&mut self) {
+        match self.activity_layout {
+            ActivityLayout::SessionsFull | ActivityLayout::Split => {
+                self.activity_layout = ActivityLayout::DetailFull;
+            }
+            ActivityLayout::DetailFull => {}
+        }
+    }
+
+    /// Return from fullscreen detail to the split layout.
+    /// No-op if not in `DetailFull`.
+    pub fn return_from_detail_full(&mut self) {
+        if self.activity_layout == ActivityLayout::DetailFull {
+            self.activity_layout = ActivityLayout::Split;
+        }
     }
 
     /// Move the selection down within the active column.
@@ -1185,25 +1208,75 @@ mod tests {
         assert_eq!(app.sel_session_id, None);
     }
 
-    // --- switch_activity_pane / toggle_pane_expand ---
+    // --- ActivityLayout transitions ---
 
     #[test]
-    fn switch_activity_pane_toggles() {
+    fn toggle_detail_pane_sessions_full_to_split() {
         let mut app = empty_app();
-        assert_eq!(app.active_activity_pane, ActivityPane::Sessions);
-        app.switch_activity_pane();
-        assert_eq!(app.active_activity_pane, ActivityPane::Events);
-        app.switch_activity_pane();
-        assert_eq!(app.active_activity_pane, ActivityPane::Sessions);
+        assert_eq!(app.activity_layout, ActivityLayout::SessionsFull);
+        app.toggle_detail_pane();
+        assert_eq!(app.activity_layout, ActivityLayout::Split);
     }
 
     #[test]
-    fn toggle_pane_expand_toggles() {
+    fn toggle_detail_pane_split_to_sessions_full() {
         let mut app = empty_app();
-        assert!(!app.pane_expanded);
-        app.toggle_pane_expand();
-        assert!(app.pane_expanded);
-        app.toggle_pane_expand();
-        assert!(!app.pane_expanded);
+        app.activity_layout = ActivityLayout::Split;
+        app.toggle_detail_pane();
+        assert_eq!(app.activity_layout, ActivityLayout::SessionsFull);
+    }
+
+    #[test]
+    fn toggle_detail_pane_noop_in_detail_full() {
+        let mut app = empty_app();
+        app.activity_layout = ActivityLayout::DetailFull;
+        app.toggle_detail_pane();
+        assert_eq!(app.activity_layout, ActivityLayout::DetailFull);
+    }
+
+    #[test]
+    fn enter_detail_full_from_sessions_full() {
+        let mut app = empty_app();
+        app.enter_detail_full();
+        assert_eq!(app.activity_layout, ActivityLayout::DetailFull);
+    }
+
+    #[test]
+    fn enter_detail_full_from_split() {
+        let mut app = empty_app();
+        app.activity_layout = ActivityLayout::Split;
+        app.enter_detail_full();
+        assert_eq!(app.activity_layout, ActivityLayout::DetailFull);
+    }
+
+    #[test]
+    fn enter_detail_full_noop_when_already_full() {
+        let mut app = empty_app();
+        app.activity_layout = ActivityLayout::DetailFull;
+        app.enter_detail_full();
+        assert_eq!(app.activity_layout, ActivityLayout::DetailFull);
+    }
+
+    #[test]
+    fn return_from_detail_full_goes_to_split() {
+        let mut app = empty_app();
+        app.activity_layout = ActivityLayout::DetailFull;
+        app.return_from_detail_full();
+        assert_eq!(app.activity_layout, ActivityLayout::Split);
+    }
+
+    #[test]
+    fn return_from_detail_full_noop_in_sessions_full() {
+        let mut app = empty_app();
+        app.return_from_detail_full();
+        assert_eq!(app.activity_layout, ActivityLayout::SessionsFull);
+    }
+
+    #[test]
+    fn return_from_detail_full_noop_in_split() {
+        let mut app = empty_app();
+        app.activity_layout = ActivityLayout::Split;
+        app.return_from_detail_full();
+        assert_eq!(app.activity_layout, ActivityLayout::Split);
     }
 }

@@ -43,12 +43,12 @@ fn map_key(code: KeyCode) -> Action {
         KeyCode::Char('k') | KeyCode::Up => Action::Up,
         KeyCode::Char('h') | KeyCode::Left => Action::Left,
         KeyCode::Char('l') | KeyCode::Right => Action::Right,
+        KeyCode::Enter => Action::Enter,
+        KeyCode::Esc => Action::Escape,
         KeyCode::Char('1') => Action::SwitchView(View::Kanban),
         KeyCode::Char('2') => Action::SwitchView(View::Activity),
         KeyCode::Char('3') => Action::SwitchView(View::Diagnostics),
         KeyCode::Char('r') => Action::Refresh,
-        KeyCode::Tab | KeyCode::BackTab => Action::SwitchPane,
-        KeyCode::Char('z') => Action::ToggleExpand,
         _ => Action::None,
     }
 }

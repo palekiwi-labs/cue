@@ -1,4 +1,4 @@
-use crate::app::{AcuityStatus, ActivityPane, App, Column, SessionSummary, View};
+use crate::app::{AcuityStatus, ActivityLayout, App, Column, SessionSummary, View};
 use acuity_api::{AcuityEvent, EventRecord};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
@@ -150,27 +150,35 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
 
 /// Render the Activity Feed (View 2).
 ///
-/// Two panes: Sessions (Pane 1, left 1/3) and Events (Pane 2, right 2/3).
-/// When `app.pane_expanded`, the active pane fills the full area.
-/// `Tab`/`Shift-Tab` switches panes; `z` toggles expand.
+/// Three layouts driven by `app.activity_layout`:
+/// - `SessionsFull`: sessions list fullscreen.
+/// - `Split`: sessions left (1/3) + detail right (2/3), sessions focused.
+/// - `DetailFull`: detail pane fullscreen, events navigable.
 fn render_activity(frame: &mut Frame, app: &App) {
     let (view_area, help_area) = layout_with_help(frame.area());
 
-    match (app.pane_expanded, app.active_activity_pane) {
-        (true, ActivityPane::Sessions) => render_sessions_pane(frame, app, view_area),
-        (true, ActivityPane::Events) => render_events_pane(frame, app, view_area),
-        (false, _) => {
-            let [sessions_area, events_area] = Layout::horizontal([
+    match app.activity_layout {
+        ActivityLayout::SessionsFull => {
+            render_sessions_pane(frame, app, view_area);
+        }
+        ActivityLayout::Split => {
+            let [sessions_area, detail_area] = Layout::horizontal([
                 Constraint::Ratio(1, 3),
                 Constraint::Ratio(2, 3),
             ])
             .areas(view_area);
             render_sessions_pane(frame, app, sessions_area);
-            render_events_pane(frame, app, events_area);
+            render_events_pane(frame, app, detail_area);
+        }
+        ActivityLayout::DetailFull => {
+            render_events_pane(frame, app, view_area);
         }
     }
 
-    frame.render_widget(activity_help_line(&app.acuity_status), help_area);
+    frame.render_widget(
+        activity_help_line(&app.acuity_status, app.activity_layout),
+        help_area,
+    );
 }
 
 /// Render the Sessions pane (Pane 1 — left 1/3).
@@ -178,7 +186,8 @@ fn render_activity(frame: &mut Frame, app: &App) {
 /// One row per session, sorted newest-first by `sorted_sessions()`.
 /// Row format: `<project>  <harness>  <title-or-placeholder>`.
 fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
-    let is_active = app.active_activity_pane == ActivityPane::Sessions;
+    // Sessions pane is only rendered when it is the focused element.
+    let is_active = true;
 
     let sessions = app.sorted_sessions();
 
@@ -251,7 +260,7 @@ fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
 /// Shows events for the selected session, reverse-chrono, hiding
 /// `session_updated` rows. Empty state shows a dim placeholder.
 fn render_events_pane(frame: &mut Frame, app: &App, area: Rect) {
-    let is_active = app.active_activity_pane == ActivityPane::Events;
+    let is_active = app.activity_layout == ActivityLayout::DetailFull;
 
     let sel_id = app.sel_session_id.as_deref();
 
@@ -542,24 +551,32 @@ pub(crate) fn project_basename(project_dir: &str) -> &str {
 
 /// Build the help/status bar line for the Activity view.
 ///
-/// Adds `Tab pane` and `z expand` hints that are specific to the two-pane
-/// Activity layout. Separate from `status_help_line` so the Diagnostics
-/// view's help bar is unaffected.
-fn activity_help_line(status: &AcuityStatus) -> Line<'static> {
+/// Layout-aware: shows Enter/→ hints in `SessionsFull`/`Split` and Esc in
+/// `DetailFull`. Separate from `status_help_line` so Diagnostics is unaffected.
+fn activity_help_line(status: &AcuityStatus, layout: ActivityLayout) -> Line<'static> {
     let (text, color) = acuity_status_parts(status);
-    Line::from(vec![
+    let mut spans = vec![
         Span::styled(" q", Style::default().fg(Color::Yellow)),
         Span::raw(" quit  "),
         Span::styled("1/2/3", Style::default().fg(Color::Yellow)),
         Span::raw(" views  "),
-        Span::styled("Tab", Style::default().fg(Color::Yellow)),
-        Span::raw(" pane  "),
-        Span::styled("z", Style::default().fg(Color::Yellow)),
-        Span::raw(" expand  "),
-        Span::styled("j/k", Style::default().fg(Color::Yellow)),
-        Span::raw(" navigate  |  acuity: "),
-        Span::styled(text, Style::default().fg(color)),
-    ])
+    ];
+    match layout {
+        ActivityLayout::DetailFull => {
+            spans.push(Span::styled("Esc", Style::default().fg(Color::Yellow)));
+            spans.push(Span::raw(" back  "));
+        }
+        _ => {
+            spans.push(Span::styled("Enter", Style::default().fg(Color::Yellow)));
+            spans.push(Span::raw(" detail  "));
+            spans.push(Span::styled("\u{2192}", Style::default().fg(Color::Yellow)));
+            spans.push(Span::raw(" fullscreen  "));
+        }
+    }
+    spans.push(Span::styled("j/k", Style::default().fg(Color::Yellow)));
+    spans.push(Span::raw(" navigate  |  acuity: "));
+    spans.push(Span::styled(text, Style::default().fg(color)));
+    Line::from(spans)
 }
 
 // ---------------------------------------------------------------------------
