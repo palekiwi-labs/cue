@@ -112,10 +112,10 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
     let items: Vec<ListItem> = tasks
         .iter()
         .map(|task| {
-            let priority_label = task.priority_raw.as_deref().unwrap_or("normal");
-            let colour = priority_colour(task.priority_raw.as_deref());
+            let priority_label = task.meta.priority_raw.as_deref().unwrap_or("normal");
+            let colour = priority_colour(task.meta.priority_raw.as_deref());
             let line = Line::from(vec![
-                Span::raw(task.title.as_str()),
+                Span::raw(task.meta.title.as_str()),
                 Span::raw("  "),
                 Span::styled(format!("[{priority_label}]"), Style::default().fg(colour)),
             ]);
