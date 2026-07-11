@@ -192,12 +192,10 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
     // Inner width: area − 2 borders − 1 leading space pad − 1 right margin.
     let inner_width = (area.width as usize).saturating_sub(4);
 
-    // Each card is rendered as two ListItems: a blank separator (never
-    // selected → never highlighted) followed by the 3-line card content.
-    // This gives true margin semantics: the gap sits outside the highlight.
     let items: Vec<ListItem> = tasks
         .iter()
-        .flat_map(|task| {
+        .enumerate()
+        .map(|(idx, task)| {
             let priority_label = task.meta.priority_raw.as_deref().unwrap_or("normal");
             let colour = priority_colour(task.meta.priority_raw.as_deref());
 
@@ -208,12 +206,20 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
                 .and_then(|n| n.to_str())
                 .unwrap_or("");
 
+            // Selected card: title highlighted in yellow instead of a
+            // whole-item background highlight.
+            let title_style = if idx == sel {
+                Style::default().fg(Color::Yellow)
+            } else {
+                Style::default()
+            };
+
             // Wrapped title: up to 2 lines, char-wrapped to inner_width.
-            // Leading space provides 1-char left padding inside the highlight.
+            // Leading space provides 1-char left padding.
             let title_lines = wrap_title(&task.meta.title, inner_width);
             let mut lines: Vec<Line> = title_lines
                 .into_iter()
-                .map(|s| Line::from(Span::raw(format!(" {s}"))))
+                .map(|s| Line::from(Span::styled(format!(" {s}"), title_style)))
                 .collect();
 
             // Line 3: " [priority]  basename"
@@ -227,29 +233,20 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
                 Span::styled(proj_name.to_string(), Style::default().fg(Color::DarkGray)),
             ]));
 
-            // Blank separator (margin) + card content.
-            [ListItem::new(Line::default()), ListItem::new(lines)]
+            // Bottom padding: blank line for breathing room between cards.
+            lines.push(Line::default());
+
+            ListItem::new(lines)
         })
         .collect();
 
-    let highlight_style = if is_active {
-        Style::default()
-            .bg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().add_modifier(Modifier::DIM)
-    };
-
     let list = List::new(items)
         .block(block)
-        .highlight_style(highlight_style)
         .highlight_spacing(HighlightSpacing::Never);
 
-    // Visual index: logical card index * 2 + 1 (always the card row,
-    // never the blank separator row).
     let mut list_state = ListState::default();
     if !tasks.is_empty() {
-        list_state.select(Some(sel * 2 + 1));
+        list_state.select(Some(sel));
     }
 
     frame.render_stateful_widget(list, area, &mut list_state);
