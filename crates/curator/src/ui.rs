@@ -109,17 +109,40 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
         })
         .border_style(border_style);
 
+    // Inner width: area − 2 borders − 2 chars for the "> " highlight symbol.
+    let inner_width = (area.width as usize).saturating_sub(4);
+
     let items: Vec<ListItem> = tasks
         .iter()
         .map(|task| {
             let priority_label = task.meta.priority_raw.as_deref().unwrap_or("normal");
             let colour = priority_colour(task.meta.priority_raw.as_deref());
-            let line = Line::from(vec![
-                Span::raw(task.meta.title.as_str()),
+
+            // Project basename from the registered root path.
+            let proj_name = task
+                .project_root
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+
+            // Wrapped title: up to 2 lines, char-wrapped to inner_width.
+            let title_lines = wrap_title(&task.meta.title, inner_width);
+            let mut lines: Vec<Line> = title_lines
+                .into_iter()
+                .map(|s| Line::from(Span::raw(s)))
+                .collect();
+
+            // Line 3: [priority]  basename
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("[{priority_label}]"),
+                    Style::default().fg(colour),
+                ),
                 Span::raw("  "),
-                Span::styled(format!("[{priority_label}]"), Style::default().fg(colour)),
-            ]);
-            ListItem::new(line)
+                Span::styled(proj_name.to_string(), Style::default().fg(Color::DarkGray)),
+            ]));
+
+            ListItem::new(lines)
         })
         .collect();
 
@@ -603,6 +626,33 @@ pub(crate) fn session_label(
     (format!("\u{2026}{suffix}"), true)
 }
 
+/// Char-wrap `title` to at most `width` display columns, capping at 2 lines.
+///
+/// - If `title` fits in `width` chars, returns a single-element `Vec`.
+/// - If it overflows, line 1 is the first `width` chars; line 2 is the next
+///   up to `width` chars. If line 2 would still overflow, the last visible
+///   char is replaced with `…` (U+2026, counts as 1 column).
+/// - An empty `title` or `width == 0` returns `vec!["".to_string()]`.
+pub(crate) fn wrap_title(title: &str, width: usize) -> Vec<String> {
+    if width == 0 || title.is_empty() {
+        return vec![title.to_string()];
+    }
+    let chars: Vec<char> = title.chars().collect();
+    if chars.len() <= width {
+        return vec![title.to_string()];
+    }
+    let line1: String = chars[..width].iter().collect();
+    let rest = &chars[width..];
+    if rest.len() <= width {
+        let line2: String = rest.iter().collect();
+        vec![line1, line2]
+    } else {
+        // rest overflows: take width-1 chars + ellipsis
+        let line2: String = rest[..width.saturating_sub(1)].iter().collect::<String>() + "\u{2026}";
+        vec![line1, line2]
+    }
+}
+
 /// Extract the basename (last path component) from a project_dir string.
 ///
 /// Returns the full `project_dir` if it has no `/` or the basename is empty.
@@ -971,6 +1021,51 @@ mod tests {
     fn harness_abbrev_unknown_falls_back_to_question_marks() {
         assert_eq!(harness_abbrev("unknown"), "??");
         assert_eq!(harness_abbrev(""), "??");
+    }
+
+    // --- wrap_title ---
+
+    #[test]
+    fn wrap_title_empty_returns_empty() {
+        assert_eq!(wrap_title("", 10), vec!["".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_zero_width_returns_title() {
+        assert_eq!(wrap_title("hello", 0), vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_fits_on_one_line() {
+        assert_eq!(wrap_title("hello", 10), vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_exact_width_one_line() {
+        assert_eq!(wrap_title("hello", 5), vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_wraps_to_two_lines() {
+        // "hello world" at width 5: rest=" world" (6 chars > 5), so ellipsis
+        // path: line2 = " wor" + "…"
+        let result = wrap_title("hello world", 5);
+        assert_eq!(result, vec!["hello".to_string(), " wor\u{2026}".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_two_line_second_exact() {
+        // "abcdefghij" width 5 -> ["abcde", "fghij"] — second line exact fit.
+        let result = wrap_title("abcdefghij", 5);
+        assert_eq!(result, vec!["abcde".to_string(), "fghij".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_overflow_with_ellipsis() {
+        // 11 chars at width 5: line1="abcde", rest="fghij " (6 chars > 5)
+        // line2 = first 4 chars + ellipsis = "fghi\u{2026}"
+        let result = wrap_title("abcdefghij!", 5);
+        assert_eq!(result, vec!["abcde".to_string(), "fghi\u{2026}".to_string()]);
     }
 
     // --- project_basename ---
