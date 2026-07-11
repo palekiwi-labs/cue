@@ -288,6 +288,18 @@ impl App {
             .count()
     }
 
+    /// Number of events visible in the Activity Feed (i.e. not hidden).
+    ///
+    /// Hides `session_updated` rows whose payload is already absorbed into
+    /// `SessionSummary` before render. Mirrors `diagnostics_len`.
+    #[allow(dead_code)] // wired in Slice 6b step 6 (render_activity rebuild)
+    pub fn activity_len(&self) -> usize {
+        self.events
+            .iter()
+            .filter(|e| !crate::ui::is_hidden_in_activity(&e.event_type))
+            .count()
+    }
+
     /// Move the selection down within the active column.
     pub fn scroll_down(&mut self) {
         match self.active_col {
@@ -714,6 +726,26 @@ mod tests {
         app.push_event(turn(3, "s1", 10, 20));
         app.push_event(tool_done(4, "s1", false));
         assert_eq!(app.diagnostics_len(), 2);
+    }
+
+    // --- activity_len ---
+
+    #[test]
+    fn activity_len_excludes_hidden_session_updated() {
+        let mut app = empty_app();
+        app.push_event(session_updated(1, "s1", None, None, None, Some("title")));
+        app.push_event(turn(2, "s1", 10, 20));
+        app.push_event(session_updated(3, "s1", None, None, None, Some("title2")));
+        app.push_event(tool_done(4, "s1", false));
+        assert_eq!(app.activity_len(), 2);
+    }
+
+    #[test]
+    fn activity_len_zero_when_only_session_updated() {
+        let mut app = empty_app();
+        app.push_event(session_updated(1, "s1", None, None, None, None));
+        app.push_event(session_updated(2, "s1", None, None, None, Some("x")));
+        assert_eq!(app.activity_len(), 0);
     }
 
     // --- priority sort (Slice 8 Tier 1) ---

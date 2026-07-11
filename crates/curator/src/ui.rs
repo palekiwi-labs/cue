@@ -378,6 +378,16 @@ pub(crate) fn is_diagnostic(event_type: &str) -> bool {
     event_type.starts_with("tool_call_")
 }
 
+/// Returns `true` if the event type should be **hidden** in the Activity Feed.
+///
+/// `session_updated` rows are pure noise: `push_event` absorbs their payload
+/// into `SessionSummary` synchronously (`app.rs:230-250`) before render, so the
+/// session header already shows their content. Mirrors `is_diagnostic`.
+#[allow(dead_code)] // wired in Slice 6b step 6 (render_activity rebuild)
+pub(crate) fn is_hidden_in_activity(event_type: &str) -> bool {
+    event_type == "session_updated"
+}
+
 /// Build the session-group label for an Activity Feed header.
 ///
 /// Returns `(text, is_placeholder)`. When a non-empty title is known (from
@@ -565,6 +575,17 @@ mod tests {
         assert!(!is_diagnostic("session_idle"));
         assert!(!is_diagnostic("agent_turn_completed"));
         assert!(!is_diagnostic("tool_other")); // "tool_" prefix not enough
+    }
+
+    // --- is_hidden_in_activity ---
+
+    #[test]
+    fn is_hidden_in_activity_hides_only_session_updated() {
+        assert!(is_hidden_in_activity("session_updated"));
+        assert!(!is_hidden_in_activity("session_idle"));
+        assert!(!is_hidden_in_activity("agent_turn_completed"));
+        assert!(!is_hidden_in_activity("tool_call_requested"));
+        assert!(!is_hidden_in_activity("tool_call_completed"));
     }
 
     // --- session_label ---
