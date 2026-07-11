@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
 
@@ -168,10 +168,10 @@ fn render_activity(frame: &mut Frame, app: &App) {
             ])
             .areas(view_area);
             render_sessions_pane(frame, app, sessions_area);
-            render_events_pane(frame, app, detail_area);
+            render_detail_pane(frame, app, detail_area, false);
         }
         ActivityLayout::DetailFull => {
-            render_events_pane(frame, app, view_area);
+            render_detail_pane(frame, app, view_area, true);
         }
     }
 
@@ -255,16 +255,77 @@ fn render_sessions_pane(frame: &mut Frame, app: &App, area: Rect) {
     frame.render_stateful_widget(list, area, &mut list_state);
 }
 
-/// Render the Events pane (Pane 2 — right 2/3).
+/// Render the session Info block (top section of the detail pane).
 ///
-/// Shows events for the selected session, reverse-chrono, hiding
-/// `session_updated` rows. Empty state shows a dim placeholder.
-fn render_events_pane(frame: &mut Frame, app: &App, area: Rect) {
-    let is_active = app.activity_layout == ActivityLayout::DetailFull;
+/// Always static — never focused. Height is fixed at 8 rows (6 data + 2 border).
+/// Shows title, agent, model, parent_id, token totals, and error count from
+/// the selected session's `SessionSummary`.
+fn render_session_info(frame: &mut Frame, app: &App, area: Rect) {
+    let content: Vec<Line> = if let Some(id) = app.sel_session_id.as_deref()
+        && let Some(s) = app.sessions.get(id)
+    {
+        let title = s.session_title.as_deref().unwrap_or("(no title)");
+        let agent = s.agent.as_deref().unwrap_or("\u{2014}");
+        let model = s.model.as_deref().unwrap_or("\u{2014}");
+        let parent = s.parent_id.as_deref().unwrap_or("\u{2014}");
+        vec![
+            Line::from(vec![
+                Span::styled(" Title:  ", Style::default().fg(Color::DarkGray)),
+                Span::styled(
+                    title.to_string(),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::styled(" Agent:  ", Style::default().fg(Color::DarkGray)),
+                Span::raw(agent.to_string()),
+            ]),
+            Line::from(vec![
+                Span::styled(" Model:  ", Style::default().fg(Color::DarkGray)),
+                Span::raw(model.to_string()),
+            ]),
+            Line::from(vec![
+                Span::styled(" Parent: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(parent.to_string()),
+            ]),
+            Line::from(vec![
+                Span::styled(" Tokens: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("in={}  out={}", s.input_tokens, s.output_tokens)),
+            ]),
+            Line::from(vec![
+                Span::styled(" Errors: ", Style::default().fg(Color::DarkGray)),
+                Span::raw(format!("{}", s.error_count)),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            "  (no session selected)",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
 
+    let block = Block::default()
+        .title(" Session ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::DarkGray));
+    let para = Paragraph::new(content).block(block);
+    frame.render_widget(para, area);
+}
+
+/// Render the detail pane: Info block (top, static) + Events list (bottom).
+///
+/// `is_focused` controls whether the events list shows the active highlight
+/// style and a Cyan+BOLD border (`DetailFull` mode) or a dim style (`Split`).
+fn render_detail_pane(frame: &mut Frame, app: &App, area: Rect, is_focused: bool) {
+    let [info_area, events_area] = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(8), Constraint::Min(0)])
+        .areas(area);
+
+    render_session_info(frame, app, info_area);
+
+    // --- Events list ---
     let sel_id = app.sel_session_id.as_deref();
-
-    // Block title: " Events · <session label> ".
     let block_title = match sel_id {
         None => " Events ".to_string(),
         Some(id) => {
@@ -274,15 +335,12 @@ fn render_events_pane(frame: &mut Frame, app: &App, area: Rect) {
         }
     };
 
-    let border_style = if is_active {
-        Style::default()
-            .fg(Color::Cyan)
-            .add_modifier(Modifier::BOLD)
+    let border_style = if is_focused {
+        Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
     } else {
         Style::default().fg(Color::DarkGray)
     };
-
-    let highlight_style = if is_active {
+    let highlight_style = if is_focused {
         Style::default()
             .bg(Color::DarkGray)
             .add_modifier(Modifier::BOLD)
@@ -290,7 +348,6 @@ fn render_events_pane(frame: &mut Frame, app: &App, area: Rect) {
         Style::default().add_modifier(Modifier::DIM)
     };
 
-    // Collect visible events for the selected session, reverse-chrono.
     let visible: Vec<&EventRecord> = app
         .events
         .iter()
@@ -331,7 +388,6 @@ fn render_events_pane(frame: &mut Frame, app: &App, area: Rect) {
             .collect()
     };
 
-    // Clamp selection to the visible list.
     let sel_visual = if visible.is_empty() {
         None
     } else {
@@ -350,7 +406,7 @@ fn render_events_pane(frame: &mut Frame, app: &App, area: Rect) {
 
     let mut list_state = ListState::default();
     list_state.select(sel_visual);
-    frame.render_stateful_widget(list, area, &mut list_state);
+    frame.render_stateful_widget(list, events_area, &mut list_state);
 }
 
 // ---------------------------------------------------------------------------
