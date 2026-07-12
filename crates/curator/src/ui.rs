@@ -151,12 +151,10 @@ fn priority_colour(priority: Option<&str>) -> Color {
     }
 }
 
-/// Height of each kanban card in rows (1 top border + 3 content + 1 bottom border).
-const CARD_HEIGHT: u16 = 5;
-/// Rows advanced per card. One less than CARD_HEIGHT so consecutive cards share
-/// a single separator row: the bottom border of card N is overwritten by the top
-/// border of card N+1, halving the visual gap between cards.
-const CARD_STRIDE: u16 = CARD_HEIGHT - 1;
+/// Height of each kanban card in rows (1 top border + 3 content rows).
+/// Cards have no bottom border; the top border of the next card acts as the
+/// single-row separator, matching the visual weight of the column-to-card gap.
+const CARD_HEIGHT: u16 = 4;
 
 fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
     let is_active = app.active_col == col;
@@ -188,14 +186,8 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
         return;
     }
 
-    // --- Scroll-into-view (O(1) for fixed card geometry) ---
-    // n cards occupy: CARD_HEIGHT + (n-1)*CARD_STRIDE rows.
-    // Solving for n: n = 1 + (H - CARD_HEIGHT) / CARD_STRIDE.
-    let visible_count = if inner.height < CARD_HEIGHT {
-        0
-    } else {
-        1 + (inner.height - CARD_HEIGHT) / CARD_STRIDE
-    } as usize;
+    // --- Scroll-into-view (O(1) for fixed CARD_HEIGHT) ---
+    let visible_count = (inner.height / CARD_HEIGHT) as usize;
     let offset_cell = app.column_offset(col);
     let old_offset = offset_cell.get();
     let s = sel.min(tasks.len().saturating_sub(1));
@@ -209,11 +201,6 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
     offset_cell.set(new_offset);
 
     // --- Per-card Block rendering ---
-    // Cards are rendered in order; each card is placed at y, occupying
-    // CARD_HEIGHT rows. The next card starts at y + CARD_STRIDE, so the
-    // bottom border of card N occupies the same row as the top border of
-    // card N+1. The later render overwrites, producing a single separator
-    // line between adjacent cards instead of two.
     let buf = frame.buffer_mut();
     let mut y = inner.top();
 
@@ -229,7 +216,8 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
         }
 
         let is_selected = i == sel && is_active;
-        let card_block = Block::bordered()
+        let card_block = Block::default()
+            .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
             .border_type(if is_selected {
                 BorderType::Thick
             } else {
@@ -282,7 +270,7 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
             ci.width,
         );
 
-        y += CARD_STRIDE;
+        y += CARD_HEIGHT;
     }
 }
 
@@ -1422,13 +1410,13 @@ mod tests {
     #[test]
     fn render_column_cards_have_uniform_height() {
         // Mix of short (1-line) and long (2-line wrapping) titles. With
-        // CARD_HEIGHT=5 and CARD_STRIDE=4, each card occupies 5 rows but is
-        // placed 4 rows after the previous one (consecutive borders overlap).
+        // CARD_HEIGHT=4 (top-border + title1 + title2/blank + proj/prio, no
+        // bottom border), every card occupies exactly 4 rows.
         //
         // The project/priority line contains "proj" (from project_root
         // /tmp/proj). With the column border at row 0, card 1 top-border at
         // row 1, the first proj/prio row is at row 4; subsequent ones appear
-        // every 4 rows (CARD_STRIDE).
+        // every 4 rows.
         let tasks: Vec<KanbanTask> = vec![
             kanban_task_with_title("short"),
             kanban_task_with_title("a very long title that definitely wraps"),
