@@ -755,6 +755,10 @@ pub(crate) fn wrap_title(title: &str, width: usize) -> Vec<String> {
 
     let line1 = lines[0].clone();
     let line2_str = &lines[1];
+    // line2 is at most `width` chars by construction (the word-wrap loop above
+    // only emits lines whose width fits). The `>= width` branch therefore trims
+    // only when line2 *exactly* fills the width, to make room for the ellipsis
+    // without overflowing; there is no real overflow case here.
     let mut line2: String = if line2_str.chars().count() >= width {
         let take = width.saturating_sub(1);
         line2_str.chars().take(take).collect()
