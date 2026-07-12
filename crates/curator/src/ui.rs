@@ -199,9 +199,16 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
                 Style::default()
             };
 
-            // Wrapped title: up to 2 lines, char-wrapped to inner_width.
+            // Wrapped title: up to 2 lines, word-wrapped to inner_width.
             // Leading space provides 1-char left padding.
-            let title_lines = wrap_title(&task.meta.title, inner_width);
+            let mut title_lines = wrap_title(&task.meta.title, inner_width);
+            // Pad to a fixed 2-line title block so every card is a uniform 4
+            // rows (title-1, title-2-or-blank, project/priority, blank-pad).
+            // Without this, short titles produce 3-row cards and wrapped titles
+            // produce 4-row cards, causing shifting trailing whitespace.
+            if title_lines.len() == 1 {
+                title_lines.push(String::new());
+            }
             let mut lines: Vec<Line> = title_lines
                 .into_iter()
                 .map(|s| Line::from(Span::styled(format!(" {s}"), title_style)))
@@ -1367,6 +1374,45 @@ mod tests {
         assert!(
             rendered.contains("task-00"),
             "first selected task must be visible:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_column_cards_have_uniform_height() {
+        // Mix of short (1-line) and long (2-line wrapping) titles. After the
+        // fixed-height fix, every card must be exactly 4 rows:
+        // title-1, title-2-or-blank, project/priority, blank-pad.
+        //
+        // The project/priority line contains "proj" (from project_root
+        // /tmp/proj). With the top border at row 0, the first card's
+        // project/priority line is at row 3, and subsequent ones every 4 rows.
+        let tasks: Vec<KanbanTask> = vec![
+            kanban_task_with_title("short"),
+            kanban_task_with_title("a very long title that definitely wraps"),
+            kanban_task_with_title("mid"),
+        ];
+        let app = App { active_col: Column::Open, sel_open: 0, ..App::new(tasks) };
+        // Width 40 => inner_width = 36. The long title (39 chars) wraps to 2
+        // lines; the short titles fit on 1 line and must be padded.
+        let rendered = render_column_to_string(&app, 40, 20);
+        let lines: Vec<&str> = rendered.lines().collect();
+
+        let proj_rows: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.contains("proj"))
+            .map(|(i, _)| i)
+            .collect();
+
+        assert_eq!(
+            proj_rows.len(),
+            3,
+            "expected 3 project/priority lines:\n{rendered}"
+        );
+        assert_eq!(
+            proj_rows,
+            vec![3, 7, 11],
+            "project/priority lines must be exactly 4 rows apart (uniform 4-line cards):\n{rendered}"
         );
     }
 }
