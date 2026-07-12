@@ -226,7 +226,7 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
             .border_style(if is_selected {
                 Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
             } else {
-                Style::default().fg(Color::DarkGray)
+                Style::default().fg(Color::Gray)
             });
 
         let ci = card_block.inner(card_area);
