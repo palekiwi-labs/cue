@@ -839,7 +839,10 @@ fn kanban_help_line(layout: KanbanLayout, empty_store: bool) -> Line<'static> {
         Span::raw(" reload"),
     ];
     if empty_store {
-        spans.push(Span::raw("  |  no projects registered"));
+        spans.push(Span::styled(
+            "  |  no projects registered",
+            Style::default().fg(Color::Red),
+        ));
     }
     Line::from(spans)
 }
