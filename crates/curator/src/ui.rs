@@ -6,7 +6,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, HighlightSpacing, List, ListItem, ListState, Paragraph},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Widget},
     Frame,
 };
 
@@ -151,11 +151,15 @@ fn priority_colour(priority: Option<&str>) -> Color {
     }
 }
 
+/// Height of each kanban card in rows (1 top border + 3 content + 1 bottom border).
+const CARD_HEIGHT: u16 = 5;
+
 fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
     let is_active = app.active_col == col;
     let tasks = app.column_tasks(col);
     let sel = app.column_sel(col);
 
+    // --- Outer column block ---
     let border_style = if is_active {
         Style::default()
             .fg(Color::Cyan)
@@ -174,74 +178,99 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
         })
         .border_style(border_style);
 
-    // Inner width: area − 2 borders − 1 leading space pad − 1 right margin.
-    let inner_width = (area.width as usize).saturating_sub(4);
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let items: Vec<ListItem> = tasks
-        .iter()
-        .enumerate()
-        .map(|(idx, task)| {
-            let priority_label = task.meta.priority_raw.as_deref().unwrap_or("normal");
-            let colour = priority_colour(task.meta.priority_raw.as_deref());
-
-            // Project basename from the registered root path.
-            let proj_name = task
-                .project_root
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or("");
-
-            // Selected card in the active column: title highlighted in cyan.
-            // Inactive columns show no title highlight.
-            let title_style = if is_active && idx == sel {
-                Style::default().fg(Color::Cyan)
-            } else {
-                Style::default()
-            };
-
-            // Wrapped title: up to 2 lines, word-wrapped to inner_width.
-            // Leading space provides 1-char left padding.
-            let mut title_lines = wrap_title(&task.meta.title, inner_width);
-            // Pad to a fixed 2-line title block so every card is a uniform 4
-            // rows (title-1, title-2-or-blank, project/priority, blank-pad).
-            // Without this, short titles produce 3-row cards and wrapped titles
-            // produce 4-row cards, causing shifting trailing whitespace.
-            if title_lines.len() == 1 {
-                title_lines.push(String::new());
-            }
-            let mut lines: Vec<Line> = title_lines
-                .into_iter()
-                .map(|s| Line::from(Span::styled(format!(" {s}"), title_style)))
-                .collect();
-
-            // Line 3: " project  priority"
-            lines.push(Line::from(vec![
-                Span::raw(" "),
-                Span::styled(
-                    proj_name.to_string(),
-                    Style::default().fg(Color::Magenta),
-                ),
-                Span::raw("  "),
-                Span::styled(priority_label.to_string(), Style::default().fg(colour)),
-            ]));
-
-            // Bottom padding: blank line for breathing room between cards.
-            lines.push(Line::default());
-
-            ListItem::new(lines)
-        })
-        .collect();
-
-    let list = List::new(items)
-        .block(block)
-        .highlight_spacing(HighlightSpacing::Never);
-
-    let mut list_state = ListState::default();
-    if !tasks.is_empty() {
-        list_state.select(Some(sel));
+    if inner.is_empty() || tasks.is_empty() {
+        return;
     }
 
-    frame.render_stateful_widget(list, area, &mut list_state);
+    // --- Scroll-into-view (O(1) for fixed CARD_HEIGHT) ---
+    let visible_count = (inner.height / CARD_HEIGHT) as usize;
+    let offset_cell = app.column_offset(col);
+    let old_offset = offset_cell.get();
+    let s = sel.min(tasks.len().saturating_sub(1));
+    let new_offset = if s < old_offset {
+        s
+    } else if s >= old_offset + visible_count.max(1) {
+        s.saturating_sub(visible_count.saturating_sub(1))
+    } else {
+        old_offset
+    };
+    offset_cell.set(new_offset);
+
+    // --- Per-card Block rendering ---
+    let buf = frame.buffer_mut();
+    let mut y = inner.top();
+
+    for (i, task) in tasks
+        .iter()
+        .enumerate()
+        .skip(new_offset)
+        .take(visible_count)
+    {
+        let card_area = Rect::new(inner.left(), y, inner.width, CARD_HEIGHT);
+        if card_area.intersection(inner).is_empty() {
+            break;
+        }
+
+        let is_selected = i == sel && is_active;
+        let card_block = Block::bordered()
+            .border_type(if is_selected {
+                BorderType::Thick
+            } else {
+                BorderType::Plain
+            })
+            .border_style(if is_selected {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::DarkGray)
+            });
+
+        let ci = card_block.inner(card_area);
+        card_block.render(card_area, buf);
+
+        let inner_w = ci.width as usize;
+
+        // Title: word-wrapped to 2 lines, padded to exactly 2 lines (D1/D4).
+        let mut title_lines = wrap_title(&task.meta.title, inner_w);
+        if title_lines.len() == 1 {
+            title_lines.push(String::new());
+        }
+
+        // Rows 0-1: title (no colour — D4: border is the sole selection signal)
+        for (row, text) in title_lines.iter().take(2).enumerate() {
+            buf.set_line(
+                ci.left(),
+                ci.top() + row as u16,
+                &Line::from(Span::raw(text.as_str())),
+                ci.width,
+            );
+        }
+
+        // Row 2: project-basename  priority
+        let proj = task
+            .project_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let prio = task.meta.priority_raw.as_deref().unwrap_or("normal");
+        buf.set_line(
+            ci.left(),
+            ci.top() + 2,
+            &Line::from(vec![
+                Span::styled(proj.to_string(), Style::default().fg(Color::Magenta)),
+                Span::raw("  "),
+                Span::styled(
+                    prio.to_string(),
+                    Style::default().fg(priority_colour(task.meta.priority_raw.as_deref())),
+                ),
+            ]),
+            ci.width,
+        );
+
+        y += CARD_HEIGHT;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1379,13 +1408,14 @@ mod tests {
 
     #[test]
     fn render_column_cards_have_uniform_height() {
-        // Mix of short (1-line) and long (2-line wrapping) titles. After the
-        // fixed-height fix, every card must be exactly 4 rows:
-        // title-1, title-2-or-blank, project/priority, blank-pad.
+        // Mix of short (1-line) and long (2-line wrapping) titles. With
+        // CARD_HEIGHT=5 (1 top-border + 2 title rows + 1 proj/prio + 1
+        // bottom-border), every card must be exactly 5 rows.
         //
         // The project/priority line contains "proj" (from project_root
-        // /tmp/proj). With the top border at row 0, the first card's
-        // project/priority line is at row 3, and subsequent ones every 4 rows.
+        // /tmp/proj). With the column border at row 0 and the first card's
+        // top-border at row 1, the first proj/prio row is at row 4; subsequent
+        // ones appear every 5 rows.
         let tasks: Vec<KanbanTask> = vec![
             kanban_task_with_title("short"),
             kanban_task_with_title("a very long title that definitely wraps"),
@@ -1411,8 +1441,8 @@ mod tests {
         );
         assert_eq!(
             proj_rows,
-            vec![3, 7, 11],
-            "project/priority lines must be exactly 4 rows apart (uniform 4-line cards):\n{rendered}"
+            vec![4, 9, 14],
+            "project/priority lines must be exactly 5 rows apart (uniform 5-line cards):\n{rendered}"
         );
     }
 }

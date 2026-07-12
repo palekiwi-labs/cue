@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
 use std::path::PathBuf;
 
@@ -195,6 +196,14 @@ pub struct App {
     /// Selection index for the Diagnostics view.
     pub sel_diagnostics: usize,
 
+    // --- Kanban scroll offsets ---
+    /// Viewport offset (in cards) for the Open column.
+    pub offset_open: Cell<usize>,
+    /// Viewport offset (in cards) for the In Progress column.
+    pub offset_in_progress: Cell<usize>,
+    /// Viewport offset (in cards) for the Complete column.
+    pub offset_complete: Cell<usize>,
+
     // --- Kanban layout state ---
     /// Layout state of the Kanban view.
     pub kanban_layout: KanbanLayout,
@@ -225,6 +234,10 @@ impl App {
             sel_in_progress: 0,
             sel_complete: 0,
 
+            offset_open: Cell::new(0),
+            offset_in_progress: Cell::new(0),
+            offset_complete: Cell::new(0),
+
             active_view: View::Kanban,
             kanban_layout: KanbanLayout::ColumnsFull,
             acuity_status: AcuityStatus::Disabled,
@@ -238,7 +251,7 @@ impl App {
     }
 
     /// Re-classify a new set of tasks into the kanban columns, resetting all
-    /// column selection indices. Called on `Action::Refresh`.
+    /// column selection indices and scroll offsets. Called on `Action::Refresh`.
     pub fn reload_kanban(&mut self, tasks: Vec<KanbanTask>) {
         let (open, in_progress, complete) = classify_tasks(tasks);
         self.open = open;
@@ -247,6 +260,21 @@ impl App {
         self.sel_open = 0;
         self.sel_in_progress = 0;
         self.sel_complete = 0;
+        self.offset_open.set(0);
+        self.offset_in_progress.set(0);
+        self.offset_complete.set(0);
+    }
+
+    /// Return the scroll-offset cell for `col`.
+    ///
+    /// Uses `Cell<usize>` so `render_column` (which takes `&App`) can update
+    /// the offset without requiring `&mut App`.
+    pub fn column_offset(&self, col: Column) -> &Cell<usize> {
+        match col {
+            Column::Open => &self.offset_open,
+            Column::InProgress => &self.offset_in_progress,
+            Column::Complete => &self.offset_complete,
+        }
     }
 
     /// Ingest one live event: update the session summary map, evict from the
