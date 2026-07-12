@@ -100,15 +100,12 @@ impl From<SseStatus> for AcuityStatus {
 
 /// A kanban card with project attribution.
 ///
-/// Wraps [`ArtifactMeta`] and adds which project (key + root path) the task
+/// Wraps [`ArtifactMeta`] and adds the filesystem root of the project the task
 /// belongs to, as loaded from the [`ProjectStore`].
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct KanbanTask {
     /// The underlying artifact metadata.
     pub meta: ArtifactMeta,
-    /// Key of the project this task belongs to (from ProjectStore).
-    pub project_key: String,
     /// Filesystem root of the project (first path in ProjectStore).
     pub project_root: PathBuf,
 }
@@ -691,7 +688,7 @@ fn classify_tasks(
 /// silently skipped.
 pub fn collect_tasks(store: &ProjectStore, branch: &str) -> Vec<KanbanTask> {
     let mut tasks = Vec::new();
-    for (key, paths) in store.entries() {
+    for paths in store.entries().values() {
         let root = match paths.first() {
             Some(p) => p,
             None => continue,
@@ -703,7 +700,6 @@ pub fn collect_tasks(store: &ProjectStore, branch: &str) -> Vec<KanbanTask> {
         for meta in metas {
             tasks.push(KanbanTask {
                 meta,
-                project_key: key.clone(),
                 project_root: root.clone(),
             });
         }
@@ -1072,7 +1068,6 @@ mod tests {
     fn make_kanban_task(title: &str, status: &str, priority: Option<&str>) -> KanbanTask {
         KanbanTask {
             meta: make_task(title, status, priority),
-            project_key: "local:test".to_string(),
             project_root: std::path::PathBuf::from("/tmp/test"),
         }
     }

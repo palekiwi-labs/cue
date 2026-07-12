@@ -1305,7 +1305,6 @@ mod tests {
                 artifact_type: "task".to_string(),
                 path: std::path::PathBuf::from(format!("/tmp/{title}.md")),
             },
-            project_key: String::new(),
             project_root: std::path::PathBuf::from("/tmp/proj"),
         }
     }
