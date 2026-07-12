@@ -1,4 +1,6 @@
-use crate::app::{AcuityStatus, ActivityLayout, App, Column, KanbanLayout, KanbanTask, SessionSummary, View};
+use crate::app::{
+    ActivityLayout, AcuityStatus, App, Column, KanbanLayout, KanbanTask, SessionSummary, View,
+};
 use acuity_api::{AcuityEvent, EventRecord};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
