@@ -38,6 +38,8 @@ at least during an initial evaluation period.
   in their git hooks, e.g. post-checkout)
   - `id`: identifies the task
 - a new nvim plugin picker for selection of active task
+- `cue context` will inject the id of active tasks to ensure agents are aware
+what active task is currently set 
 
 ## Open questions
 
