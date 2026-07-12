@@ -1,5 +1,5 @@
 ---
-status: open
+status: complete
 title: move log file to top-level
 priority: high
 ---

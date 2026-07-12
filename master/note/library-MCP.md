@@ -1,5 +1,5 @@
 ---
-status: open
+status: closed
 title: Library MCP
 ---
 

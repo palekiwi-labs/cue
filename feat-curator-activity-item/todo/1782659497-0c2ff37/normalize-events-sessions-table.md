@@ -1,5 +1,5 @@
 ---
-status: open
+status: closed
 priority: low
 ---
 # Normalize events storage with a `sessions` dimension table

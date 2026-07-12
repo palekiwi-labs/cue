@@ -1,8 +1,7 @@
 {
   "default": {
     "artifacts": [
-      "spec/log.md",
-      "plan/1782644149-dab157e/curator-improvements.md"
+      "./log.md"
     ],
     "diff": null,
     "include": []

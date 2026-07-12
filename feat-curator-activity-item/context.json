@@ -2,7 +2,7 @@
   "default": {
     "artifacts": [
       "./spec/index.md",
-      "./spec/log.md",
+      "./log.md",
       "./plan/1782664752-0b0aa5b/slice6a-hardening.md",
       "./plan/1782664752-0b0aa5b/slice6a-logging-and-plugin.md"
     ],

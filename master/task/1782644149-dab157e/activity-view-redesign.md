@@ -1,9 +1,24 @@
 ---
 title: 'Curator: activity view redesign and fold state'
-status: open
+status: closed
 priority: high
 ---
 # Curator: activity view redesign and fold state
+
+> **Closed — superseded.** This task described the original full Slice 6 vision
+> (fold_state, toggling, logical selection identity). During design the scope was
+> split into two concerns:
+> 1. **Rendering legibility** (distinct headers, title flip, hidden
+>    `session_updated`, per-turn model, drift-safe selection) — shipped as Slice
+>    6b. Tracked in `activity-feed-rendering.md`.
+> 2. **Fold state + toggle** (criteria 1, 3, 4, 7 below) — deferred to stage C.
+>    Tracked in `activity-fold-state.md`.
+>
+> The shipped Slice 6b diverged from this task's criteria 5 (header format locked
+> to `title | dim id-suffix`, not `-- harness project_name (session title)`) and
+> criterion 2 (filtered-set indexing instead of logical-identity tracking).
+> Criteria 8 (selection survives new SSE event) and 9 (tests pass) were met by
+> the redesigned work.
 
 Replace the flat event iteration in `render_activity` with rendering driven by
 `build_activity_items`. Add fold state to `App`. Selection tracks logical item

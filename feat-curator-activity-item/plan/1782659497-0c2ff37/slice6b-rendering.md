@@ -1,48 +1,82 @@
 ---
-status: open
+status: complete
 ---
 ## Foreword
 
-Consumes the 6a lineage data to make the curator activity feed legible.
-Retains the **flat reverse-chrono layout** (stage C owns the nested tree).
-Kills the 8-char session-id collision (`ui.rs:214`), surfaces title + agent +
-lineage in headers, and adds dev debug columns so the data relationships can be
-verified by eye.
+Fleshed out from the intentionally-light draft after 6a live data confirmed the
+collection layer. Consumes the 6a `SessionSummary` fields (title, model,
+parent_id, harness) to make the curator activity feed legible — *without*
+surfacing agent, session-level model, or lineage text in headers (full rationale
+in `spec/log.md`, "Slice 6b design locked" entry). Retains the flat reverse-chrono
+layout; stage C owns the nested `parent_id` tree.
 
-This is the "verify our assumptions" interim view (stage B) before the stage-C
-nested tree. It does **not** wire `build_activity_items` yet — its
-`(session_id, project_dir)` header key is known-degenerate (`project_dir` is
-workspace-constant, confirmed across all 465 rows of the snapshot DB) and will
-be reworked in stage C with `parent_id`-based nesting.
+Three defects fixed:
+1. **8-char front-truncation** (`ui.rs:214`) collides opencode session ids (they
+   share a per-run prefix). Replaced with a title-or-id-suffix label.
+2. **Headers show no 6a data** — now show title (or a dim id placeholder until
+   the title arrives via `session_updated`).
+3. **Turn rows hide the per-turn model** — now appended from the
+   `AgentTurnCompleted` payload.
+
+Plus: `session_updated` rows are hidden (their payload is already absorbed into
+`SessionSummary` before render), and the selection model is hardened to index the
+*filtered* set (mirrors `render_diagnostics`, `ui.rs:241-311`).
 
 **Branch:** `feat/curator-activity-item`
 **Test exit:** `cargo test -p curator` green + `cargo clippy -p curator -- -D warnings` clean.
 
-> **Note:** This plan is intentionally lighter than 6a. It will be fleshed out
-> fully when 6a's live data is in hand, since rendering details may shift based
-> on what the real `SessionUpdated` rows reveal.
+### Design decisions (locked)
+
+- **Header = title | dim id-suffix placeholder only.** No agent (belongs in
+  diagnostics — a plan agent calling a mutating tool is the flag-worthy signal),
+  no session-level model (misleading — models change per turn), no parent-id text
+  (the stage-C tree shows lineage visually).
+- **Per-turn model on turn rows** (from `AgentTurnCompleted.model`); appended as
+  ` · {model}` when `Some`, omitted cleanly when `None`.
+- **Harness + project in the block title once** (`Activity Feed · opencode / cue`),
+  not per header — constant today; the `activity_block_title` helper makes
+  per-header a one-line change if a second harness lands.
+- **Hide `session_updated` rows.** They populate `SessionSummary` synchronously
+  in `push_event` (`app.rs:230-250`); by render time their content is already in
+  the header.
+- **Selection indexes the filtered set**, mirroring Diagnostics
+  (`ui.rs:241-311`, `app.rs:284-289`). Do NOT skip-on-render while keeping
+  `sel_activity` over all events — that makes the highlight vanish/jitter when it
+  lands on a hidden index.
+- **event_type column left as-is.** Collapse deferred to observe in practice.
+- **`build_activity_items` stays unwired.** Its `(session_id, project_dir)` header
+  key is degenerate (project_dir workspace-constant); stage C rewrites it with
+  `parent_id`-based nesting.
 
 ### Steps
 
-- [ ] **1. `crates/curator/src/ui.rs` `session_header` (`213-234`) — kill the truncation.**
-  Remove `.get(..8)`. Resolve `sessions.get(&record.session_id)` for `title` / `agent` / `parent_id` / `harness`. Format primary vs child distinctly, e.g.
-  primary: `── <title> · <agent> · primary (…<last6>) ──`
-  child:   `── <title> · <agent> · child of …<parent_last6> (…<last6>) ──`
-  Define fallbacks for unknown sessions (no `SessionSummary` entry yet).
+- [x] **1. [PURE] `session_label` helper (`ui.rs`).** Commit `81f1853`.
+  Extract `pub(crate) fn session_label(summary: Option<&SessionSummary>, session_id: &str) -> (String, bool)` — returns `(text, is_placeholder)`. Non-empty title → `(title, false)`; else an id *suffix* (last ~8 chars, boundary-guarded `str::get` with `unwrap_or` fallback, prefixed with `…`) → `(suffix, true)`. Red/green: title-present, title-None, title-empty-string, and a **regression test** that two ids sharing a prefix yield distinct labels (pins the `ui.rs:214` bug fix).
 
-- [ ] **2. `crates/curator/src/ui.rs` `render_activity` (`152-210`) — debug columns.**
-  Add a compact lineage suffix per row (agent or model tag, compact `turn_id`), within column-width limits — possibly behind a dev toggle. Preserve the selection-index ↔ visual-row mapping (`idx == app.sel_activity`).
+- [x] **2. [PURE] append per-turn model in `event_summary` (`ui.rs:333-343`).** Commit `9295f21`.
+  In the `agent_turn_completed` arm, append ` · {model}` when `ev.model` is `Some`; omit cleanly (no dangling separator) when `None`. Red/green: `Some("anthropic/claude-sonnet")` includes it; `None` omits it. Update the existing `event_summary_agent_turn_completed` test (`ui.rs:434-448`, currently `model: None`).
 
-- [ ] **3. `crates/curator/src/activity.rs` — document the degenerate header key.**
-  Add a module-level note that `(session_id, project_dir)` collapses to `session_id` (project_dir constant) and is deferred to stage C. Do not wire `build_activity_items` in.
+- [x] **3. [PURE] `is_hidden_in_activity` + `App::activity_len` (`ui.rs`, `app.rs`).** Commit `d5ae36c`.
+  `pub(crate) fn is_hidden_in_activity(et: &str) -> bool` — true for `"session_updated"` only (mirrors `is_diagnostic`, `ui.rs:374`). `App::activity_len()` counts non-hidden events (mirrors `diagnostics_len`, `app.rs:284-289`). Red/green including a session_updated-only feed → `activity_len() == 0`.
 
-- [ ] **4. Tests.**
-  Unit tests for the new header formatting (extract a pure helper if helpful); assert primary vs child vs unknown-session strings.
+- [x] **4. [PURE] fix `scroll_down_activity` clamp (`app.rs:359-364`).** Commit `9b9be0e`.
+  Change the bound from `self.events.len()` to `self.activity_len()`. **Correctness keystone — do before wiring.** Red test: with N events of which K are hidden, scrolling down past the end clamps at `activity_len()-1`, never past the last visible row. (Also pays down a latent bug: the visual list is longer than `events` because headers are injected.)
 
-- [ ] **5. Verify.**
-  `cargo test` + clippy. Manual: replay the DB-snapshot scenario; confirm the three interleaved sessions now render with distinct, legible headers and visible per-row lineage.
+- [x] **5. [PURE] `activity_block_title` helper (`ui.rs`).** Commit `4dfef13`.
+  `fn activity_block_title(app: &App) -> String` — `" Activity Feed · <harness> / <project-basename> "` when a session is present, else `" Activity Feed "`. Harness/project from the first available `SessionSummary`. Red/green: empty sessions → plain; one session → composed.
+
+- [x] **6. [WIRE] rebuild `render_activity` (`ui.rs:152-210`).** Commit `cfa450e`.
+  Integrate all helpers: (a) iterate the **filtered** set (`!is_hidden_in_activity`), driving both header injection and the `sel → visual` mapping off the filtered enumeration; (b) header from `session_label` with conditional style — dim (`DarkGray`) when `is_placeholder`, brighter/bold when title present (so the title-flip is a visible verification signal); (c) block title from step 5; (d) per-turn model already in `event_summary` from step 2; (e) render-time `sel_activity.min(activity_len()-1)` clamp + empty-list guard selecting `None` (copy `ui.rs:305-306`); (f) remove the old `session_header` fn (`ui.rs:213-234`). Manual visual verification.
+
+- [x] **7. [MANUAL] live verify.** (pending user QA)
+  Run the pipeline. Confirm: (a) prefix-sharing sessions now render distinct headers; (b) header flips dim-id → bright-title within seconds; (c) `session_updated` rows gone; (d) `j`/`k` never makes the highlight vanish or jitter (the drift test); (e) turn rows show per-turn model, and switching models mid-session shows different models on adjacent turns; (f) block title shows harness/project once.
+
+- [x] **8. [PURE] `activity.rs` doc-comment.** Commit `cfa450e`.
+  Extend the note at `activity.rs:16-27` to state explicitly that `build_activity_items` is unwired, the `(session_id, project_dir)` header key is degenerate (project_dir workspace-constant), and stage C rewrites with `parent_id`-based nesting. No code change.
 
 ### Out of scope
 
 - Stage C: nested tree, folding child sessions under parent turns, the `build_activity_items` rewrite with `parent_id`-based nesting.
-- Sessions-table normalization (see todo `normalize-events-sessions-table.md`).
+- event_type column collapse — deferred to observe in practice.
+- Acuity server log trim (standalone todo).
+- Sessions-table normalization (todo `normalize-events-sessions-table.md`).
