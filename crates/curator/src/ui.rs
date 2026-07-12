@@ -1292,6 +1292,75 @@ mod tests {
         );
         assert!(close.contains("close"), "Split shows Enter close: {close}");
     }
+
+    // --- render_column scroll-into-view (M1 investigation) ---
+
+    fn kanban_task_with_title(title: &str) -> KanbanTask {
+        use cuelib::artifact::ArtifactMeta;
+        KanbanTask {
+            meta: ArtifactMeta {
+                title: title.to_string(),
+                status_raw: Some("open".to_string()),
+                priority_raw: None,
+                artifact_type: "task".to_string(),
+                path: std::path::PathBuf::from(format!("/tmp/{title}.md")),
+            },
+            project_key: String::new(),
+            project_root: std::path::PathBuf::from("/tmp/proj"),
+        }
+    }
+
+    /// Render `render_column` for the Open column into a TestBackend buffer and
+    /// return the concatenated cell content as a single String.
+    fn render_column_to_string(app: &App, width: u16, height: u16) -> String {
+        use ratatui::{backend::TestBackend, Terminal};
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                render_column(f, app, app.active_col, f.area());
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                out.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn render_column_scroll_keeps_last_selected_visible() {
+        // 15 open tasks; select the last one. If scroll-into-view works, the
+        // selected task title must appear somewhere in the rendered buffer.
+        let tasks: Vec<KanbanTask> = (0..15)
+            .map(|i| kanban_task_with_title(&format!("task-{i:02}")))
+            .collect();
+        let app = App { active_col: Column::Open, sel_open: 14, ..App::new(tasks) };
+        let rendered = render_column_to_string(&app, 40, 12);
+        assert!(
+            rendered.contains("task-14"),
+            "last selected task must be visible after scroll:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_column_scroll_keeps_first_selected_visible() {
+        // Select the first task — trivially visible, but locks the contract for
+        // scroll-up from a deep position.
+        let tasks: Vec<KanbanTask> = (0..15)
+            .map(|i| kanban_task_with_title(&format!("task-{i:02}")))
+            .collect();
+        let app = App { active_col: Column::Open, sel_open: 0, ..App::new(tasks) };
+        let rendered = render_column_to_string(&app, 40, 12);
+        assert!(
+            rendered.contains("task-00"),
+            "first selected task must be visible:\n{rendered}"
+        );
+    }
 }
 
 /// Format a UTC ISO-8601 timestamp string for display in the sessions pane.
