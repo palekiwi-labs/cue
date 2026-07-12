@@ -1,10 +1,12 @@
-use crate::app::{AcuityStatus, ActivityLayout, App, Column, SessionSummary, View};
+use crate::app::{
+    ActivityLayout, AcuityStatus, App, Column, KanbanLayout, KanbanTask, SessionSummary, View,
+};
 use acuity_api::{AcuityEvent, EventRecord};
 use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{Block, BorderType, Borders, List, ListItem, ListState, Paragraph, Widget},
     Frame,
 };
 
@@ -43,7 +45,27 @@ fn render_kanban(frame: &mut Frame, app: &App) {
     let area = frame.area();
     let (board_area, help_area) = layout_with_help(area);
 
-    // Three equal columns.
+    match app.kanban_layout {
+        KanbanLayout::ColumnsFull => {
+            render_kanban_columns(frame, app, board_area);
+        }
+        KanbanLayout::Split => {
+            // Split: columns on top (~70%), detail pane below (~30%).
+            let [cols_area, detail_area] = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Ratio(7, 10), Constraint::Ratio(3, 10)])
+                .areas(board_area);
+            render_kanban_columns(frame, app, cols_area);
+            render_kanban_detail(frame, app, detail_area);
+        }
+    }
+
+    let help = kanban_help_line(app.kanban_layout, app.kanban_empty_store);
+    frame.render_widget(help, help_area);
+}
+
+/// Render the three kanban columns into `area`.
+fn render_kanban_columns(frame: &mut Frame, app: &App, area: Rect) {
     let [open_area, in_progress_area, complete_area] = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([
@@ -51,7 +73,7 @@ fn render_kanban(frame: &mut Frame, app: &App) {
             Constraint::Ratio(1, 3),
             Constraint::Ratio(1, 3),
         ])
-        .areas(board_area);
+        .areas(area);
 
     for (col, col_area) in [
         (Column::Open, open_area),
@@ -60,20 +82,63 @@ fn render_kanban(frame: &mut Frame, app: &App) {
     ] {
         render_column(frame, app, col, col_area);
     }
+}
 
-    let help = Line::from(vec![
-        Span::styled(" q", Style::default().fg(Color::Yellow)),
-        Span::raw(" quit  "),
-        Span::styled("1/2/3", Style::default().fg(Color::Yellow)),
-        Span::raw(" views  "),
-        Span::styled("h/l ← →", Style::default().fg(Color::Yellow)),
-        Span::raw(" column  "),
-        Span::styled("j/k ↑ ↓", Style::default().fg(Color::Yellow)),
-        Span::raw(" navigate  "),
-        Span::styled("r", Style::default().fg(Color::Yellow)),
-        Span::raw(" reload"),
-    ]);
-    frame.render_widget(help, help_area);
+/// Render the kanban detail pane (reflective — shows the selected card's info).
+fn render_kanban_detail(frame: &mut Frame, app: &App, area: Rect) {
+    // Resolve the selected task for the active column.
+    let task: Option<&KanbanTask> = {
+        let tasks = app.column_tasks(app.active_col);
+        let sel = app.column_sel(app.active_col);
+        tasks.get(sel)
+    };
+
+    let content: Vec<Line> = if let Some(t) = task {
+        let priority = t.meta.priority_raw.as_deref().unwrap_or("normal");
+        let status = t.meta.status_raw.as_deref().unwrap_or("\u{2014}");
+        let full_path = t.meta.path.to_string_lossy().into_owned();
+        let project_path = t.project_root.to_string_lossy().into_owned();
+        vec![
+            Line::from(vec![
+                Span::raw(" Title:    "),
+                Span::styled(
+                    t.meta.title.clone(),
+                    Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Status:   "),
+                Span::raw(status.to_string()),
+            ]),
+            Line::from(vec![
+                Span::raw(" Priority: "),
+                Span::styled(
+                    priority.to_string(),
+                    Style::default().fg(priority_colour(t.meta.priority_raw.as_deref())),
+                ),
+            ]),
+            Line::from(vec![
+                Span::raw(" Project:  "),
+                Span::styled(project_path, Style::default().fg(Color::Magenta)),
+            ]),
+            Line::from(vec![
+                Span::raw(" File:     "),
+                Span::raw(full_path),
+            ]),
+        ]
+    } else {
+        vec![Line::from(Span::styled(
+            "  (no task selected)",
+            Style::default().fg(Color::DarkGray),
+        ))]
+    };
+
+    let block = Block::default()
+        .title(" Task Detail ")
+        .borders(Borders::ALL)
+        .border_style(Style::default().fg(Color::Cyan));
+    let para = Paragraph::new(content).block(block);
+    frame.render_widget(para, area);
 }
 
 /// Colour scheme for priority badges.
@@ -86,12 +151,21 @@ fn priority_colour(priority: Option<&str>) -> Color {
     }
 }
 
+/// Height of each kanban card in rows (1 top border + 3 content rows).
+/// Cards have no bottom border; the top border of the next card acts as the
+/// single-row separator, matching the visual weight of the column-to-card gap.
+const CARD_HEIGHT: u16 = 5;
+
 fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
     let is_active = app.active_col == col;
     let tasks = app.column_tasks(col);
     let sel = app.column_sel(col);
 
-    let border_style = if is_active {
+    // --- Outer column block ---
+    // Border is always DarkGray; the active column is indicated by the title
+    // only (Cyan+Bold), keeping the visual weight low.
+    let title_text = format!(" {} ({}) ", col.title(), tasks.len());
+    let title_style = if is_active {
         Style::default()
             .fg(Color::Cyan)
             .add_modifier(Modifier::BOLD)
@@ -100,48 +174,104 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
     };
 
     let block = Block::default()
-        .title(format!(" {} ({}) ", col.title(), tasks.len()))
+        .title(ratatui::text::Span::styled(title_text, title_style))
         .borders(Borders::ALL)
-        .border_type(if is_active {
-            BorderType::Thick
-        } else {
-            BorderType::Plain
-        })
-        .border_style(border_style);
+        .border_type(BorderType::Plain)
+        .border_style(Style::default().fg(Color::DarkGray));
 
-    let items: Vec<ListItem> = tasks
-        .iter()
-        .map(|task| {
-            let priority_label = task.priority_raw.as_deref().unwrap_or("normal");
-            let colour = priority_colour(task.priority_raw.as_deref());
-            let line = Line::from(vec![
-                Span::raw(task.title.as_str()),
-                Span::raw("  "),
-                Span::styled(format!("[{priority_label}]"), Style::default().fg(colour)),
-            ]);
-            ListItem::new(line)
-        })
-        .collect();
+    let inner = block.inner(area);
+    frame.render_widget(block, area);
 
-    let highlight_style = if is_active {
-        Style::default()
-            .bg(Color::DarkGray)
-            .add_modifier(Modifier::BOLD)
-    } else {
-        Style::default().add_modifier(Modifier::DIM)
-    };
-
-    let list = List::new(items)
-        .block(block)
-        .highlight_style(highlight_style)
-        .highlight_symbol("> ");
-
-    let mut list_state = ListState::default();
-    if !tasks.is_empty() {
-        list_state.select(Some(sel));
+    if inner.is_empty() || tasks.is_empty() {
+        return;
     }
 
-    frame.render_stateful_widget(list, area, &mut list_state);
+    // --- Scroll-into-view (O(1) for fixed CARD_HEIGHT) ---
+    let visible_count = (inner.height / CARD_HEIGHT) as usize;
+    let offset_cell = app.column_offset(col);
+    let old_offset = offset_cell.get();
+    let s = sel.min(tasks.len().saturating_sub(1));
+    let new_offset = if s < old_offset {
+        s
+    } else if s >= old_offset + visible_count.max(1) {
+        s.saturating_sub(visible_count.saturating_sub(1))
+    } else {
+        old_offset
+    };
+    offset_cell.set(new_offset);
+
+    // --- Per-card Block rendering ---
+    let buf = frame.buffer_mut();
+    let mut y = inner.top();
+
+    for (i, task) in tasks
+        .iter()
+        .enumerate()
+        .skip(new_offset)
+        .take(visible_count)
+    {
+        let card_area = Rect::new(inner.left(), y, inner.width, CARD_HEIGHT);
+        if card_area.intersection(inner).is_empty() {
+            break;
+        }
+
+        let is_selected = i == sel && is_active;
+        let card_block = Block::default()
+            .borders(Borders::ALL)
+            .border_type(if is_selected {
+                BorderType::Thick
+            } else {
+                BorderType::Plain
+            })
+            .border_style(if is_selected {
+                Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Gray)
+            });
+
+        let ci = card_block.inner(card_area);
+        card_block.render(card_area, buf);
+
+        let inner_w = ci.width as usize;
+
+        // Rows 0-1: title word-wrapped to 2 lines (padded to exactly 2).
+        // No colour — border is the sole selection signal.
+        let mut title_lines = wrap_title(&task.meta.title, inner_w);
+        if title_lines.len() == 1 {
+            title_lines.push(String::new());
+        }
+        for (row, text) in title_lines.iter().take(2).enumerate() {
+            buf.set_line(
+                ci.left(),
+                ci.top() + row as u16,
+                &Line::from(Span::raw(text.as_str())),
+                ci.width,
+            );
+        }
+
+        // Row 2: project-basename  priority
+        let proj = task
+            .project_root
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("");
+        let prio = task.meta.priority_raw.as_deref().unwrap_or("normal");
+        buf.set_line(
+            ci.left(),
+            ci.top() + 2,
+            &Line::from(vec![
+                Span::styled(proj.to_string(), Style::default().fg(Color::Magenta)),
+                Span::raw("  "),
+                Span::styled(
+                    prio.to_string(),
+                    Style::default().fg(priority_colour(task.meta.priority_raw.as_deref())),
+                ),
+            ]),
+            ci.width,
+        );
+
+        y += CARD_HEIGHT;
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -603,6 +733,81 @@ pub(crate) fn session_label(
     (format!("\u{2026}{suffix}"), true)
 }
 
+/// Word-wrap `title` to at most `width` display columns, capping at 2 lines.
+///
+/// - Words are accumulated per line until the next word would exceed `width`.
+/// - A single word longer than `width` is char-broken into `width`-sized chunks.
+/// - If the title produces more than 2 lines, line 2 is truncated with `…`
+///   (U+2026, counts as 1 column).
+/// - An empty `title` or `width == 0` returns `vec!["".to_string()]`.
+pub(crate) fn wrap_title(title: &str, width: usize) -> Vec<String> {
+    if width == 0 || title.is_empty() {
+        return vec![title.to_string()];
+    }
+
+    // Word-wrap: accumulate words per line, char-break words longer than width.
+    let mut lines: Vec<String> = Vec::new();
+    let mut current = String::new();
+
+    for word in title.split_whitespace() {
+        let word_chars: Vec<char> = word.chars().collect();
+
+        if current.is_empty() {
+            if word_chars.len() <= width {
+                current = word.to_string();
+            } else {
+                // Char-break long word into width-sized chunks.
+                for chunk in word_chars.chunks(width) {
+                    lines.push(chunk.iter().collect());
+                }
+                // current stays empty; next word starts a fresh line.
+            }
+        } else {
+            let candidate_len = current.chars().count() + 1 + word_chars.len();
+            if candidate_len <= width {
+                current.push(' ');
+                current.push_str(word);
+            } else {
+                lines.push(std::mem::take(&mut current));
+                if word_chars.len() <= width {
+                    current = word.to_string();
+                } else {
+                    for chunk in word_chars.chunks(width) {
+                        lines.push(chunk.iter().collect());
+                    }
+                }
+            }
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+
+    if lines.is_empty() {
+        return vec![String::new()];
+    }
+
+    // Cap at 2 lines; append ellipsis to line 2 if content was truncated.
+    if lines.len() <= 2 {
+        return lines;
+    }
+
+    let line1 = lines[0].clone();
+    let line2_str = &lines[1];
+    // line2 is at most `width` chars by construction (the word-wrap loop above
+    // only emits lines whose width fits). The `>= width` branch therefore trims
+    // only when line2 *exactly* fills the width, to make room for the ellipsis
+    // without overflowing; there is no real overflow case here.
+    let mut line2: String = if line2_str.chars().count() >= width {
+        let take = width.saturating_sub(1);
+        line2_str.chars().take(take).collect()
+    } else {
+        line2_str.clone()
+    };
+    line2.push('\u{2026}');
+    vec![line1, line2]
+}
+
 /// Extract the basename (last path component) from a project_dir string.
 ///
 /// Returns the full `project_dir` if it has no `/` or the basename is empty.
@@ -642,6 +847,40 @@ fn activity_help_line(status: &AcuityStatus, layout: ActivityLayout) -> Line<'st
     spans.push(Span::styled("j/k", Style::default().fg(Color::Yellow)));
     spans.push(Span::raw(" navigate  |  acuity: "));
     spans.push(Span::styled(text, Style::default().fg(color)));
+    Line::from(spans)
+}
+
+/// Build the help/status bar line for the Kanban view.
+///
+/// Layout-aware: shows `detail`/`close` for the Enter hint depending on
+/// `layout`. When `empty_store` is true, appends a trailing hint so an
+/// unconfigured board (no projects registered) is self-explanatory rather
+/// than three empty columns with no explanation.
+fn kanban_help_line(layout: KanbanLayout, empty_store: bool) -> Line<'static> {
+    let enter_hint = match layout {
+        KanbanLayout::ColumnsFull => "detail",
+        KanbanLayout::Split => "close",
+    };
+    let mut spans = vec![
+        Span::styled(" q", Style::default().fg(Color::Yellow)),
+        Span::raw(" quit  "),
+        Span::styled("1/2/3", Style::default().fg(Color::Yellow)),
+        Span::raw(" views  "),
+        Span::styled("h/l ← →", Style::default().fg(Color::Yellow)),
+        Span::raw(" column  "),
+        Span::styled("j/k ↑ ↓", Style::default().fg(Color::Yellow)),
+        Span::raw(" navigate  "),
+        Span::styled("Enter", Style::default().fg(Color::Yellow)),
+        Span::raw(format!(" {enter_hint}  ")),
+        Span::styled("r", Style::default().fg(Color::Yellow)),
+        Span::raw(" reload"),
+    ];
+    if empty_store {
+        spans.push(Span::styled(
+            "  |  no projects registered",
+            Style::default().fg(Color::Red),
+        ));
+    }
     Line::from(spans)
 }
 
@@ -973,6 +1212,70 @@ mod tests {
         assert_eq!(harness_abbrev(""), "??");
     }
 
+    // --- wrap_title ---
+
+    #[test]
+    fn wrap_title_empty_returns_empty() {
+        assert_eq!(wrap_title("", 10), vec!["".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_zero_width_returns_title() {
+        assert_eq!(wrap_title("hello", 0), vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_fits_on_one_line() {
+        assert_eq!(wrap_title("hello", 10), vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_exact_width_one_line() {
+        assert_eq!(wrap_title("hello", 5), vec!["hello".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_wraps_to_two_lines() {
+        // "hello world" at width 5: word-wrap puts each word on its own line.
+        let result = wrap_title("hello world", 5);
+        assert_eq!(result, vec!["hello".to_string(), "world".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_two_line_second_exact() {
+        // "abcdefghij" width 5 -> ["abcde", "fghij"] — single word char-broken.
+        let result = wrap_title("abcdefghij", 5);
+        assert_eq!(result, vec!["abcde".to_string(), "fghij".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_overflow_with_ellipsis() {
+        // 11 chars at width 5: line1="abcde", rest="fghij!" (6 chars > 5)
+        // line2 = first 4 chars + ellipsis = "fghi\u{2026}"
+        let result = wrap_title("abcdefghij!", 5);
+        assert_eq!(result, vec!["abcde".to_string(), "fghi\u{2026}".to_string()]);
+    }
+
+    #[test]
+    fn wrap_title_word_wrap_multiple_words() {
+        // "the quick brown fox" width 10: fits in 2 lines, no ellipsis.
+        let result = wrap_title("the quick brown fox", 10);
+        assert_eq!(
+            result,
+            vec!["the quick".to_string(), "brown fox".to_string()]
+        );
+    }
+
+    #[test]
+    fn wrap_title_word_wrap_truncated_with_ellipsis() {
+        // "the quick brown fox jumps" width 10: 3 lines worth, line 2 truncated.
+        let result = wrap_title("the quick brown fox jumps", 10);
+        assert_eq!(
+            result,
+            vec!["the quick".to_string(), "brown fox\u{2026}".to_string()]
+        );
+    }
+
     // --- project_basename ---
 
     #[test]
@@ -996,6 +1299,152 @@ mod tests {
     #[test]
     fn project_basename_root_slash_falls_back_to_full() {
         assert_eq!(project_basename("/"), "/");
+    }
+
+    // --- kanban_help_line ---
+
+    /// Flatten a `Line`'s spans into a single `String` for content assertions.
+    fn flatten_line(line: &Line) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn kanban_help_line_non_empty_omits_hint() {
+        let line = kanban_help_line(KanbanLayout::ColumnsFull, false);
+        let text = flatten_line(&line);
+        assert!(
+            !text.contains("no projects"),
+            "non-empty store must not show the hint: {text}"
+        );
+    }
+
+    #[test]
+    fn kanban_help_line_empty_shows_hint() {
+        let line = kanban_help_line(KanbanLayout::ColumnsFull, true);
+        let text = flatten_line(&line);
+        assert!(
+            text.contains("no projects registered"),
+            "empty store must show the hint: {text}"
+        );
+    }
+
+    #[test]
+    fn kanban_help_line_layout_changes_enter_hint() {
+        let detail = flatten_line(&kanban_help_line(KanbanLayout::ColumnsFull, false));
+        let close = flatten_line(&kanban_help_line(KanbanLayout::Split, false));
+        assert!(
+            detail.contains("detail"),
+            "ColumnsFull shows Enter detail: {detail}"
+        );
+        assert!(close.contains("close"), "Split shows Enter close: {close}");
+    }
+
+    // --- render_column scroll-into-view (M1 investigation) ---
+
+    fn kanban_task_with_title(title: &str) -> KanbanTask {
+        use cuelib::artifact::ArtifactMeta;
+        KanbanTask {
+            meta: ArtifactMeta {
+                title: title.to_string(),
+                status_raw: Some("open".to_string()),
+                priority_raw: None,
+                artifact_type: "task".to_string(),
+                path: std::path::PathBuf::from(format!("/tmp/{title}.md")),
+            },
+            project_root: std::path::PathBuf::from("/tmp/proj"),
+        }
+    }
+
+    /// Render `render_column` for the Open column into a TestBackend buffer and
+    /// return the concatenated cell content as a single String.
+    fn render_column_to_string(app: &App, width: u16, height: u16) -> String {
+        use ratatui::{backend::TestBackend, Terminal};
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|f| {
+                render_column(f, app, app.active_col, f.area());
+            })
+            .unwrap();
+        let buf = terminal.backend().buffer();
+        let mut out = String::new();
+        for y in 0..buf.area.height {
+            for x in 0..buf.area.width {
+                out.push_str(buf.cell((x, y)).map(|c| c.symbol()).unwrap_or(" "));
+            }
+            out.push('\n');
+        }
+        out
+    }
+
+    #[test]
+    fn render_column_scroll_keeps_last_selected_visible() {
+        // 15 open tasks; select the last one. If scroll-into-view works, the
+        // selected task title must appear somewhere in the rendered buffer.
+        let tasks: Vec<KanbanTask> = (0..15)
+            .map(|i| kanban_task_with_title(&format!("task-{i:02}")))
+            .collect();
+        let app = App { active_col: Column::Open, sel_open: 14, ..App::new(tasks) };
+        let rendered = render_column_to_string(&app, 40, 12);
+        assert!(
+            rendered.contains("task-14"),
+            "last selected task must be visible after scroll:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_column_scroll_keeps_first_selected_visible() {
+        // Select the first task — trivially visible, but locks the contract for
+        // scroll-up from a deep position.
+        let tasks: Vec<KanbanTask> = (0..15)
+            .map(|i| kanban_task_with_title(&format!("task-{i:02}")))
+            .collect();
+        let app = App { active_col: Column::Open, sel_open: 0, ..App::new(tasks) };
+        let rendered = render_column_to_string(&app, 40, 12);
+        assert!(
+            rendered.contains("task-00"),
+            "first selected task must be visible:\n{rendered}"
+        );
+    }
+
+    #[test]
+    fn render_column_cards_have_uniform_height() {
+        // Mix of short (1-line) and long (2-line wrapping) titles. With
+        // CARD_HEIGHT=5 (top-border + title1 + title2/blank + proj/prio +
+        // bottom-border), every card occupies exactly 5 rows.
+        //
+        // The project/priority line contains "proj" (from project_root
+        // /tmp/proj). With the column border at row 0, card 1 top-border at
+        // row 1, the first proj/prio row is at row 4; subsequent cards at
+        // rows 9, 14 (5-row stride).
+        let tasks: Vec<KanbanTask> = vec![
+            kanban_task_with_title("short"),
+            kanban_task_with_title("a very long title that definitely wraps"),
+            kanban_task_with_title("mid"),
+        ];
+        let app = App { active_col: Column::Open, sel_open: 0, ..App::new(tasks) };
+        // Width 40 => inner_width = 36. The long title (39 chars) wraps to 2
+        // lines; the short titles fit on 1 line and must be padded.
+        let rendered = render_column_to_string(&app, 40, 20);
+        let lines: Vec<&str> = rendered.lines().collect();
+
+        let proj_rows: Vec<usize> = lines
+            .iter()
+            .enumerate()
+            .filter(|(_, l)| l.contains("proj"))
+            .map(|(i, _)| i)
+            .collect();
+
+        assert_eq!(
+            proj_rows.len(),
+            3,
+            "expected 3 project/priority lines:\n{rendered}"
+        );
+        assert_eq!(
+            proj_rows,
+            vec![4, 9, 14],
+            "project/priority lines must be exactly 5 rows apart (CARD_HEIGHT=5):\n{rendered}"
+        );
     }
 }
 

@@ -1,7 +1,10 @@
+use std::cell::Cell;
 use std::collections::{HashMap, VecDeque};
+use std::path::PathBuf;
 
 use acuity_api::{AcuityEvent, EventRecord};
 use cuelib::artifact::{ArtifactMeta, TaskStatus};
+use cuelib::project::ProjectStore;
 
 use crate::msg::SseStatus;
 
@@ -28,6 +31,17 @@ pub enum ActivityLayout {
     Split,
     /// Detail pane fullscreen. j/k navigates events list.
     DetailFull,
+}
+
+/// Two-state layout for the Kanban view.
+///
+/// Transitions: `ColumnsFull` ↔ Enter ↔ `Split`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KanbanLayout {
+    /// Default: three columns fullscreen.
+    ColumnsFull,
+    /// Bottom detail pane visible; columns constrained to upper portion.
+    Split,
 }
 
 /// Which kanban column is currently active.
@@ -85,6 +99,18 @@ impl From<SseStatus> for AcuityStatus {
     }
 }
 
+/// A kanban card with project attribution.
+///
+/// Wraps [`ArtifactMeta`] and adds the filesystem root of the project the task
+/// belongs to, as loaded from the [`ProjectStore`].
+#[derive(Debug, Clone)]
+pub struct KanbanTask {
+    /// The underlying artifact metadata.
+    pub meta: ArtifactMeta,
+    /// Filesystem root of the project (first path in ProjectStore).
+    pub project_root: PathBuf,
+}
+
 /// Per-session aggregate built incrementally by [`App::push_event`].
 ///
 /// Lives in [`App::sessions`] and is updated *before* ring-buffer eviction,
@@ -133,11 +159,13 @@ pub const EVENT_CAP: usize = 2_000;
 pub struct App {
     // --- Kanban ---
     /// Tasks in the Open column.
-    pub open: Vec<ArtifactMeta>,
+    pub open: Vec<KanbanTask>,
     /// Tasks in the In Progress column.
-    pub in_progress: Vec<ArtifactMeta>,
+    pub in_progress: Vec<KanbanTask>,
     /// Tasks in the Complete column.
-    pub complete: Vec<ArtifactMeta>,
+    pub complete: Vec<KanbanTask>,
+    /// True when the ProjectStore had no entries at the last load.
+    pub kanban_empty_store: bool,
 
     /// Active (focused) column.
     pub active_col: Column,
@@ -168,6 +196,18 @@ pub struct App {
     /// Selection index for the Diagnostics view.
     pub sel_diagnostics: usize,
 
+    // --- Kanban scroll offsets ---
+    /// Viewport offset (in cards) for the Open column.
+    pub offset_open: Cell<usize>,
+    /// Viewport offset (in cards) for the In Progress column.
+    pub offset_in_progress: Cell<usize>,
+    /// Viewport offset (in cards) for the Complete column.
+    pub offset_complete: Cell<usize>,
+
+    // --- Kanban layout state ---
+    /// Layout state of the Kanban view.
+    pub kanban_layout: KanbanLayout,
+
     // --- Two-pane Activity view state ---
     /// Layout state of the Activity view.
     pub activity_layout: ActivityLayout,
@@ -181,19 +221,25 @@ impl App {
     /// `cuelib`. Tasks whose status parses as `Closed`, or whose status field
     /// is absent / unrecognised, are silently excluded (they are not kanban-
     /// visible by definition).
-    pub fn new(tasks: Vec<ArtifactMeta>) -> Self {
+    pub fn new(tasks: Vec<KanbanTask>) -> Self {
         let (open, in_progress, complete) = classify_tasks(tasks);
 
         Self {
             open,
             in_progress,
             complete,
+            kanban_empty_store: false,
             active_col: Column::Open,
             sel_open: 0,
             sel_in_progress: 0,
             sel_complete: 0,
 
+            offset_open: Cell::new(0),
+            offset_in_progress: Cell::new(0),
+            offset_complete: Cell::new(0),
+
             active_view: View::Kanban,
+            kanban_layout: KanbanLayout::ColumnsFull,
             acuity_status: AcuityStatus::Disabled,
             events: VecDeque::new(),
             sessions: HashMap::new(),
@@ -205,8 +251,8 @@ impl App {
     }
 
     /// Re-classify a new set of tasks into the kanban columns, resetting all
-    /// column selection indices. Called on `Action::Refresh`.
-    pub fn reload_kanban(&mut self, tasks: Vec<ArtifactMeta>) {
+    /// column selection indices and scroll offsets. Called on `Action::Refresh`.
+    pub fn reload_kanban(&mut self, tasks: Vec<KanbanTask>) {
         let (open, in_progress, complete) = classify_tasks(tasks);
         self.open = open;
         self.in_progress = in_progress;
@@ -214,6 +260,21 @@ impl App {
         self.sel_open = 0;
         self.sel_in_progress = 0;
         self.sel_complete = 0;
+        self.offset_open.set(0);
+        self.offset_in_progress.set(0);
+        self.offset_complete.set(0);
+    }
+
+    /// Return the scroll-offset cell for `col`.
+    ///
+    /// Uses `Cell<usize>` so `render_column` (which takes `&App`) can update
+    /// the offset without requiring `&mut App`.
+    pub fn column_offset(&self, col: Column) -> &Cell<usize> {
+        match col {
+            Column::Open => &self.offset_open,
+            Column::InProgress => &self.offset_in_progress,
+            Column::Complete => &self.offset_complete,
+        }
     }
 
     /// Ingest one live event: update the session summary map, evict from the
@@ -468,6 +529,14 @@ impl App {
         self.sel_activity = 0;
     }
 
+    /// Toggle the kanban detail pane: `ColumnsFull ↔ Split`.
+    pub fn toggle_kanban_detail(&mut self) {
+        self.kanban_layout = match self.kanban_layout {
+            KanbanLayout::ColumnsFull => KanbanLayout::Split,
+            KanbanLayout::Split => KanbanLayout::ColumnsFull,
+        };
+    }
+
     /// Toggle the detail pane visibility: `SessionsFull ↔ Split`.
     /// No-op when in `DetailFull` (Escape handles the return from there).
     pub fn toggle_detail_pane(&mut self) {
@@ -547,7 +616,7 @@ impl App {
     }
 
     /// Return the tasks for a given column.
-    pub fn column_tasks(&self, col: Column) -> &[ArtifactMeta] {
+    pub fn column_tasks(&self, col: Column) -> &[KanbanTask] {
         match col {
             Column::Open => &self.open,
             Column::InProgress => &self.in_progress,
@@ -618,14 +687,14 @@ fn priority_rank(p: Option<&str>) -> u8 {
 ///
 /// Closed or unrecognised statuses are silently excluded — not kanban-visible.
 fn classify_tasks(
-    tasks: Vec<ArtifactMeta>,
-) -> (Vec<ArtifactMeta>, Vec<ArtifactMeta>, Vec<ArtifactMeta>) {
+    tasks: Vec<KanbanTask>,
+) -> (Vec<KanbanTask>, Vec<KanbanTask>, Vec<KanbanTask>) {
     let mut open = Vec::new();
     let mut in_progress = Vec::new();
     let mut complete = Vec::new();
 
     for task in tasks {
-        match task.status::<TaskStatus>() {
+        match task.meta.status::<TaskStatus>() {
             Some(TaskStatus::Open) => open.push(task),
             Some(TaskStatus::InProgress) => in_progress.push(task),
             Some(TaskStatus::Complete) => complete.push(task),
@@ -633,11 +702,37 @@ fn classify_tasks(
         }
     }
 
-    open.sort_by_key(|t| priority_rank(t.priority_raw.as_deref()));
-    in_progress.sort_by_key(|t| priority_rank(t.priority_raw.as_deref()));
-    complete.sort_by_key(|t| priority_rank(t.priority_raw.as_deref()));
+    open.sort_by_key(|t| priority_rank(t.meta.priority_raw.as_deref()));
+    in_progress.sort_by_key(|t| priority_rank(t.meta.priority_raw.as_deref()));
+    complete.sort_by_key(|t| priority_rank(t.meta.priority_raw.as_deref()));
 
     (open, in_progress, complete)
+}
+
+/// Collect task cards from all projects registered in `store`.
+///
+/// For each project key, only the **first** path is used (D3: single-path
+/// per project). Projects whose root directory is missing or unreadable are
+/// silently skipped.
+pub fn collect_tasks(store: &ProjectStore, branch: &str) -> Vec<KanbanTask> {
+    let mut tasks = Vec::new();
+    for paths in store.entries().values() {
+        let root = match paths.first() {
+            Some(p) => p,
+            None => continue,
+        };
+        let metas = match cuelib::artifact::read_artifacts(root, branch, "task") {
+            Ok(m) => m,
+            Err(_) => continue,
+        };
+        for meta in metas {
+            tasks.push(KanbanTask {
+                meta,
+                project_root: root.clone(),
+            });
+        }
+    }
+    tasks
 }
 
 // ---------------------------------------------------------------------------
@@ -998,16 +1093,23 @@ mod tests {
         }
     }
 
+    fn make_kanban_task(title: &str, status: &str, priority: Option<&str>) -> KanbanTask {
+        KanbanTask {
+            meta: make_task(title, status, priority),
+            project_root: std::path::PathBuf::from("/tmp/test"),
+        }
+    }
+
     #[test]
     fn priority_sort_in_app_new_is_critical_high_normal_low() {
         let tasks = vec![
-            make_task("low-task", "open", Some("low")),
-            make_task("critical-task", "open", Some("critical")),
-            make_task("normal-task", "open", None),
-            make_task("high-task", "open", Some("high")),
+            make_kanban_task("low-task", "open", Some("low")),
+            make_kanban_task("critical-task", "open", Some("critical")),
+            make_kanban_task("normal-task", "open", None),
+            make_kanban_task("high-task", "open", Some("high")),
         ];
         let app = App::new(tasks);
-        let titles: Vec<&str> = app.open.iter().map(|t| t.title.as_str()).collect();
+        let titles: Vec<&str> = app.open.iter().map(|t| t.meta.title.as_str()).collect();
         assert_eq!(
             titles,
             &["critical-task", "high-task", "normal-task", "low-task"]
@@ -1019,9 +1121,9 @@ mod tests {
     #[test]
     fn reload_kanban_reclassifies_resets_selection_and_sorts() {
         let initial = vec![
-            make_task("t1", "open", None),
-            make_task("t2", "open", None),
-            make_task("t3", "open", None),
+            make_kanban_task("t1", "open", None),
+            make_kanban_task("t2", "open", None),
+            make_kanban_task("t3", "open", None),
         ];
         let mut app = App::new(initial);
         // Move selections away from 0 to confirm reset.
@@ -1029,9 +1131,9 @@ mod tests {
         app.sel_in_progress = 1;
 
         let new_tasks = vec![
-            make_task("n-low", "open", Some("low")),
-            make_task("n-critical", "open", Some("critical")),
-            make_task("n-progress", "in-progress", None),
+            make_kanban_task("n-low", "open", Some("low")),
+            make_kanban_task("n-critical", "open", Some("critical")),
+            make_kanban_task("n-progress", "in-progress", None),
         ];
         app.reload_kanban(new_tasks);
 
@@ -1041,8 +1143,8 @@ mod tests {
         assert_eq!(app.complete.len(), 0);
 
         // Priority sort applied to the new Open column.
-        assert_eq!(app.open[0].title, "n-critical");
-        assert_eq!(app.open[1].title, "n-low");
+        assert_eq!(app.open[0].meta.title, "n-critical");
+        assert_eq!(app.open[1].meta.title, "n-low");
 
         // All selection indices reset.
         assert_eq!(app.sel_open, 0);
@@ -1364,6 +1466,24 @@ mod tests {
         assert_eq!(app.sel_session_id, None);
     }
 
+    // --- KanbanLayout transitions ---
+
+    #[test]
+    fn toggle_kanban_detail_columns_full_to_split() {
+        let mut app = empty_app();
+        assert_eq!(app.kanban_layout, KanbanLayout::ColumnsFull);
+        app.toggle_kanban_detail();
+        assert_eq!(app.kanban_layout, KanbanLayout::Split);
+    }
+
+    #[test]
+    fn toggle_kanban_detail_split_to_columns_full() {
+        let mut app = empty_app();
+        app.kanban_layout = KanbanLayout::Split;
+        app.toggle_kanban_detail();
+        assert_eq!(app.kanban_layout, KanbanLayout::ColumnsFull);
+    }
+
     // --- ActivityLayout transitions ---
 
     #[test]
@@ -1434,5 +1554,86 @@ mod tests {
         app.activity_layout = ActivityLayout::Split;
         app.return_from_detail_full();
         assert_eq!(app.activity_layout, ActivityLayout::Split);
+    }
+
+    // --- collect_tasks (Slice 1) ---
+
+    #[test]
+    fn collect_tasks_multi_project() {
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        // Create two project temp dirs each with a task artifact.
+        let proj_a = TempDir::new().unwrap();
+        let proj_b = TempDir::new().unwrap();
+
+        fn write_task(root: &std::path::Path, name: &str, status: &str) {
+            let dir = root.join(".cue").join("master").join("task");
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut f = std::fs::File::create(dir.join(format!("{name}.md"))).unwrap();
+            writeln!(f, "---").unwrap();
+            writeln!(f, "title: {name}").unwrap();
+            writeln!(f, "status: {status}").unwrap();
+            writeln!(f, "---").unwrap();
+        }
+
+        write_task(proj_a.path(), "task-alpha", "open");
+        write_task(proj_b.path(), "task-beta", "in-progress");
+
+        let mut store = cuelib::project::ProjectStore::default();
+        store.add_path("local:proj-a", proj_a.path());
+        store.add_path("local:proj-b", proj_b.path());
+
+        let tasks = collect_tasks(&store, "master");
+        assert_eq!(tasks.len(), 2, "one task per project");
+
+        let mut titles: Vec<&str> = tasks.iter().map(|t| t.meta.title.as_str()).collect();
+        titles.sort();
+        assert_eq!(titles, &["task-alpha", "task-beta"]);
+    }
+
+    #[test]
+    fn collect_tasks_skips_missing_root() {
+        let mut store = cuelib::project::ProjectStore::default();
+        store.add_path("local:missing", std::path::PathBuf::from("/nonexistent/path/xyz"));
+
+        // Should not panic; returns empty.
+        let tasks = collect_tasks(&store, "master");
+        assert!(tasks.is_empty());
+    }
+
+    #[test]
+    fn collect_tasks_uses_first_path_only() {
+        use std::io::Write;
+        use tempfile::TempDir;
+
+        let proj_a = TempDir::new().unwrap();
+        let proj_b = TempDir::new().unwrap();
+
+        fn write_task(root: &std::path::Path, name: &str) {
+            let dir = root.join(".cue").join("master").join("task");
+            std::fs::create_dir_all(&dir).unwrap();
+            let mut f = std::fs::File::create(dir.join(format!("{name}.md"))).unwrap();
+            writeln!(f, "---\ntitle: {name}\nstatus: open\n---").unwrap();
+        }
+
+        write_task(proj_a.path(), "first-path-task");
+        write_task(proj_b.path(), "second-path-task");
+
+        let mut store = cuelib::project::ProjectStore::default();
+        // Add both paths under the same key — only first should be read.
+        store.add_path("local:shared", proj_a.path());
+        store.add_path("local:shared", proj_b.path());
+
+        let tasks = collect_tasks(&store, "master");
+        assert_eq!(tasks.len(), 1);
+        assert_eq!(tasks[0].meta.title, "first-path-task");
+    }
+
+    #[test]
+    fn collect_tasks_empty_store_returns_empty() {
+        let store = cuelib::project::ProjectStore::default();
+        let tasks = collect_tasks(&store, "master");
+        assert!(tasks.is_empty());
     }
 }

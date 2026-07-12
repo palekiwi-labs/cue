@@ -11,14 +11,9 @@ mod ui;
 use anyhow::Result;
 use app::{ActivityLayout, App, View};
 use clap::Parser;
-use cuelib::artifact::read_artifacts;
 use event::Action;
 use msg::{Msg, SseStatus};
-use std::{
-    env,
-    path::{Path, PathBuf},
-    sync::mpsc::Receiver,
-};
+use std::sync::mpsc::Receiver;
 
 #[derive(Parser)]
 #[command(
@@ -27,10 +22,6 @@ use std::{
     version
 )]
 struct Cli {
-    /// Root of the cue project (defaults to current working directory).
-    #[arg(long, value_name = "DIR")]
-    root: Option<PathBuf>,
-
     /// Branch to read tasks from (default: master).
     #[arg(long, default_value = "master")]
     branch: String,
@@ -50,12 +41,8 @@ enum LoopControl {
 fn main() -> Result<()> {
     let cli = Cli::parse();
 
-    let root = match cli.root {
-        Some(p) => p,
-        None => env::current_dir()?,
-    };
-
-    let tasks = read_artifacts(&root, &cli.branch, "task")?;
+    let store = cuelib::project::ProjectStore::load().unwrap_or_default();
+    let tasks = app::collect_tasks(&store, &cli.branch);
 
     // Install a panic hook that restores the terminal before printing the
     // panic message, so the backtrace is readable and the shell is not left
@@ -84,9 +71,11 @@ fn main() -> Result<()> {
     drop(tx);
 
     let mut app = App::new(tasks);
+    app.kanban_empty_store = store.entries().is_empty();
+
     let mut terminal = tui::init()?;
 
-    let run_result = run(&mut terminal, &mut app, rx, &root, &cli.branch);
+    let run_result = run(&mut terminal, &mut app, rx, &cli.branch);
 
     // Always restore the terminal, even if run() returned an error.
     // Preserve and return the run error if restore succeeds.
@@ -100,7 +89,6 @@ fn run(
     terminal: &mut tui::Tui,
     app: &mut App,
     rx: Receiver<Msg>,
-    root: &Path,
     branch: &str,
 ) -> Result<()> {
     loop {
@@ -110,7 +98,7 @@ fn run(
         // This gives instant keyboard response and batches SSE bursts.
         match rx.recv() {
             Ok(msg) => {
-                if process_msg(msg, app, root, branch)? == LoopControl::Quit {
+                if process_msg(msg, app, branch)? == LoopControl::Quit {
                     return Ok(());
                 }
             }
@@ -122,18 +110,18 @@ fn run(
             }
         }
         while let Ok(msg) = rx.try_recv() {
-            if process_msg(msg, app, root, branch)? == LoopControl::Quit {
+            if process_msg(msg, app, branch)? == LoopControl::Quit {
                 return Ok(());
             }
         }
     }
 }
 
-fn process_msg(msg: Msg, app: &mut App, root: &Path, branch: &str) -> Result<LoopControl> {
+fn process_msg(msg: Msg, app: &mut App, branch: &str) -> Result<LoopControl> {
     match msg {
         Msg::Input(Action::Quit) => return Ok(LoopControl::Quit),
         Msg::Input(Action::SwitchView(v)) => app.active_view = v,
-        Msg::Input(Action::Refresh) => reload_tasks(app, root, branch)?,
+        Msg::Input(Action::Refresh) => reload_tasks(app, branch)?,
         Msg::Input(Action::Down) => match app.active_view {
             View::Kanban => app.scroll_down(),
             View::Activity => match app.activity_layout {
@@ -162,11 +150,11 @@ fn process_msg(msg: Msg, app: &mut App, root: &Path, branch: &str) -> Result<Loo
             View::Activity => app.enter_detail_full(),
             View::Diagnostics => {}
         },
-        Msg::Input(Action::Enter) => {
-            if app.active_view == View::Activity {
-                app.toggle_detail_pane();
-            }
-        }
+        Msg::Input(Action::Enter) => match app.active_view {
+            View::Kanban => app.toggle_kanban_detail(),
+            View::Activity => app.toggle_detail_pane(),
+            View::Diagnostics => {}
+        },
         Msg::Input(Action::Escape) => {
             if app.active_view == View::Activity {
                 app.return_from_detail_full();
@@ -183,8 +171,10 @@ fn process_msg(msg: Msg, app: &mut App, root: &Path, branch: &str) -> Result<Loo
     Ok(LoopControl::Continue)
 }
 
-fn reload_tasks(app: &mut App, root: &Path, branch: &str) -> Result<()> {
-    let tasks = read_artifacts(root, branch, "task")?;
+fn reload_tasks(app: &mut App, branch: &str) -> Result<()> {
+    let store = cuelib::project::ProjectStore::load().unwrap_or_default();
+    let tasks = app::collect_tasks(&store, branch);
+    app.kanban_empty_store = store.entries().is_empty();
     app.reload_kanban(tasks);
     Ok(())
 }
