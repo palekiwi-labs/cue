@@ -154,7 +154,7 @@ fn priority_colour(priority: Option<&str>) -> Color {
 /// Height of each kanban card in rows (1 top border + 3 content rows).
 /// Cards have no bottom border; the top border of the next card acts as the
 /// single-row separator, matching the visual weight of the column-to-card gap.
-const CARD_HEIGHT: u16 = 4;
+const CARD_HEIGHT: u16 = 5;
 
 fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
     let is_active = app.active_col == col;
@@ -217,7 +217,7 @@ fn render_column(frame: &mut Frame, app: &App, col: Column, area: Rect) {
 
         let is_selected = i == sel && is_active;
         let card_block = Block::default()
-            .borders(Borders::TOP | Borders::LEFT | Borders::RIGHT)
+            .borders(Borders::ALL)
             .border_type(if is_selected {
                 BorderType::Thick
             } else {
@@ -1410,13 +1410,13 @@ mod tests {
     #[test]
     fn render_column_cards_have_uniform_height() {
         // Mix of short (1-line) and long (2-line wrapping) titles. With
-        // CARD_HEIGHT=4 (top-border + title1 + title2/blank + proj/prio, no
-        // bottom border), every card occupies exactly 4 rows.
+        // CARD_HEIGHT=5 (top-border + title1 + title2/blank + proj/prio +
+        // bottom-border), every card occupies exactly 5 rows.
         //
         // The project/priority line contains "proj" (from project_root
         // /tmp/proj). With the column border at row 0, card 1 top-border at
-        // row 1, the first proj/prio row is at row 4; subsequent ones appear
-        // every 4 rows.
+        // row 1, the first proj/prio row is at row 4; subsequent cards at
+        // rows 9, 14 (5-row stride).
         let tasks: Vec<KanbanTask> = vec![
             kanban_task_with_title("short"),
             kanban_task_with_title("a very long title that definitely wraps"),
@@ -1442,8 +1442,8 @@ mod tests {
         );
         assert_eq!(
             proj_rows,
-            vec![4, 8, 12],
-            "project/priority lines must be exactly 4 rows apart (CARD_STRIDE=4):\n{rendered}"
+            vec![4, 9, 14],
+            "project/priority lines must be exactly 5 rows apart (CARD_HEIGHT=5):\n{rendered}"
         );
     }
 }
