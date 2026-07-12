@@ -58,24 +58,7 @@ fn render_kanban(frame: &mut Frame, app: &App) {
         }
     }
 
-    let enter_hint = match app.kanban_layout {
-        KanbanLayout::ColumnsFull => "detail",
-        KanbanLayout::Split => "close",
-    };
-    let help = Line::from(vec![
-        Span::styled(" q", Style::default().fg(Color::Yellow)),
-        Span::raw(" quit  "),
-        Span::styled("1/2/3", Style::default().fg(Color::Yellow)),
-        Span::raw(" views  "),
-        Span::styled("h/l ← →", Style::default().fg(Color::Yellow)),
-        Span::raw(" column  "),
-        Span::styled("j/k ↑ ↓", Style::default().fg(Color::Yellow)),
-        Span::raw(" navigate  "),
-        Span::styled("Enter", Style::default().fg(Color::Yellow)),
-        Span::raw(format!(" {enter_hint}  ")),
-        Span::styled("r", Style::default().fg(Color::Yellow)),
-        Span::raw(" reload"),
-    ]);
+    let help = kanban_help_line(app.kanban_layout, app.kanban_empty_store);
     frame.render_widget(help, help_area);
 }
 
@@ -824,6 +807,37 @@ fn activity_help_line(status: &AcuityStatus, layout: ActivityLayout) -> Line<'st
     Line::from(spans)
 }
 
+/// Build the help/status bar line for the Kanban view.
+///
+/// Layout-aware: shows `detail`/`close` for the Enter hint depending on
+/// `layout`. When `empty_store` is true, appends a trailing hint so an
+/// unconfigured board (no projects registered) is self-explanatory rather
+/// than three empty columns with no explanation.
+fn kanban_help_line(layout: KanbanLayout, empty_store: bool) -> Line<'static> {
+    let enter_hint = match layout {
+        KanbanLayout::ColumnsFull => "detail",
+        KanbanLayout::Split => "close",
+    };
+    let mut spans = vec![
+        Span::styled(" q", Style::default().fg(Color::Yellow)),
+        Span::raw(" quit  "),
+        Span::styled("1/2/3", Style::default().fg(Color::Yellow)),
+        Span::raw(" views  "),
+        Span::styled("h/l ← →", Style::default().fg(Color::Yellow)),
+        Span::raw(" column  "),
+        Span::styled("j/k ↑ ↓", Style::default().fg(Color::Yellow)),
+        Span::raw(" navigate  "),
+        Span::styled("Enter", Style::default().fg(Color::Yellow)),
+        Span::raw(format!(" {enter_hint}  ")),
+        Span::styled("r", Style::default().fg(Color::Yellow)),
+        Span::raw(" reload"),
+    ];
+    if empty_store {
+        spans.push(Span::raw("  |  no projects registered"));
+    }
+    Line::from(spans)
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1239,6 +1253,44 @@ mod tests {
     #[test]
     fn project_basename_root_slash_falls_back_to_full() {
         assert_eq!(project_basename("/"), "/");
+    }
+
+    // --- kanban_help_line ---
+
+    /// Flatten a `Line`'s spans into a single `String` for content assertions.
+    fn flatten_line(line: &Line) -> String {
+        line.spans.iter().map(|s| s.content.as_ref()).collect()
+    }
+
+    #[test]
+    fn kanban_help_line_non_empty_omits_hint() {
+        let line = kanban_help_line(KanbanLayout::ColumnsFull, false);
+        let text = flatten_line(&line);
+        assert!(
+            !text.contains("no projects"),
+            "non-empty store must not show the hint: {text}"
+        );
+    }
+
+    #[test]
+    fn kanban_help_line_empty_shows_hint() {
+        let line = kanban_help_line(KanbanLayout::ColumnsFull, true);
+        let text = flatten_line(&line);
+        assert!(
+            text.contains("no projects registered"),
+            "empty store must show the hint: {text}"
+        );
+    }
+
+    #[test]
+    fn kanban_help_line_layout_changes_enter_hint() {
+        let detail = flatten_line(&kanban_help_line(KanbanLayout::ColumnsFull, false));
+        let close = flatten_line(&kanban_help_line(KanbanLayout::Split, false));
+        assert!(
+            detail.contains("detail"),
+            "ColumnsFull shows Enter detail: {detail}"
+        );
+        assert!(close.contains("close"), "Split shows Enter close: {close}");
     }
 }
 
