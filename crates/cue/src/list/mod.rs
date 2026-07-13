@@ -182,7 +182,7 @@ pub fn list(
 }
 
 pub fn resolve_scan_paths(
-    root: &Path,
+    _root: &Path,
     cue_path: &Path,
     all: bool,
     branch_name: Option<String>,
@@ -193,9 +193,9 @@ pub fn resolve_scan_paths(
         let branch = if let Some(b) = branch_name {
             b
         } else {
-            git::get_current_branch(root)?
+            cuelib::head::resolve_scope(cue_path)?
         };
-        let branch_dir = branch.replace(['/', '\\'], "-");
+        let branch_dir = git::sanitize_branch_name(&branch);
         let scan_dir = cue_path.join(&branch_dir);
 
         if scan_dir.exists() {

@@ -31,9 +31,9 @@ fn test_add_from_file() -> anyhow::Result<()> {
         .arg(&source_file)
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/main/spec/index.md\n"));
+        .stdout(predicate::str::diff(".test-mem/master/spec/index.md\n"));
 
-    let file_path = env.root().join(".test-mem/main/spec/index.md");
+    let file_path = env.root().join(".test-mem/master/spec/index.md");
     assert!(file_path.exists());
     let content = fs::read_to_string(file_path)?;
     assert_eq!(content, "content from file");
@@ -127,9 +127,9 @@ fn test_add_spec_default() -> anyhow::Result<()> {
         .arg("Project scope")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/main/spec/index.md\n"));
+        .stdout(predicate::str::diff(".test-mem/master/spec/index.md\n"));
 
-    let file_path = env.root().join(".test-mem/main/spec/index.md");
+    let file_path = env.root().join(".test-mem/master/spec/index.md");
     assert!(file_path.exists());
     let content = fs::read_to_string(file_path)?;
     assert_eq!(content, "Project scope");
@@ -160,9 +160,9 @@ fn test_add_no_content_empty_file() -> anyhow::Result<()> {
         .arg("")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/main/spec/empty.txt\n"));
+        .stdout(predicate::str::diff(".test-mem/master/spec/empty.txt\n"));
 
-    let file_path = env.root().join(".test-mem/main/spec/empty.txt");
+    let file_path = env.root().join(".test-mem/master/spec/empty.txt");
     assert!(file_path.exists());
     let content = fs::read_to_string(file_path)?;
     assert!(content.is_empty());
@@ -194,10 +194,10 @@ fn test_add_type_trace_nested_by_default() -> anyhow::Result<()> {
         .arg("stack trace content")
         .assert()
         .success()
-        .stdout(predicate::str::starts_with(".test-mem/main/trace/"));
+        .stdout(predicate::str::starts_with(".test-mem/master/trace/"));
 
     // File must be nested under a <ts>-<hash> subdirectory
-    let trace_base = env.root().join(".test-mem/main/trace");
+    let trace_base = env.root().join(".test-mem/master/trace");
     let entries = fs::read_dir(&trace_base)?;
     let mut found = false;
     for entry in entries {
@@ -243,9 +243,9 @@ fn test_add_type_trace_with_root() -> anyhow::Result<()> {
         .arg("stack trace content")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/main/trace/error.log\n"));
+        .stdout(predicate::str::diff(".test-mem/master/trace/error.log\n"));
 
-    let file_path = env.root().join(".test-mem/main/trace/error.log");
+    let file_path = env.root().join(".test-mem/master/trace/error.log");
     assert!(file_path.exists());
     let content = fs::read_to_string(file_path)?;
     assert_eq!(content, "stack trace content");
@@ -276,13 +276,13 @@ fn test_add_nested_by_default_for_any_type() -> anyhow::Result<()> {
         .arg("nested spec")
         .assert()
         .success()
-        .stdout(predicate::str::starts_with(".test-mem/main/spec/"));
+        .stdout(predicate::str::starts_with(".test-mem/master/spec/"));
 
     // Must be nested, not at spec/snapshot.md
-    let flat_path = env.root().join(".test-mem/main/spec/snapshot.md");
+    let flat_path = env.root().join(".test-mem/master/spec/snapshot.md");
     assert!(!flat_path.exists(), "File should NOT be at flat path");
 
-    let spec_base = env.root().join(".test-mem/main/spec");
+    let spec_base = env.root().join(".test-mem/master/spec");
     let entries = fs::read_dir(&spec_base)?;
     let mut found = false;
     for entry in entries {
@@ -361,9 +361,9 @@ fn test_add_custom_type_via_config() -> anyhow::Result<()> {
         .arg("custom content")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/main/custom/notes.md\n"));
+        .stdout(predicate::str::diff(".test-mem/master/custom/notes.md\n"));
 
-    let file_path = env.root().join(".test-mem/main/custom/notes.md");
+    let file_path = env.root().join(".test-mem/master/custom/notes.md");
     assert!(file_path.exists());
     assert_eq!(fs::read_to_string(file_path)?, "custom content");
 
@@ -396,10 +396,10 @@ fn test_add_note_type_is_default() -> anyhow::Result<()> {
         .arg("status=open")
         .assert()
         .success()
-        .stdout(predicate::str::starts_with(".test-mem/main/note/"));
+        .stdout(predicate::str::starts_with(".test-mem/master/note/"));
 
     // Verify the file exists inside a nested ts-hash dir
-    let note_base = env.root().join(".test-mem/main/note");
+    let note_base = env.root().join(".test-mem/master/note");
     assert!(note_base.exists(), "note/ directory should exist");
     let entries: Vec<_> = fs::read_dir(&note_base)?.collect::<Result<_, _>>()?;
     assert_eq!(entries.len(), 1, "exactly one ts-hash subdir expected");
@@ -431,9 +431,11 @@ fn test_add_note_root_anchor() -> anyhow::Result<()> {
         .arg("seed idea")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/main/note/brainstorm.md\n"));
+        .stdout(predicate::str::diff(
+            ".test-mem/master/note/brainstorm.md\n",
+        ));
 
-    let file_path = env.root().join(".test-mem/main/note/brainstorm.md");
+    let file_path = env.root().join(".test-mem/master/note/brainstorm.md");
     assert!(file_path.exists());
 
     Ok(())
@@ -466,7 +468,7 @@ fn test_add_note_root_subdirectory_grouping() -> anyhow::Result<()> {
         .assert()
         .success()
         .stdout(predicate::str::diff(
-            ".test-mem/main/note/auth-redesign/index.md\n",
+            ".test-mem/master/note/auth-redesign/index.md\n",
         ));
 
     // Second file: a reference in the same note thread
@@ -482,11 +484,11 @@ fn test_add_note_root_subdirectory_grouping() -> anyhow::Result<()> {
         .assert()
         .success()
         .stdout(predicate::str::diff(
-            ".test-mem/main/note/auth-redesign/references.md\n",
+            ".test-mem/master/note/auth-redesign/references.md\n",
         ));
 
     // Both files exist in the same subdirectory
-    let group_dir = env.root().join(".test-mem/main/note/auth-redesign");
+    let group_dir = env.root().join(".test-mem/master/note/auth-redesign");
     assert!(group_dir.join("index.md").exists());
     assert!(group_dir.join("references.md").exists());
 
@@ -516,10 +518,10 @@ fn test_add_type_tmp_nested_by_default() -> anyhow::Result<()> {
         .arg("tmp content")
         .assert()
         .success()
-        .stdout(predicate::str::starts_with(".test-mem/main/tmp/"));
+        .stdout(predicate::str::starts_with(".test-mem/master/tmp/"));
 
     // Must be nested under a ts-hash dir
-    let tmp_base = env.root().join(".test-mem/main/tmp");
+    let tmp_base = env.root().join(".test-mem/master/tmp");
     let entries = fs::read_dir(&tmp_base)?;
     let mut found = false;
     for entry in entries {
@@ -563,9 +565,9 @@ fn test_add_type_tmp_with_root() -> anyhow::Result<()> {
         .arg("tmp content")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/main/tmp/session.log\n"));
+        .stdout(predicate::str::diff(".test-mem/master/tmp/session.log\n"));
 
-    let file_path = env.root().join(".test-mem/main/tmp/session.log");
+    let file_path = env.root().join(".test-mem/master/tmp/session.log");
     assert!(file_path.exists());
     assert_eq!(fs::read_to_string(file_path)?, "tmp content");
 
@@ -601,9 +603,9 @@ fn test_add_type_ref() -> anyhow::Result<()> {
         .arg("ref content")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/main/ref/doc.md\n"));
+        .stdout(predicate::str::diff(".test-mem/master/ref/doc.md\n"));
 
-    let file_path = env.root().join(".test-mem/main/ref/doc.md");
+    let file_path = env.root().join(".test-mem/master/ref/doc.md");
     assert!(file_path.exists());
     assert_eq!(fs::read_to_string(file_path)?, "ref content");
 
@@ -639,9 +641,9 @@ fn test_add_type_bin() -> anyhow::Result<()> {
         .arg("echo hello")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/main/bin/tool.sh\n"));
+        .stdout(predicate::str::diff(".test-mem/master/bin/tool.sh\n"));
 
-    let file_path = env.root().join(".test-mem/main/bin/tool.sh");
+    let file_path = env.root().join(".test-mem/master/bin/tool.sh");
     assert!(file_path.exists());
     assert_eq!(fs::read_to_string(file_path)?, "echo hello");
 
@@ -677,9 +679,9 @@ fn test_add_type_doc() -> anyhow::Result<()> {
         .arg("doc content")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/main/doc/manual.md\n"));
+        .stdout(predicate::str::diff(".test-mem/master/doc/manual.md\n"));
 
-    let file_path = env.root().join(".test-mem/main/doc/manual.md");
+    let file_path = env.root().join(".test-mem/master/doc/manual.md");
     assert!(file_path.exists());
     assert_eq!(fs::read_to_string(file_path)?, "doc content");
 
@@ -735,7 +737,7 @@ fn test_add_force_overwrite() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/test.txt");
+    let file_path = env.root().join(".test-mem/master/spec/test.txt");
     assert_eq!(fs::read_to_string(file_path)?, "v2");
 
     Ok(())
@@ -761,7 +763,8 @@ fn test_add_with_slashed_branch_name() -> anyhow::Result<()> {
         .success();
 
     // Add a root file
-    // We expect it to be in .test-mem/feature-logic/spec/test.md (NOT feature/logic)
+    // We expect it to be in .test-mem/master/spec/test.md (NOT feature/logic)
+    // because it now uses HEAD-derived scope which defaults to master.
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
@@ -771,15 +774,13 @@ fn test_add_with_slashed_branch_name() -> anyhow::Result<()> {
         .arg("content")
         .assert()
         .success()
-        .stdout(predicate::str::diff(
-            ".test-mem/feature-logic/spec/test.md\n",
-        ));
+        .stdout(predicate::str::diff(".test-mem/master/spec/test.md\n"));
 
-    let file_path = env.root().join(".test-mem/feature-logic/spec/test.md");
+    let file_path = env.root().join(".test-mem/master/spec/test.md");
     assert!(file_path.exists());
 
     // Verify that the nested directory was NOT created
-    let nested_dir = env.root().join(".test-mem/feature/logic");
+    let nested_dir = env.root().join(".test-mem/feature-logic");
     assert!(!nested_dir.exists());
 
     Ok(())
@@ -804,7 +805,7 @@ fn test_add_with_explicit_branch() -> anyhow::Result<()> {
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("add")
         .arg("--root")
-        .arg("--branch")
+        .arg("--task")
         .arg("feature/other")
         .arg("other.md")
         .arg("other branch content")
@@ -819,8 +820,8 @@ fn test_add_with_explicit_branch() -> anyhow::Result<()> {
     let content = fs::read_to_string(file_path)?;
     assert_eq!(content, "other branch content");
 
-    // Verify main branch spec doesn't have it
-    let main_file = env.root().join(".test-mem/main/spec/other.md");
+    // Verify master branch spec doesn't have it
+    let main_file = env.root().join(".test-mem/master/spec/other.md");
     assert!(!main_file.exists());
 
     Ok(())
@@ -840,12 +841,14 @@ fn test_add_with_explicit_branch_short() -> anyhow::Result<()> {
         .success();
 
     // Add a root file using short flag -b
+    // Actually -b was renamed to --task without a short flag.
+    // So we update the test to use --task.
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("add")
         .arg("--root")
-        .arg("-b")
+        .arg("--task")
         .arg("short-b")
         .arg("short.md")
         .arg("short content")
@@ -883,7 +886,7 @@ fn test_add_with_single_frontmatter_field() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let content = fs::read_to_string(file_path)?;
     assert!(content.starts_with("---\n"), "File should start with ---");
     assert!(
@@ -924,7 +927,7 @@ fn test_add_with_multiple_frontmatter_fields() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let content = fs::read_to_string(file_path)?;
     assert!(content.starts_with("---\n"), "File should start with ---");
     assert!(
@@ -969,7 +972,7 @@ fn test_add_frontmatter_type_coercion() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let content = fs::read_to_string(file_path)?;
     // Booleans and integers must not be quoted in YAML output
     assert!(
@@ -1066,7 +1069,7 @@ fn test_add_frontmatter_colon_in_string_value() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let raw = fs::read_to_string(&file_path)?;
 
     // AC #1: the raw file must contain a quoted string, not a bare mapping
@@ -1199,7 +1202,7 @@ fn test_add_frontmatter_repeated_key_becomes_list() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let raw = fs::read_to_string(file_path)?;
     let fm = parse_fm(&raw);
 
@@ -1236,7 +1239,7 @@ fn test_add_frontmatter_single_key_stays_scalar() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let raw = fs::read_to_string(file_path)?;
     let fm = parse_fm(&raw);
 
@@ -1280,7 +1283,7 @@ fn test_add_frontmatter_list_element_coercion() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let raw = fs::read_to_string(file_path)?;
     let fm = parse_fm(&raw);
 
@@ -1325,7 +1328,7 @@ fn test_add_frontmatter_list_preserves_key_order() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let raw = fs::read_to_string(file_path)?;
 
     // Top-level keys emit in first-seen order: alpha, refs, beta.
@@ -1372,7 +1375,7 @@ fn test_add_frontmatter_list_element_with_colon_stays_quoted() -> anyhow::Result
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let raw = fs::read_to_string(file_path)?;
     let fm = parse_fm(&raw);
 
@@ -1414,7 +1417,7 @@ fn test_add_frontmatter_list_value_with_equals() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let raw = fs::read_to_string(file_path)?;
     let fm = parse_fm(&raw);
 
@@ -1459,7 +1462,7 @@ fn test_add_frontmatter_null_keyword_stays_string() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let raw = fs::read_to_string(file_path)?;
     let fm = parse_fm(&raw);
 
@@ -1517,7 +1520,7 @@ fn test_add_frontmatter_list_does_not_inject_null() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let raw = fs::read_to_string(file_path)?;
     let fm = parse_fm(&raw);
 
@@ -1565,7 +1568,7 @@ fn test_add_frontmatter_list_collection_element_degrades_to_string() -> anyhow::
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let raw = fs::read_to_string(file_path)?;
     let fm = parse_fm(&raw);
 
@@ -1611,7 +1614,7 @@ fn test_add_frontmatter_list_empty_element_stays_empty_string() -> anyhow::Resul
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/main/spec/note.md");
+    let file_path = env.root().join(".test-mem/master/spec/note.md");
     let raw = fs::read_to_string(file_path)?;
     let fm = parse_fm(&raw);
 

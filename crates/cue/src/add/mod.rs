@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
@@ -12,7 +12,7 @@ pub struct AddOptions {
     pub cue_type: String,
     pub save_at_root: bool,
     pub force: bool,
-    pub branch_name: Option<String>,
+    pub scope_name: Option<String>,
 }
 
 pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
@@ -23,7 +23,7 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         cue_type,
         save_at_root,
         force,
-        branch_name,
+        scope_name,
     } = opts;
 
     // 1. Check if .cue exists
@@ -45,14 +45,13 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
     }
 
     // 3. Get branch
-    let branch = if let Some(b) = branch_name {
-        b
+    let branch = if let Some(s) = scope_name {
+        s
     } else {
-        git::get_current_branch(root)
-            .context("Could not determine current branch. Have you made your first commit yet?")?
+        cuelib::head::resolve_scope(&cue_path)?
     };
     if branch.trim().is_empty() {
-        bail!("Branch name cannot be empty.");
+        bail!("Scope name cannot be empty.");
     }
     let branch_dir = git::sanitize_branch_name(&branch);
 

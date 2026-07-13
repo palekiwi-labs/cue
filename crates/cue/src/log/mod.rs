@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
@@ -21,11 +21,11 @@ pub struct LogEntry {
 
 pub struct LogAddOptions {
     pub entry: LogEntry,
-    pub branch_name: Option<String>,
+    pub scope_name: Option<String>,
 }
 
 pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<PathBuf> {
-    let LogAddOptions { entry, branch_name } = opts;
+    let LogAddOptions { entry, scope_name } = opts;
 
     // 1. Validate
     if entry.title.trim().is_empty() {
@@ -50,14 +50,14 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
         );
     }
 
-    let branch = if let Some(b) = branch_name {
-        b
+    let branch = if let Some(s) = scope_name {
+        s
     } else {
-        git::get_current_branch(root)
-            .context("Could not determine current branch. Have you made your first commit yet?")?
+        let cue_path = root.join(&config.dir_name);
+        cuelib::head::resolve_scope(&cue_path)?
     };
     if branch.trim().is_empty() {
-        bail!("Branch name cannot be empty.");
+        bail!("Scope name cannot be empty.");
     }
     let branch_dir = git::sanitize_branch_name(&branch);
 

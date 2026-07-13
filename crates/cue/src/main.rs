@@ -42,7 +42,7 @@ fn main() -> anyhow::Result<()> {
             cue_type,
             root,
             force,
-            branch,
+            task,
         } => {
             let resolved_content: Vec<u8> = if clipboard {
                 resolve_clipboard(&filename)?
@@ -70,7 +70,7 @@ fn main() -> anyhow::Result<()> {
                     cue_type,
                     save_at_root: root,
                     force,
-                    branch_name: branch,
+                    scope_name: task,
                 },
             )?;
         }
@@ -98,6 +98,12 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Log { command } => {
             commands::log::handle(&cwd, command)?;
+        }
+        Commands::Switch { target, branch } => {
+            commands::switch::handle(&cwd, target, branch)?;
+        }
+        Commands::Status => {
+            commands::status::handle(&cwd)?;
         }
         Commands::Context { command } => {
             commands::context::handle(&cwd, command)?;

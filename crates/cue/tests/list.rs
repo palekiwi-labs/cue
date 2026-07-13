@@ -87,7 +87,7 @@ fn test_list_frontmatter_absent_when_no_flag() -> anyhow::Result<()> {
         .success();
 
     // Write file with frontmatter directly to bypass clap argument parsing of "---"
-    let artifact_path = env.root().join(".test-mem/main/spec/index.md");
+    let artifact_path = env.root().join(".test-mem/master/spec/index.md");
     fs::create_dir_all(artifact_path.parent().unwrap())?;
     fs::write(&artifact_path, "---\nstatus: active\n---\n# Hello")?;
 
@@ -125,7 +125,7 @@ fn test_list_frontmatter_parsed_correctly() -> anyhow::Result<()> {
         .success();
 
     // Write file with frontmatter directly to bypass clap argument parsing of "---"
-    let artifact_path = env.root().join(".test-mem/main/spec/index.md");
+    let artifact_path = env.root().join(".test-mem/master/spec/index.md");
     fs::create_dir_all(artifact_path.parent().unwrap())?;
     fs::write(
         &artifact_path,
@@ -211,7 +211,7 @@ fn test_list_frontmatter_malformed_unclosed_fence() -> anyhow::Result<()> {
         .success();
 
     // Opening fence but no closing fence — write directly to avoid clap parsing "---"
-    let artifact_path = env.root().join(".test-mem/main/spec/index.md");
+    let artifact_path = env.root().join(".test-mem/master/spec/index.md");
     fs::create_dir_all(artifact_path.parent().unwrap())?;
     fs::write(
         &artifact_path,
@@ -280,7 +280,7 @@ fn test_list_from_subdirectory() -> anyhow::Result<()> {
             .clone(),
     )?;
     // Path should still be relative to git root, NOT to the subdirectory
-    assert_eq!(output.trim(), ".test-mem/main/spec/index.md");
+    assert_eq!(output.trim(), ".test-mem/master/spec/index.md");
 
     Ok(())
 }
@@ -584,7 +584,7 @@ fn test_list_json_spec() -> anyhow::Result<()> {
     let item = &arr[0];
     assert_eq!(item["name"], "index.md");
     assert_eq!(item["category"], "spec");
-    assert_eq!(item["branch"], "main"); // default git branch in setup_git_repo is main
+    assert_eq!(item["branch"], "master"); // HEAD absent → resolve_scope returns "master"
     // Root artifact: no hash or timestamp
     assert!(item["hash"].is_null());
     assert!(item["commit_hash"].is_null());
@@ -815,54 +815,38 @@ fn test_list_branch_flag() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    // 2. Add file to current branch (main)
+    // 2. Add file to task scope "task-a" via --task flag
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--task")
+        .arg("task-a")
         .arg("main.md")
         .arg("content")
         .assert()
         .success();
 
-    // 3. Create another branch and add file
-    std::process::Command::new("git")
-        .args(["checkout", "-b", "other"])
-        .current_dir(env.root())
-        .output()?;
-
+    // 3. Add file to task scope "task-b" via --task flag
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--task")
+        .arg("task-b")
         .arg("other.md")
         .arg("content")
         .assert()
         .success();
 
-    // 4. List current branch (other)
-    let output = String::from_utf8(
-        env.command()
-            .env("CUE_BRANCH_NAME", "test-mem")
-            .env("CUE_DIR_NAME", ".test-mem")
-            .arg("list")
-            .assert()
-            .success()
-            .get_output()
-            .stdout
-            .clone(),
-    )?;
-    assert!(output.contains("other.md"));
-    assert!(!output.contains("main.md"));
-
-    // 5. List main branch via --branch
+    // 4. List task-a scope via --branch
     let output = String::from_utf8(
         env.command()
             .env("CUE_BRANCH_NAME", "test-mem")
             .env("CUE_DIR_NAME", ".test-mem")
             .arg("list")
             .arg("--branch")
-            .arg("main")
+            .arg("task-a")
             .assert()
             .success()
             .get_output()
@@ -871,6 +855,23 @@ fn test_list_branch_flag() -> anyhow::Result<()> {
     )?;
     assert!(output.contains("main.md"));
     assert!(!output.contains("other.md"));
+
+    // 5. List task-b scope via --branch
+    let output = String::from_utf8(
+        env.command()
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .arg("list")
+            .arg("--branch")
+            .arg("task-b")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    )?;
+    assert!(output.contains("other.md"));
+    assert!(!output.contains("main.md"));
 
     Ok(())
 }
@@ -935,16 +936,13 @@ fn test_list_all_with_slashed_branch() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    // 2. Add file to a branch with a slash
-    std::process::Command::new("git")
-        .args(["checkout", "-b", "feat/slash"])
-        .current_dir(env.root())
-        .output()?;
-
+    // 2. Add file to task scope "feat-slash" via --task flag
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("add")
+        .arg("--task")
+        .arg("feat-slash")
         .arg("test.md")
         .arg("content")
         .assert()
@@ -967,7 +965,7 @@ fn test_list_all_with_slashed_branch() -> anyhow::Result<()> {
     let json: serde_json::Value = serde_json::from_str(&output)?;
 
     let arr = json.as_array().unwrap();
-    // Should have "feat-slash" as branch name in JSON because we replace slashes for dir names
+    // "feat-slash" is the task slug used as the scope directory name
     let item = arr.iter().find(|i| i["name"] == "test.md").unwrap();
     assert_eq!(item["branch"], "feat-slash");
 
@@ -988,7 +986,7 @@ fn setup_filter_repo(env: &helpers::TestEnv) -> anyhow::Result<()> {
         .success();
 
     // Write artifacts directly to avoid clap parsing "---"
-    let todo_dir = env.root().join(".test-mem/main/todo");
+    let todo_dir = env.root().join(".test-mem/master/todo");
     fs::create_dir_all(&todo_dir)?;
     fs::write(
         todo_dir.join("pending.md"),
@@ -1068,7 +1066,7 @@ fn test_list_filter_contains() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let todo_dir = env.root().join(".test-mem/main/spec");
+    let todo_dir = env.root().join(".test-mem/master/spec");
     fs::create_dir_all(&todo_dir)?;
     fs::write(
         todo_dir.join("meeting.md"),
@@ -1110,7 +1108,7 @@ fn test_list_filter_multiple_anded() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let todo_dir = env.root().join(".test-mem/main/todo");
+    let todo_dir = env.root().join(".test-mem/master/todo");
     fs::create_dir_all(&todo_dir)?;
     fs::write(
         todo_dir.join("a.md"),
@@ -1153,7 +1151,7 @@ fn test_list_filter_missing_frontmatter_excluded_by_eq() -> anyhow::Result<()> {
     setup_filter_repo(&env)?;
 
     // Add a file with no frontmatter at all
-    let spec_dir = env.root().join(".test-mem/main/spec");
+    let spec_dir = env.root().join(".test-mem/master/spec");
     fs::create_dir_all(&spec_dir)?;
     fs::write(spec_dir.join("plain.md"), "# No frontmatter here")?;
 
@@ -1190,7 +1188,7 @@ fn test_list_filter_missing_frontmatter_included_by_neq() -> anyhow::Result<()> 
         .assert()
         .success();
 
-    let spec_dir = env.root().join(".test-mem/main/spec");
+    let spec_dir = env.root().join(".test-mem/master/spec");
     fs::create_dir_all(&spec_dir)?;
     fs::write(spec_dir.join("plain.md"), "# No frontmatter here")?;
 
@@ -1287,7 +1285,7 @@ fn test_list_filter_nested_key() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let spec_dir = env.root().join(".test-mem/main/spec");
+    let spec_dir = env.root().join(".test-mem/master/spec");
     fs::create_dir_all(&spec_dir)?;
     fs::write(
         spec_dir.join("high.md"),

@@ -26,9 +26,9 @@ fn test_log_add_basic() -> anyhow::Result<()> {
         .arg("Test Title")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/main/log.md\n"));
+        .stdout(predicate::str::diff(".test-mem/master/log.md\n"));
 
-    let log_path = env.root().join(".test-mem/main/log.md");
+    let log_path = env.root().join(".test-mem/master/log.md");
     let content = fs::read_to_string(&log_path)?;
 
     assert!(content.contains("# Project Log"));
@@ -93,7 +93,7 @@ fn test_log_add_from_file() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let log_path = env.root().join(".test-mem/main/log.md");
+    let log_path = env.root().join(".test-mem/master/log.md");
     let content = fs::read_to_string(&log_path)?;
 
     assert!(content.contains("JSON Title"));
@@ -148,11 +148,11 @@ fn test_log_add_validation() -> anyhow::Result<()> {
         .arg("add")
         .arg("--title")
         .arg("Some Title")
-        .arg("--branch")
+        .arg("--task")
         .arg("")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Branch name cannot be empty"));
+        .stderr(predicate::str::contains("Scope name cannot be empty"));
 
     Ok(())
 }
@@ -169,7 +169,7 @@ fn test_log_add_branch_and_list() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    // Write entry to feature/other
+    // Write entry to task scope "feature-other"
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
@@ -177,8 +177,8 @@ fn test_log_add_branch_and_list() -> anyhow::Result<()> {
         .arg("add")
         .arg("--title")
         .arg("Round Trip")
-        .arg("--branch")
-        .arg("feature/other")
+        .arg("--task")
+        .arg("feature-other")
         .assert()
         .success();
 
@@ -189,7 +189,7 @@ fn test_log_add_branch_and_list() -> anyhow::Result<()> {
         .arg("log")
         .arg("list")
         .arg("--branch")
-        .arg("feature/other")
+        .arg("feature-other")
         .assert()
         .success()
         .stdout(predicate::str::contains("# Project Log"))
@@ -221,8 +221,8 @@ fn test_log_add_file_with_branch() -> anyhow::Result<()> {
         .arg("add")
         .arg("--file")
         .arg(&json_path)
-        .arg("--branch")
-        .arg("feature/other")
+        .arg("--task")
+        .arg("feature-other")
         .assert()
         .success()
         .stdout(predicate::str::diff(".test-mem/feature-other/log.md\n"));
@@ -305,7 +305,7 @@ fn test_log_add_with_explicit_branch() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    // Add a log entry to a DIFFERENT branch than current (main)
+    // Add a log entry to a DIFFERENT scope than current (master)
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
@@ -313,8 +313,8 @@ fn test_log_add_with_explicit_branch() -> anyhow::Result<()> {
         .arg("add")
         .arg("--title")
         .arg("Branch Entry")
-        .arg("--branch")
-        .arg("feature/other")
+        .arg("--task")
+        .arg("feature-other")
         .assert()
         .success()
         .stdout(predicate::str::diff(".test-mem/feature-other/log.md\n"));
@@ -326,7 +326,7 @@ fn test_log_add_with_explicit_branch() -> anyhow::Result<()> {
     assert!(content.contains("Branch Entry"));
 
     // Verify main branch log does not have this entry
-    let main_log = env.root().join(".test-mem/main/log.md");
+    let main_log = env.root().join(".test-mem/master/log.md");
     assert!(!main_log.exists());
 
     Ok(())

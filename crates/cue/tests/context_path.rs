@@ -12,7 +12,7 @@ fn test_context_path_current() -> anyhow::Result<()> {
     // Initialize mem
     env.command().arg("init").assert().success();
 
-    let context_json = env.root().join(".cue").join("main").join("context.json");
+    let context_json = env.root().join(".cue").join("master").join("context.json");
     fs::create_dir_all(context_json.parent().unwrap())?;
     fs::write(&context_json, "{}")?;
 
@@ -70,7 +70,7 @@ fn test_context_path_missing_errors() -> anyhow::Result<()> {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "Context file not found for branch: main",
+            "Context file not found for scope: master",
         ));
 
     Ok(())

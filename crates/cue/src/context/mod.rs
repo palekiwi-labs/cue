@@ -236,9 +236,9 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
 
 pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
     let git_root = get_git_root(cwd)?;
-    let branch = get_current_branch(cwd)?;
-    let sanitized_branch = sanitize_branch_name(&branch);
     let config = Config::load(&git_root)?;
+    let cue_dir = git_root.join(&config.dir_name);
+    let sanitized_branch = cuelib::head::resolve_scope(&cue_dir)?;
     let config_path = context_json_path(&git_root, &sanitized_branch, &config.dir_name);
 
     if config_path.exists() && !force {

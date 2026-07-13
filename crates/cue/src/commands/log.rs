@@ -24,7 +24,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
             decided,
             open,
             file,
-            branch,
+            task,
         } => {
             let entry = if let Some(path) = file {
                 let content = fs::read_to_string(&path)
@@ -49,7 +49,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
                 &config,
                 LogAddOptions {
                     entry,
-                    branch_name: branch,
+                    scope_name: task,
                 },
             )?;
             let rel_path = log_file_path.strip_prefix(&root).unwrap_or(&log_file_path);
@@ -60,9 +60,8 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
             let branch_name = if let Some(b) = branch {
                 b
             } else {
-                git::get_current_branch(&root).context(
-                    "Could not determine current branch. Have you made your first commit yet?",
-                )?
+                let cue_path = root.join(&config.dir_name);
+                cuelib::head::resolve_scope(&cue_path)?
             };
             let branch_dir = git::sanitize_branch_name(&branch_name);
 
