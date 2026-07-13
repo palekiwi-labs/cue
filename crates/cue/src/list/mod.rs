@@ -124,7 +124,7 @@ pub fn list(
     opts: ListOptions,
 ) -> Result<Vec<(PathBuf, Option<serde_json::Value>)>> {
     let ListOptions {
-        scope: branch_name,
+        scope,
         all,
         cue_type,
         include_gitignored,
@@ -146,7 +146,7 @@ pub fn list(
     }
 
     // 2. Determine scan directory/directories
-    let mut paths = resolve_scan_paths(&cue_path, all, branch_name)?;
+    let mut paths = resolve_scan_paths(&cue_path, all, scope)?;
 
     // 3. Sort
     paths.sort();
@@ -184,18 +184,18 @@ pub fn list(
 pub fn resolve_scan_paths(
     cue_path: &Path,
     all: bool,
-    branch_name: Option<String>,
+    scope: Option<String>,
 ) -> Result<Vec<PathBuf>> {
     if all {
         collect_files(cue_path)
     } else {
-        let branch = if let Some(b) = branch_name {
-            b
+        let scope = if let Some(s) = scope {
+            s
         } else {
             cuelib::head::resolve_scope(cue_path)?
         };
-        let branch_dir = git::sanitize_branch_name(&branch);
-        let scan_dir = cue_path.join(&branch_dir);
+        let scope_dir = git::sanitize_branch_name(&scope);
+        let scan_dir = cue_path.join(&scope_dir);
 
         if scan_dir.exists() {
             collect_files(&scan_dir)

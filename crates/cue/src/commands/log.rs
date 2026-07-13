@@ -57,20 +57,20 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
             println!("{}", rel_path.display());
         }
         LogCommands::List { task } => {
-            let branch_name = if let Some(t) = task {
+            let scope = if let Some(t) = task {
                 t
             } else {
                 let cue_path = root.join(&config.dir_name);
                 cuelib::head::resolve_scope(&cue_path)?
             };
-            let branch_dir = git::sanitize_branch_name(&branch_name);
+            let scope_dir = git::sanitize_branch_name(&scope);
 
             let cue_path = root.join(&config.dir_name);
             if !cue_path.exists() {
                 return Ok(()); // Silently exit
             }
 
-            let log_file_path = cue_path.join(&branch_dir).join("log.md");
+            let log_file_path = cue_path.join(&scope_dir).join("log.md");
 
             match fs::read_to_string(&log_file_path) {
                 Ok(content) => print!("{}", content),
