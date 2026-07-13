@@ -1,11 +1,17 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use cuelib::head;
+use serde_json::json;
 use std::fs;
 use std::path::Path;
 
-pub fn handle(cwd: &Path, target: Option<String>, branch: Option<String>) -> Result<()> {
+pub fn handle(
+    cwd: &Path,
+    target: Option<String>,
+    branch: Option<String>,
+    json: bool,
+) -> Result<()> {
     // 1. Verify git repo and get root
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
     let root = git::get_git_root(cwd)?;
@@ -20,7 +26,7 @@ pub fn handle(cwd: &Path, target: Option<String>, branch: Option<String>) -> Res
     }
 
     let slug = if let Some(b) = branch {
-        find_task_for_branch(&cue_dir, &b)?
+        find_task_for_branch(&cue_dir, &b, json)?
     } else {
         match target {
             None => bail!("Provide a task slug, a task card path, or use --branch <name>"),
@@ -41,7 +47,21 @@ pub fn handle(cwd: &Path, target: Option<String>, branch: Option<String>) -> Res
         fs::create_dir_all(&task_dir).with_context(|| {
             format!("Failed to create context directory: {}", task_dir.display())
         })?;
-        println!("switched to task: {}", slug);
+        if json {
+            let out = json!({
+                "context": slug,
+                "global": false,
+            });
+            println!("{}", out);
+        } else {
+            println!("switched to task: {}", slug);
+        }
+    } else if json {
+        let out = json!({
+            "context": "master",
+            "global": true,
+        });
+        println!("{}", out);
     } else {
         println!("switched to global context");
     }
@@ -64,11 +84,15 @@ fn resolve_slug_from_target(target: &str) -> String {
 }
 
 /// Scan task cards in `master/task/*.md` for one whose `branch:` list
-/// contains `branch_name`. Returns the slug if found, or an error if no match.
-fn find_task_for_branch(cue_dir: &Path, branch_name: &str) -> Result<String> {
+/// contains `branch_name`. Returns the slug if found, or master as fallback
+/// when no match. When `json` is true, the human "no task matched" message
+/// is suppressed to keep stdout a single JSON document.
+fn find_task_for_branch(cue_dir: &Path, branch_name: &str, json: bool) -> Result<String> {
     let task_dir = cue_dir.join("master").join("task");
     if !task_dir.exists() {
-        println!("no task matched branch: {}", branch_name);
+        if !json {
+            println!("no task matched branch: {}", branch_name);
+        }
         // Return master as fallback (no-op)
         return Ok("master".to_string());
     }
@@ -96,7 +120,9 @@ fn find_task_for_branch(cue_dir: &Path, branch_name: &str) -> Result<String> {
         }
     }
 
-    println!("no task matched branch: {}", branch_name);
+    if !json {
+        println!("no task matched branch: {}", branch_name);
+    }
     // No match: return master as fallback
     Ok("master".to_string())
 }

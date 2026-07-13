@@ -35,9 +35,16 @@ pub enum Commands {
         /// Resolve a task whose branch: list contains this branch name
         #[arg(long = "branch")]
         branch: Option<String>,
+        /// Output structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
     },
     /// Print the active task context
-    Status,
+    Status {
+        /// Output structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
     /// Add a new artifact
     #[command(arg_required_else_help = true)]
     Add {

@@ -99,11 +99,15 @@ fn main() -> anyhow::Result<()> {
         Commands::Log { command } => {
             commands::log::handle(&cwd, command)?;
         }
-        Commands::Switch { target, branch } => {
-            commands::switch::handle(&cwd, target, branch)?;
+        Commands::Switch {
+            target,
+            branch,
+            json,
+        } => {
+            commands::switch::handle(&cwd, target, branch, json)?;
         }
-        Commands::Status => {
-            commands::status::handle(&cwd)?;
+        Commands::Status { json } => {
+            commands::status::handle(&cwd, json)?;
         }
         Commands::Context { command } => {
             commands::context::handle(&cwd, command)?;
