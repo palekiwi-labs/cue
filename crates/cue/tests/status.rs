@@ -88,3 +88,53 @@ fn status_json_task_with_card() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn status_json_task_with_crlf_frontmatter() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("switch")
+        .arg("auth-login")
+        .assert()
+        .success();
+
+    // Task card with CRLF line endings — the old hand-rolled parser failed
+    // on this because it hard-coded "---\n".
+    let task_dir = env.root().join(".test-mem/master/task");
+    std::fs::create_dir_all(&task_dir)?;
+    std::fs::write(
+        task_dir.join("auth-login.md"),
+        "---\r\ntitle: CRLF Title\r\nstatus: open\r\n---\r\n# Body",
+    )?;
+
+    let output = String::from_utf8(
+        env.command()
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .arg("status")
+            .arg("--json")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    )?;
+    let json: Value = serde_json::from_str(output.trim())?;
+
+    assert_eq!(json["context"], "auth-login");
+    assert_eq!(json["title"], "CRLF Title");
+    assert_eq!(json["status"], "open");
+
+    Ok(())
+}

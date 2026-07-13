@@ -1,13 +1,21 @@
 use crate::config::Config;
 use crate::git;
 use anyhow::{Context, Result};
+use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::head;
+use serde::Deserialize;
 use serde_json::json;
 use std::path::Path;
 
+/// Frontmatter fields read from the task card for display.
+#[derive(Deserialize, Default)]
+struct StatusFm {
+    title: Option<String>,
+    status: Option<String>,
+}
+
 pub fn handle(cwd: &Path, json: bool) -> Result<()> {
-    git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
-    let root = git::get_git_root(cwd)?;
+    let root = git::get_git_root(cwd).context("Not in a git repository")?;
     let config = Config::load(&root)?;
     let cue_dir = root.join(&config.dir_name);
 
@@ -31,18 +39,10 @@ pub fn handle(cwd: &Path, json: bool) -> Result<()> {
                 .join("master")
                 .join("task")
                 .join(format!("{}.md", s));
-            let (title, status) = if task_card.exists() {
-                if let Ok(content) = std::fs::read_to_string(&task_card) {
-                    (
-                        extract_frontmatter_field(&content, "title"),
-                        extract_frontmatter_field(&content, "status"),
-                    )
-                } else {
-                    (None, None)
-                }
-            } else {
-                (None, None)
-            };
+            let fm = extract_frontmatter_yaml(&task_card)
+                .and_then(|yaml| serde_yaml::from_str::<StatusFm>(&yaml).ok())
+                .unwrap_or_default();
+            let (title, status) = (fm.title, fm.status);
 
             if json {
                 let out = json!({
@@ -66,21 +66,4 @@ pub fn handle(cwd: &Path, json: bool) -> Result<()> {
     }
 
     Ok(())
-}
-
-/// Extract a simple scalar frontmatter field value from raw markdown content.
-/// Returns `None` if the field is not found in the frontmatter block.
-fn extract_frontmatter_field(content: &str, field: &str) -> Option<String> {
-    let inner = content.strip_prefix("---\n")?;
-    let end = inner.find("\n---")?;
-    let fm = &inner[..end];
-    for line in fm.lines() {
-        if let Some(rest) = line.strip_prefix(&format!("{}:", field)) {
-            let val = rest.trim().trim_matches('"').trim_matches('\'').to_string();
-            if !val.is_empty() {
-                return Some(val);
-            }
-        }
-    }
-    None
 }
