@@ -70,9 +70,20 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
     // 5. Validate filename for path traversal
     validate_filename(&filename)?;
 
+    // 6a. Reject reserved slugs for task cards.
+    if cue_type == "task" {
+        let stem = Path::new(&filename)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("");
+        if stem == "master" {
+            bail!("'master' is a reserved slug and cannot be used as a task filename.");
+        }
+    }
+
     let file_path = dest_dir.join(&filename);
 
-    // 6. Check if exists
+    // 7. Check if exists
     if file_path.exists() && !force {
         bail!(
             "File exists: {}. Use --force to overwrite.",
@@ -80,13 +91,13 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         );
     }
 
-    // 7. Create parent dirs
+    // 8. Create parent dirs
     if let Some(parent) = file_path.parent() {
         fs::create_dir_all(parent)
             .with_context(|| format!("Failed to create directory {}", parent.display()))?;
     }
 
-    // 8. Assemble final content (prepend frontmatter if provided)
+    // 9. Assemble final content (prepend frontmatter if provided)
     let final_content = if frontmatter.is_empty() {
         content
     } else {
@@ -95,7 +106,7 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         fm
     };
 
-    // 9. Write file
+    // 10. Write file
     fs::write(&file_path, final_content)
         .with_context(|| format!("Failed to write to {}", file_path.display()))?;
 
