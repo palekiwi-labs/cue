@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::head;
 use serde::Deserialize;
@@ -106,8 +106,8 @@ pub fn handle(
 /// Derive slug from a target string (filepath stem or plain slug).
 fn resolve_slug_from_target(target: &str) -> String {
     let path = std::path::Path::new(target);
-    if target.ends_with(".md") {
-        // Extract filename stem
+    if path.extension().and_then(|e| e.to_str()) == Some("md") {
+        // Extract filename stem (e.g. "auth-login.md" -> "auth-login")
         path.file_stem()
             .and_then(|s| s.to_str())
             .unwrap_or(target)
