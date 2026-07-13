@@ -32,9 +32,9 @@ pub enum Commands {
     Switch {
         /// Task slug or path to a task card file
         target: Option<String>,
-        /// Auto-select task based on current git branch
+        /// Resolve a task whose branch: list contains this branch name
         #[arg(long = "branch")]
-        branch: bool,
+        branch: Option<String>,
     },
     /// Print the active task context
     Status,
@@ -184,11 +184,8 @@ pub enum LogCommands {
     },
     /// List log entries
     List {
-        /// List log for a specific branch instead of current
-        #[arg(long)]
-        branch: Option<String>,
         /// List log for a specific task scope instead of current
-        #[arg(long, conflicts_with = "branch")]
+        #[arg(long)]
         task: Option<String>,
     },
 }

@@ -5,7 +5,7 @@ use cuelib::head;
 use std::fs;
 use std::path::Path;
 
-pub fn handle(cwd: &Path, target: Option<String>, use_branch: bool) -> Result<()> {
+pub fn handle(cwd: &Path, target: Option<String>, branch: Option<String>) -> Result<()> {
     // 1. Verify git repo and get root
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
     let root = git::get_git_root(cwd)?;
@@ -19,13 +19,11 @@ pub fn handle(cwd: &Path, target: Option<String>, use_branch: bool) -> Result<()
         );
     }
 
-    let slug = if use_branch {
-        // Auto-select based on current git branch
-        let current_branch = git::get_current_branch(cwd)?;
-        find_task_for_branch(&cue_dir, &current_branch)?
+    let slug = if let Some(b) = branch {
+        find_task_for_branch(&cue_dir, &b)?
     } else {
         match target {
-            None => bail!("Provide a task slug, a task card path, or use --branch"),
+            None => bail!("Provide a task slug, a task card path, or use --branch <name>"),
             Some(t) => resolve_slug_from_target(&t),
         }
     };

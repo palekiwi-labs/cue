@@ -182,13 +182,13 @@ fn test_log_add_branch_and_list() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    // Read it back with log list --branch
+    // Read it back with log list --task
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("log")
         .arg("list")
-        .arg("--branch")
+        .arg("--task")
         .arg("feature-other")
         .assert()
         .success()
