@@ -1,10 +1,39 @@
 use crate::config::Config;
 use crate::git;
 use anyhow::{bail, Context, Result};
+use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::head;
+use serde::Deserialize;
 use serde_json::json;
 use std::fs;
 use std::path::Path;
+
+/// Frontmatter `branch:` field, which may be a scalar, inline list, or
+/// block list. serde_yaml's untagged enum handles all three YAML forms.
+#[derive(Deserialize, Default)]
+#[serde(untagged)]
+enum BranchField {
+    One(String),
+    Many(Vec<String>),
+    #[default]
+    None,
+}
+
+impl BranchField {
+    fn contains(&self, name: &str) -> bool {
+        match self {
+            BranchField::One(s) => s == name,
+            BranchField::Many(v) => v.iter().any(|s| s == name),
+            BranchField::None => false,
+        }
+    }
+}
+
+#[derive(Deserialize, Default)]
+struct TaskFm {
+    #[serde(default)]
+    branch: BranchField,
+}
 
 pub fn handle(
     cwd: &Path,
@@ -12,9 +41,7 @@ pub fn handle(
     branch: Option<String>,
     json: bool,
 ) -> Result<()> {
-    // 1. Verify git repo and get root
-    git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
-    let root = git::get_git_root(cwd)?;
+    let root = git::get_git_root(cwd).context("Not in a git repository")?;
     let config = Config::load(&root)?;
     let cue_dir = root.join(&config.dir_name);
 
@@ -26,7 +53,10 @@ pub fn handle(
     }
 
     let slug = if let Some(b) = branch {
-        find_task_for_branch(&cue_dir, &b, json)?
+        match find_task_for_branch(&cue_dir, &b)? {
+            Some(s) => s,
+            None => bail!("no task matched branch: {}. HEAD unchanged.", b),
+        }
     } else {
         match target {
             None => bail!("Provide a task slug, a task card path, or use --branch <name>"),
@@ -87,18 +117,13 @@ fn resolve_slug_from_target(target: &str) -> String {
     }
 }
 
-/// Scan task cards in `master/task/*.md` for one whose `branch:` list
-/// contains `branch_name`. Returns the slug if found, or master as fallback
-/// when no match. When `json` is true, the human "no task matched" message
-/// is suppressed to keep stdout a single JSON document.
-fn find_task_for_branch(cue_dir: &Path, branch_name: &str, json: bool) -> Result<String> {
+/// Scan task cards in `master/task/*.md` for one whose `branch:` field
+/// contains `branch_name`. Returns `Ok(Some(slug))` on match, `Ok(None)`
+/// when no card matches. The caller decides how to handle the no-match case.
+fn find_task_for_branch(cue_dir: &Path, branch_name: &str) -> Result<Option<String>> {
     let task_dir = cue_dir.join("master").join("task");
     if !task_dir.exists() {
-        if !json {
-            println!("no task matched branch: {}", branch_name);
-        }
-        // Return master as fallback (no-op)
-        return Ok("master".to_string());
+        return Ok(None);
     }
 
     for entry in fs::read_dir(&task_dir)? {
@@ -116,69 +141,14 @@ fn find_task_for_branch(cue_dir: &Path, branch_name: &str, json: bool) -> Result
             continue;
         }
 
-        // Read file and check if the branch name appears in a branch: list
-        if let Ok(content) = fs::read_to_string(&path) {
-            if branch_in_markdown(&content, branch_name) {
-                return Ok(slug);
-            }
-        }
-    }
-
-    if !json {
-        println!("no task matched branch: {}", branch_name);
-    }
-    // No match: return master as fallback
-    Ok("master".to_string())
-}
-
-fn branch_in_markdown(content: &str, branch_name: &str) -> bool {
-    // Simple frontmatter-only branch check. Handles three forms:
-    //   branch: single-value
-    //   branch: [a, b, c]
-    //   branch:
-    //     - a
-    //     - b
-    if let Some(fm) = extract_fm(content) {
-        let mut in_branch_list = false;
-        for line in fm.lines() {
-            let trimmed = line.trim();
-            if let Some(rest) = trimmed.strip_prefix("branch:") {
-                let rest = rest.trim();
-                if rest.is_empty() {
-                    // Multiline list follows on subsequent lines.
-                    in_branch_list = true;
-                } else if rest.starts_with('[') && rest.ends_with(']') {
-                    // Inline list: branch: [a, b, c]
-                    let items = &rest[1..rest.len() - 1];
-                    return items
-                        .split(',')
-                        .any(|i| i.trim().trim_matches('"').trim_matches('\'') == branch_name);
-                } else {
-                    // Single scalar: branch: value
-                    return rest.trim_matches('"').trim_matches('\'') == branch_name;
-                }
-            } else if in_branch_list {
-                if let Some(item) = trimmed.strip_prefix("- ") {
-                    if item.trim_matches('"').trim_matches('\'') == branch_name {
-                        return true;
-                    }
-                } else if !trimmed.is_empty() {
-                    // Non-list line: branch block ended.
-                    in_branch_list = false;
+        if let Some(yaml) = extract_frontmatter_yaml(&path) {
+            if let Ok(fm) = serde_yaml::from_str::<TaskFm>(&yaml) {
+                if fm.branch.contains(branch_name) {
+                    return Ok(Some(slug));
                 }
             }
         }
     }
-    false
-}
 
-fn extract_fm(content: &str) -> Option<&str> {
-    let start_marker = "---\n";
-    if !content.starts_with(start_marker) {
-        return None;
-    }
-    let rest = &content[start_marker.len()..];
-    let end_marker = "\n---";
-    let end_idx = rest.find(end_marker)?;
-    Some(&rest[..end_idx])
+    Ok(None)
 }
