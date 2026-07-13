@@ -24,7 +24,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
             decided,
             open,
             file,
-            branch,
+            task,
         } => {
             let entry = if let Some(path) = file {
                 let content = fs::read_to_string(&path)
@@ -49,29 +49,28 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
                 &config,
                 LogAddOptions {
                     entry,
-                    branch_name: branch,
+                    scope_name: task,
                 },
             )?;
             let rel_path = log_file_path.strip_prefix(&root).unwrap_or(&log_file_path);
             eprintln!("✓ Logged");
             println!("{}", rel_path.display());
         }
-        LogCommands::List { branch } => {
-            let branch_name = if let Some(b) = branch {
-                b
+        LogCommands::List { task } => {
+            let scope = if let Some(t) = task {
+                t
             } else {
-                git::get_current_branch(&root).context(
-                    "Could not determine current branch. Have you made your first commit yet?",
-                )?
+                let cue_path = root.join(&config.dir_name);
+                cuelib::head::resolve_scope(&cue_path)?
             };
-            let branch_dir = git::sanitize_branch_name(&branch_name);
+            let scope_dir = git::sanitize_branch_name(&scope);
 
             let cue_path = root.join(&config.dir_name);
             if !cue_path.exists() {
                 return Ok(()); // Silently exit
             }
 
-            let log_file_path = cue_path.join(&branch_dir).join("log.md");
+            let log_file_path = cue_path.join(&scope_dir).join("log.md");
 
             match fs::read_to_string(&log_file_path) {
                 Ok(content) => print!("{}", content),

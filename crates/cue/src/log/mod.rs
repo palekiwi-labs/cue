@@ -21,11 +21,11 @@ pub struct LogEntry {
 
 pub struct LogAddOptions {
     pub entry: LogEntry,
-    pub branch_name: Option<String>,
+    pub scope_name: Option<String>,
 }
 
 pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<PathBuf> {
-    let LogAddOptions { entry, branch_name } = opts;
+    let LogAddOptions { entry, scope_name } = opts;
 
     // 1. Validate
     if entry.title.trim().is_empty() {
@@ -50,18 +50,18 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
         );
     }
 
-    let branch = if let Some(b) = branch_name {
-        b
+    let scope = if let Some(s) = scope_name {
+        s
     } else {
-        git::get_current_branch(root)
-            .context("Could not determine current branch. Have you made your first commit yet?")?
+        let cue_path = root.join(&config.dir_name);
+        cuelib::head::resolve_scope(&cue_path)?
     };
-    if branch.trim().is_empty() {
-        bail!("Branch name cannot be empty.");
+    if scope.trim().is_empty() {
+        bail!("Scope name cannot be empty.");
     }
-    let branch_dir = git::sanitize_branch_name(&branch);
+    let scope_dir = git::sanitize_branch_name(&scope);
 
-    let log_file_path = cue_path.join(&branch_dir).join("log.md");
+    let log_file_path = cue_path.join(&scope_dir).join("log.md");
 
     // 4. Open file and get metadata (to check if it's new) before building markdown
     if let Some(parent) = log_file_path.parent() {

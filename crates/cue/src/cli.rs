@@ -27,6 +27,24 @@ pub struct Cli {
 pub enum Commands {
     /// Initialize agent artifacts directory structure
     Init,
+    /// Switch the active task context
+    #[command(arg_required_else_help = false)]
+    Switch {
+        /// Task slug or path to a task card file
+        target: Option<String>,
+        /// Resolve a task whose branch: list contains this branch name
+        #[arg(long = "branch")]
+        branch: Option<String>,
+        /// Output structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print the active task context
+    Status {
+        /// Output structured JSON instead of human-readable text
+        #[arg(long)]
+        json: bool,
+    },
     /// Add a new artifact
     #[command(arg_required_else_help = true)]
     Add {
@@ -50,19 +68,19 @@ pub enum Commands {
         /// Save artifact at the root of the type directory, not under a <timestamp>-<hash> subdir
         #[arg(long)]
         root: bool,
-        /// Save artifact to a specific branch instead of current
-        #[arg(short = 'b', long)]
-        branch: Option<String>,
+        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        #[arg(long = "task")]
+        task: Option<String>,
         /// Overwrite existing file
         #[arg(long)]
         force: bool,
     },
 
-    /// List artifacts for a branch
+    /// List artifacts for a scope
     List {
-        /// List files for a specific branch instead of current
-        #[arg(long, conflicts_with = "all")]
-        branch: Option<String>,
+        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        #[arg(long = "task", conflicts_with = "all")]
+        task: Option<String>,
         /// List files for all branches
         #[arg(short = 'a', long)]
         all: bool,
@@ -167,15 +185,15 @@ pub enum LogCommands {
         /// Read entry data from a JSON file
         #[arg(long, conflicts_with_all = &["title", "body", "found", "decided", "open"])]
         file: Option<String>,
-        /// Write log entry to a specific branch instead of current
-        #[arg(short = 'b', long)]
-        branch: Option<String>,
+        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        #[arg(long = "task")]
+        task: Option<String>,
     },
     /// List log entries
     List {
-        /// List log for a specific branch instead of current
+        /// List log for a specific task scope instead of current
         #[arg(long)]
-        branch: Option<String>,
+        task: Option<String>,
     },
 }
 

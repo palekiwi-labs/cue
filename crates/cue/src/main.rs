@@ -42,7 +42,7 @@ fn main() -> anyhow::Result<()> {
             cue_type,
             root,
             force,
-            branch,
+            task,
         } => {
             let resolved_content: Vec<u8> = if clipboard {
                 resolve_clipboard(&filename)?
@@ -70,12 +70,12 @@ fn main() -> anyhow::Result<()> {
                     cue_type,
                     save_at_root: root,
                     force,
-                    branch_name: branch,
+                    scope_name: task,
                 },
             )?;
         }
         Commands::List {
-            branch,
+            task,
             all,
             cue_type,
             include_gitignored,
@@ -86,7 +86,7 @@ fn main() -> anyhow::Result<()> {
             commands::list::handle(
                 &cwd,
                 commands::list::ListOptions {
-                    branch_name: branch,
+                    scope: task,
                     all,
                     cue_type,
                     include_gitignored,
@@ -98,6 +98,16 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Log { command } => {
             commands::log::handle(&cwd, command)?;
+        }
+        Commands::Switch {
+            target,
+            branch,
+            json,
+        } => {
+            commands::switch::handle(&cwd, target, branch, json)?;
+        }
+        Commands::Status { json } => {
+            commands::status::handle(&cwd, json)?;
         }
         Commands::Context { command } => {
             commands::context::handle(&cwd, command)?;
