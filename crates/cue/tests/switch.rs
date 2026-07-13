@@ -1,5 +1,6 @@
 mod helpers;
 
+use predicates::prelude::*;
 use serde_json::Value;
 
 #[test]
@@ -101,6 +102,67 @@ fn switch_json_branch_no_match_emits_single_json() -> anyhow::Result<()> {
 
     assert_eq!(json["context"], "master");
     assert_eq!(json["global"], true);
+
+    Ok(())
+}
+
+#[test]
+fn switch_traversal_slug_is_rejected() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("switch")
+        .arg("../../evil")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid task slug"));
+
+    // No directory should have been created outside .test-mem/
+    let escaped = env.root().join("evil");
+    assert!(
+        !escaped.exists(),
+        "traversal must not create a dir above .cue"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn switch_absolute_path_slug_is_rejected() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("switch")
+        .arg("/tmp/evil")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid task slug"));
+
+    // The absolute target must not have been created
+    assert!(
+        !std::path::Path::new("/tmp/evil").exists(),
+        "absolute path must not be created"
+    );
 
     Ok(())
 }

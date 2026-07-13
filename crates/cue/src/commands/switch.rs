@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use cuelib::head;
 use serde_json::json;
 use std::fs;
@@ -37,6 +37,10 @@ pub fn handle(
     if slug.trim().is_empty() {
         bail!("Task slug cannot be empty.");
     }
+
+    // Reject traversal / absolute paths / multi-segment slugs before any
+    // filesystem write.
+    head::validate_slug(&slug)?;
 
     // Write HEAD
     head::write_head(&cue_dir, &slug)?;
