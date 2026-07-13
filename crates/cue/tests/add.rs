@@ -1129,6 +1129,62 @@ fn test_add_frontmatter_invalid_format_rejected() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_add_task_rejects_reserved_master_slug() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // `master.md` must be rejected for task type.
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("task")
+        .arg("master.md")
+        .arg("body")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("'master' is a reserved slug"));
+
+    Ok(())
+}
+
+#[test]
+fn test_add_task_allows_master_slug_for_other_types() -> anyhow::Result<()> {
+    // The `master` restriction is task-only; other types must not be affected.
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("--type")
+        .arg("spec")
+        .arg("master.md")
+        .arg("body")
+        .assert()
+        .success();
+
+    Ok(())
+}
+
+#[test]
 fn test_add_rejects_path_traversal() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
