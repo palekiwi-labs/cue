@@ -52,11 +52,11 @@ fn ensure_worktree(root: &Path, cue_path: &Path, config: &Config) -> Result<()> 
     } else {
         git::add_worktree_orphan(root, cue_path, branch)?;
 
-        // Initialize orphan branch with config-driven ignore patterns
-        let gitignore_content: String = config
-            .ignored_types
-            .iter()
-            .map(|t| format!("*/{}/\n", t))
+        // Initialize orphan branch with config-driven ignore patterns.
+        // HEAD is always excluded: it tracks the active scope and must not be
+        // committed so each worktree (or user) can maintain its own context.
+        let gitignore_content: String = std::iter::once("HEAD\n".to_string())
+            .chain(config.ignored_types.iter().map(|t| format!("*/{}/\n", t)))
             .collect();
         fs::write(cue_path.join(".gitignore"), &gitignore_content)?;
 

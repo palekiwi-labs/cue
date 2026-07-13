@@ -35,6 +35,27 @@ fn test_init_fresh_repo() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_init_gitignore_includes_head() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    let gitignore = fs::read_to_string(env.root().join(".test-mem/.gitignore"))?;
+    assert!(
+        gitignore.contains("HEAD"),
+        ".gitignore should include HEAD to prevent tracking active scope"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_init_gitignore_respects_config() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
