@@ -109,7 +109,7 @@ pub struct CueFile {
 }
 
 pub struct ListOptions {
-    pub branch_name: Option<String>,
+    pub scope: Option<String>,
     pub all: bool,
     pub cue_type: Option<String>,
     pub include_gitignored: bool,
@@ -124,7 +124,7 @@ pub fn list(
     opts: ListOptions,
 ) -> Result<Vec<(PathBuf, Option<serde_json::Value>)>> {
     let ListOptions {
-        branch_name,
+        scope: branch_name,
         all,
         cue_type,
         include_gitignored,
