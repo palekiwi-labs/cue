@@ -146,7 +146,7 @@ pub fn list(
     }
 
     // 2. Determine scan directory/directories
-    let mut paths = resolve_scan_paths(root, &cue_path, all, branch_name)?;
+    let mut paths = resolve_scan_paths(&cue_path, all, branch_name)?;
 
     // 3. Sort
     paths.sort();
@@ -182,7 +182,6 @@ pub fn list(
 }
 
 pub fn resolve_scan_paths(
-    _root: &Path,
     cue_path: &Path,
     all: bool,
     branch_name: Option<String>,
