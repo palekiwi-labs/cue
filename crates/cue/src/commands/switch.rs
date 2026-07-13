@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use cuelib::head;
 use std::fs;
 use std::path::Path;
@@ -104,30 +104,40 @@ fn find_task_for_branch(cue_dir: &Path, branch_name: &str) -> Result<String> {
 }
 
 fn branch_in_markdown(content: &str, branch_name: &str) -> bool {
-    // Very simple frontmatter-only branch check
+    // Simple frontmatter-only branch check. Handles three forms:
+    //   branch: single-value
+    //   branch: [a, b, c]
+    //   branch:
+    //     - a
+    //     - b
     if let Some(fm) = extract_fm(content) {
+        let mut in_branch_list = false;
         for line in fm.lines() {
-            let line = line.trim();
-            if line.starts_with("branch:") {
-                let rest = line.strip_prefix("branch:").unwrap().trim();
-                // Check for inline list [a, b] or single string
-                if rest.starts_with('[') && rest.ends_with(']') {
+            let trimmed = line.trim();
+            if let Some(rest) = trimmed.strip_prefix("branch:") {
+                let rest = rest.trim();
+                if rest.is_empty() {
+                    // Multiline list follows on subsequent lines.
+                    in_branch_list = true;
+                } else if rest.starts_with('[') && rest.ends_with(']') {
+                    // Inline list: branch: [a, b, c]
                     let items = &rest[1..rest.len() - 1];
                     return items
                         .split(',')
                         .any(|i| i.trim().trim_matches('"').trim_matches('\'') == branch_name);
                 } else {
+                    // Single scalar: branch: value
                     return rest.trim_matches('"').trim_matches('\'') == branch_name;
                 }
-            }
-            // Check for multiline list
-            //   branch:
-            //     - branch-name
-            // This is harder without a real YAML parser, but let's try a simple heuristic
-            if line == "- ".to_string() + branch_name
-                || line == "- \"".to_string() + branch_name + "\""
-            {
-                return true;
+            } else if in_branch_list {
+                if let Some(item) = trimmed.strip_prefix("- ") {
+                    if item.trim_matches('"').trim_matches('\'') == branch_name {
+                        return true;
+                    }
+                } else if !trimmed.is_empty() {
+                    // Non-list line: branch block ended.
+                    in_branch_list = false;
+                }
             }
         }
     }

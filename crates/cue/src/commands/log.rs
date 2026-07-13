@@ -56,8 +56,10 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
             eprintln!("✓ Logged");
             println!("{}", rel_path.display());
         }
-        LogCommands::List { branch } => {
-            let branch_name = if let Some(b) = branch {
+        LogCommands::List { branch, task } => {
+            let branch_name = if let Some(t) = task {
+                t
+            } else if let Some(b) = branch {
                 b
             } else {
                 let cue_path = root.join(&config.dir_name);

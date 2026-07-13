@@ -187,6 +187,9 @@ pub enum LogCommands {
         /// List log for a specific branch instead of current
         #[arg(long)]
         branch: Option<String>,
+        /// List log for a specific task scope instead of current
+        #[arg(long, conflicts_with = "branch")]
+        task: Option<String>,
     },
 }
 
