@@ -51,6 +51,7 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
     }
 
     let scope = if let Some(s) = scope_name {
+        cuelib::head::validate_slug(&s)?;
         s
     } else {
         let cue_path = root.join(&config.dir_name);
@@ -59,9 +60,8 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
     if scope.trim().is_empty() {
         bail!("Scope name cannot be empty.");
     }
-    let scope_dir = git::sanitize_branch_name(&scope);
 
-    let log_file_path = cue_path.join(&scope_dir).join("log.md");
+    let log_file_path = cue_path.join(&scope).join("log.md");
 
     // 4. Open file and get metadata (to check if it's new) before building markdown
     if let Some(parent) = log_file_path.parent() {

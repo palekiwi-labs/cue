@@ -744,7 +744,7 @@ fn test_add_force_overwrite() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_add_with_slashed_branch_name() -> anyhow::Result<()> {
+fn test_add_with_slashed_git_branch_uses_master_scope() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
 
@@ -763,8 +763,7 @@ fn test_add_with_slashed_branch_name() -> anyhow::Result<()> {
         .success();
 
     // Add a root file
-    // We expect it to be in .test-mem/master/spec/test.md (NOT feature/logic)
-    // because it now uses HEAD-derived scope which defaults to master.
+    // Scope is HEAD-derived (defaults to master), NOT the git branch name.
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
@@ -779,7 +778,7 @@ fn test_add_with_slashed_branch_name() -> anyhow::Result<()> {
     let file_path = env.root().join(".test-mem/master/spec/test.md");
     assert!(file_path.exists());
 
-    // Verify that the nested directory was NOT created
+    // Verify that no branch-derived directory was created
     let nested_dir = env.root().join(".test-mem/feature-logic");
     assert!(!nested_dir.exists());
 
@@ -787,7 +786,7 @@ fn test_add_with_slashed_branch_name() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_add_with_explicit_branch() -> anyhow::Result<()> {
+fn test_add_with_task_override() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
 
@@ -799,16 +798,16 @@ fn test_add_with_explicit_branch() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    // Add a root file to a DIFFERENT branch than current (main)
+    // Add a root file to a DIFFERENT scope than current (master)
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("add")
         .arg("--root")
         .arg("--task")
-        .arg("feature/other")
+        .arg("feature-other")
         .arg("other.md")
-        .arg("other branch content")
+        .arg("other scope content")
         .assert()
         .success()
         .stdout(predicate::str::diff(
@@ -818,11 +817,41 @@ fn test_add_with_explicit_branch() -> anyhow::Result<()> {
     let file_path = env.root().join(".test-mem/feature-other/spec/other.md");
     assert!(file_path.exists());
     let content = fs::read_to_string(file_path)?;
-    assert_eq!(content, "other branch content");
+    assert_eq!(content, "other scope content");
 
-    // Verify master branch spec doesn't have it
+    // Verify master scope doesn't have it
     let main_file = env.root().join(".test-mem/master/spec/other.md");
     assert!(!main_file.exists());
+
+    Ok(())
+}
+
+#[test]
+fn test_add_with_task_override_rejects_invalid_slug() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // --task with a slash should be rejected by validate_slug, not silently
+    // sanitized.
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--root")
+        .arg("--task")
+        .arg("feature/other")
+        .arg("other.md")
+        .arg("content")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Invalid task slug"));
 
     Ok(())
 }

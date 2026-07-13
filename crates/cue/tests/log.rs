@@ -140,7 +140,7 @@ fn test_log_add_validation() -> anyhow::Result<()> {
         .failure()
         .stderr(predicate::str::contains("The --title argument is required"));
 
-    // Empty branch
+    // Empty task override
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
@@ -152,7 +152,7 @@ fn test_log_add_validation() -> anyhow::Result<()> {
         .arg("")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Scope name cannot be empty"));
+        .stderr(predicate::str::contains("Invalid task slug"));
 
     Ok(())
 }
