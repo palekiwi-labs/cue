@@ -28,6 +28,16 @@ cue status
 
 Expected: `active context: master (global)`
 
+### Comments
+
+command confirmed to work
+
+the command displays: "active context: master (global)" which means we cannot
+use the output programmatically to retrieve current context
+
+Consider adding a `--json` flag for structured output
+
+
 ---
 
 ## cue switch to a task slug
@@ -39,6 +49,14 @@ cue switch my-task
 Expected: `switched to task: my-task`
 
 Verify `.cue/HEAD` contains `my-task` and `.cue/my-task/` directory was created.
+
+### Comments
+
+command confirmed to work
+- with both slug and path (relative or absolute)
+- with `master`
+
+Same issue about structured output as above.
 
 ---
 
@@ -56,6 +74,10 @@ active task: my-task
 
 (No title/status lines since there is no task card for `my-task`.)
 
+### Comments
+
+works
+
 ---
 
 ## cue switch with a filepath
@@ -65,6 +87,10 @@ cue switch .cue/master/task/some-card.md
 ```
 
 Expected: `switched to task: some-card`
+
+### Comments
+
+works
 
 ---
 
@@ -78,6 +104,10 @@ Expected: `switched to global context`
 
 Then `cue status` should print `active context: master (global)`.
 
+### Comments
+
+works
+
 ---
 
 ## --task flag overrides scope without touching HEAD
@@ -90,6 +120,10 @@ cue add --type spec --filename test.md --task other-task <<< "hello"
 Expected: artifact written to `.cue/other-task/spec/...`, not `.cue/my-task/`.
 `.cue/HEAD` must still contain `my-task` afterwards.
 
+### Comments
+
+works
+
 ---
 
 ## cue log add respects HEAD scope
@@ -101,6 +135,10 @@ cue log add --title "Test entry"
 
 Expected output path: `.cue/my-task/log.md`
 
+### Comments
+
+works
+
 ---
 
 ## cue log list reads from HEAD scope
@@ -111,6 +149,10 @@ cue log list
 
 Expected: prints contents of `.cue/my-task/log.md` including `# Project Log`
 and `Test entry`.
+
+### Comments
+
+works
 
 ---
 
@@ -144,3 +186,23 @@ Expected: `switched to task: feat-task-mode`
 If no card matches the current branch:
 
 Expected: `no task matched branch: <branch>` then `switched to global context`
+
+### Comments
+
+It works when the frontmatter `branch` contains a single branch (string value).
+It does not work when `branch` is an array of branches
+
+---
+
+## Extra findings
+
+```bash
+$ cue -- log list --task test-task1
+
+error: unexpected argument '--task' found
+
+Usage: cue log list [OPTIONS]
+```
+
+we need to be able to list log entries from other task contexts by specifying
+`--task`
