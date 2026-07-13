@@ -289,3 +289,55 @@ fn switch_absolute_path_slug_is_rejected() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn switch_human_output_to_task() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("switch")
+        .arg("auth-login")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff("switched to task: auth-login\n"));
+
+    // The context directory must be auto-created.
+    let task_dir = env.root().join(".test-mem/auth-login");
+    assert!(task_dir.is_dir(), "context directory must be created");
+
+    Ok(())
+}
+
+#[test]
+fn switch_human_output_to_master() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("switch")
+        .arg("master")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff("switched to global context\n"));
+
+    Ok(())
+}

@@ -1,5 +1,6 @@
 mod helpers;
 
+use predicates::prelude::*;
 use serde_json::Value;
 
 // ── status --json ────────────────────────────────────────────────────────────
@@ -135,6 +136,70 @@ fn status_json_task_with_crlf_frontmatter() -> anyhow::Result<()> {
     assert_eq!(json["context"], "auth-login");
     assert_eq!(json["title"], "CRLF Title");
     assert_eq!(json["status"], "open");
+
+    Ok(())
+}
+
+#[test]
+fn status_human_output_global() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff("active context: master (global)\n"));
+
+    Ok(())
+}
+
+#[test]
+fn status_human_output_task_with_card() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("switch")
+        .arg("auth-login")
+        .assert()
+        .success();
+
+    let task_dir = env.root().join(".test-mem/master/task");
+    std::fs::create_dir_all(&task_dir)?;
+    std::fs::write(
+        task_dir.join("auth-login.md"),
+        "---\ntitle: Implement Login\nstatus: in-progress\n---\n# Body",
+    )?;
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("active task: auth-login"))
+        .stdout(predicate::str::contains("title: Implement Login"))
+        .stdout(predicate::str::contains("status: in-progress"))
+        .stdout(predicate::str::contains("context: .cue/auth-login/"));
 
     Ok(())
 }
