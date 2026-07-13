@@ -1,5 +1,5 @@
 use crate::config::{Config, ContextConfig, ContextProfile};
-use crate::git::{get_current_branch, get_git_root, sanitize_branch_name};
+use crate::git::{get_git_root, sanitize_branch_name};
 use glob::glob;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -167,12 +167,12 @@ pub fn resolve_profile(
 
 pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<ResolvedContext> {
     let profile_name = profile_name.unwrap_or("default");
-    let branch = get_current_branch(cwd)?;
-    let sanitized_branch = sanitize_branch_name(&branch);
     let git_root = get_git_root(cwd)?;
     let canonical_git_root = git_root.canonicalize()?;
     let config = Config::load(&git_root)?;
     let dir_name = &config.dir_name;
+    let cue_dir = git_root.join(dir_name);
+    let sanitized_branch = cuelib::head::resolve_scope(&cue_dir)?;
 
     let mut visited = HashSet::new();
     let paths = resolve_profile(
