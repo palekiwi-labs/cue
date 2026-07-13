@@ -839,13 +839,13 @@ fn test_list_branch_flag() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    // 4. List task-a scope via --branch
+    // 4. List task-a scope via --task
     let output = String::from_utf8(
         env.command()
             .env("CUE_BRANCH_NAME", "test-mem")
             .env("CUE_DIR_NAME", ".test-mem")
             .arg("list")
-            .arg("--branch")
+            .arg("--task")
             .arg("task-a")
             .assert()
             .success()
@@ -856,13 +856,13 @@ fn test_list_branch_flag() -> anyhow::Result<()> {
     assert!(output.contains("main.md"));
     assert!(!output.contains("other.md"));
 
-    // 5. List task-b scope via --branch
+    // 5. List task-b scope via --task
     let output = String::from_utf8(
         env.command()
             .env("CUE_BRANCH_NAME", "test-mem")
             .env("CUE_DIR_NAME", ".test-mem")
             .arg("list")
-            .arg("--branch")
+            .arg("--task")
             .arg("task-b")
             .assert()
             .success()

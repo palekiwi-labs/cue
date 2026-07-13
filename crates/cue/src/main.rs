@@ -75,7 +75,7 @@ fn main() -> anyhow::Result<()> {
             )?;
         }
         Commands::List {
-            branch,
+            task,
             all,
             cue_type,
             include_gitignored,
@@ -86,7 +86,7 @@ fn main() -> anyhow::Result<()> {
             commands::list::handle(
                 &cwd,
                 commands::list::ListOptions {
-                    branch_name: branch,
+                    branch_name: task,
                     all,
                     cue_type,
                     include_gitignored,

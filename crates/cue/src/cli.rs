@@ -76,11 +76,11 @@ pub enum Commands {
         force: bool,
     },
 
-    /// List artifacts for a branch
+    /// List artifacts for a scope
     List {
-        /// List files for a specific branch instead of current
-        #[arg(long, conflicts_with = "all")]
-        branch: Option<String>,
+        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        #[arg(long = "task", conflicts_with = "all")]
+        task: Option<String>,
         /// List files for all branches
         #[arg(short = 'a', long)]
         all: bool,
