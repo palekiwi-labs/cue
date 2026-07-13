@@ -46,6 +46,7 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
 
     // 3. Resolve scope
     let scope = if let Some(s) = scope_name {
+        cuelib::head::validate_slug(&s)?;
         s
     } else {
         cuelib::head::resolve_scope(&cue_path)?
@@ -53,10 +54,9 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
     if scope.trim().is_empty() {
         bail!("Scope name cannot be empty.");
     }
-    let scope_dir = git::sanitize_branch_name(&scope);
 
     // 4. Resolve destination directory
-    let type_dir = cue_path.join(&scope_dir).join(&cue_type);
+    let type_dir = cue_path.join(&scope).join(&cue_type);
     let dest_dir = if save_at_root {
         type_dir
     } else {

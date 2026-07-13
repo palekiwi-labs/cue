@@ -26,8 +26,8 @@ fn handle_show(cwd: &Path) -> anyhow::Result<()> {
     let git_root = get_git_root(cwd)?;
     let config = Config::load(&git_root)?;
     let cue_dir = git_root.join(&config.dir_name);
-    let sanitized_branch = cuelib::head::resolve_scope(&cue_dir)?;
-    let config_path = context_json_path(&git_root, &sanitized_branch, &config.dir_name);
+    let scope = cuelib::head::resolve_scope(&cue_dir)?;
+    let config_path = context_json_path(&git_root, &scope, &config.dir_name);
 
     let context_config = load_context_config(&config_path)?;
     println!("{}", serde_json::to_string_pretty(&context_config)?);
@@ -39,8 +39,8 @@ fn handle_profiles(cwd: &Path) -> anyhow::Result<()> {
     let git_root = get_git_root(cwd)?;
     let config = Config::load(&git_root)?;
     let cue_dir = git_root.join(&config.dir_name);
-    let sanitized_branch = cuelib::head::resolve_scope(&cue_dir)?;
-    let config_path = context_json_path(&git_root, &sanitized_branch, &config.dir_name);
+    let scope = cuelib::head::resolve_scope(&cue_dir)?;
+    let config_path = context_json_path(&git_root, &scope, &config.dir_name);
 
     let config = load_context_config(&config_path)?;
     let mut names: Vec<_> = config.keys().collect();
@@ -103,12 +103,12 @@ fn handle_path(cwd: &Path, all: bool) -> anyhow::Result<()> {
         }
     } else {
         let cue_dir = git_root.join(&config.dir_name);
-        let sanitized_branch = cuelib::head::resolve_scope(&cue_dir)?;
-        let config_path = context_json_path(&git_root, &sanitized_branch, &config.dir_name);
+        let scope = cuelib::head::resolve_scope(&cue_dir)?;
+        let config_path = context_json_path(&git_root, &scope, &config.dir_name);
         if config_path.exists() {
             println!("{}", config_path.display());
         } else {
-            anyhow::bail!("Context file not found for scope: {}", sanitized_branch);
+            anyhow::bail!("Context file not found for scope: {}", scope);
         }
     }
 

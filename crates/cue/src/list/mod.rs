@@ -1,5 +1,4 @@
 use crate::config::Config;
-use crate::git;
 use anyhow::Result;
 use cuelib::artifact::{collect_files, extract_frontmatter_yaml};
 use serde::Serialize;
@@ -190,12 +189,12 @@ pub fn resolve_scan_paths(
         collect_files(cue_path)
     } else {
         let scope = if let Some(s) = scope {
+            cuelib::head::validate_slug(&s)?;
             s
         } else {
             cuelib::head::resolve_scope(cue_path)?
         };
-        let scope_dir = git::sanitize_branch_name(&scope);
-        let scan_dir = cue_path.join(&scope_dir);
+        let scan_dir = cue_path.join(&scope);
 
         if scan_dir.exists() {
             collect_files(&scan_dir)

@@ -1,5 +1,5 @@
 use crate::config::{Config, ContextConfig, ContextProfile};
-use crate::git::{get_git_root, sanitize_branch_name};
+use crate::git::get_git_root;
 use glob::glob;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -17,8 +17,8 @@ pub struct ResolvedContext {
     pub instructions: Option<String>,
 }
 
-pub fn context_json_path(root: &Path, branch_dir: &str, dir_name: &str) -> PathBuf {
-    root.join(dir_name).join(branch_dir).join("context.json")
+pub fn context_json_path(root: &Path, scope: &str, dir_name: &str) -> PathBuf {
+    root.join(dir_name).join(scope).join("context.json")
 }
 
 pub fn load_context_config(path: &Path) -> anyhow::Result<ContextConfig> {
@@ -32,23 +32,23 @@ pub fn load_context_config(path: &Path) -> anyhow::Result<ContextConfig> {
 
 pub fn parse_artifact_path(
     raw: &str,
-    current_branch_dir: &str,
+    current_scope: &str,
     git_root: &Path,
     dir_name: &str,
 ) -> anyhow::Result<PathBuf> {
-    let (branch, rest) = if let Some(stripped) = raw.strip_prefix('@') {
-        // Cross-branch reference
-        let (b, p) = match stripped.split_once(':') {
-            Some((branch, path)) => (branch, path),
+    let (scope, rest) = if let Some(stripped) = raw.strip_prefix('@') {
+        // Cross-context reference
+        let (s, p) = match stripped.split_once(':') {
+            Some((scope, path)) => (scope, path),
             None => (stripped, ""),
         };
 
-        (sanitize_branch_name(b), p.to_string())
+        (s.to_string(), p.to_string())
     } else {
-        // Local artifact. Defaults to current branch.
+        // Local artifact. Defaults to current scope.
         // We optionally strip a leading "./" for cleaner aesthetics.
         let p = raw.strip_prefix("./").unwrap_or(raw);
-        (current_branch_dir.to_string(), p.to_string())
+        (current_scope.to_string(), p.to_string())
     };
 
     let rest_path = Path::new(&rest);
@@ -61,40 +61,35 @@ pub fn parse_artifact_path(
         );
     }
 
-    let full_path = git_root.join(dir_name).join(branch).join(rest_path);
-
-    // Security check: ensure the path is within git_root
-    // We use components to avoid canonicalization (which requires file to exist)
-    // for just the path calculation, but for the actual check we should be careful.
-    // Actually, we can just check if it's within the artifact dir
+    let full_path = git_root.join(dir_name).join(scope).join(rest_path);
 
     Ok(full_path)
 }
 
 pub fn resolve_profile(
-    branch_dir: &str,
+    scope: &str,
     profile_name: &str,
     git_root: &Path,
     dir_name: &str,
     visited: &mut HashSet<(String, String)>,
 ) -> anyhow::Result<Vec<PathBuf>> {
-    let key = (branch_dir.to_string(), profile_name.to_string());
+    let key = (scope.to_string(), profile_name.to_string());
     if visited.contains(&key) {
         anyhow::bail!(
             "Cycle detected in context profile includes: {}:{}",
-            branch_dir,
+            scope,
             profile_name
         );
     }
     visited.insert(key.clone());
 
-    let config_path = context_json_path(git_root, branch_dir, dir_name);
+    let config_path = context_json_path(git_root, scope, dir_name);
     let config = match load_context_config(&config_path) {
         Ok(c) => c,
         Err(_) => {
             eprintln!(
-                "Warning: Could not load context for branch {}, skipping",
-                branch_dir
+                "Warning: Could not load context for scope {}, skipping",
+                scope
             );
             visited.remove(&key);
             return Ok(Vec::new());
@@ -113,24 +108,24 @@ pub fn resolve_profile(
     let mut accumulator = Vec::new();
 
     for inc in &profile.include {
-        let (inc_branch, inc_profile) = if let Some(rest) = inc.strip_prefix('@') {
+        let (inc_scope, inc_profile) = if let Some(rest) = inc.strip_prefix('@') {
             match rest.split_once(':') {
-                Some((b, p)) => (sanitize_branch_name(b), p.to_string()),
-                None => (sanitize_branch_name(rest), "default".to_string()),
+                Some((s, p)) => (s.to_string(), p.to_string()),
+                None => (rest.to_string(), "default".to_string()),
             }
         } else {
             match inc.split_once(':') {
-                Some((b, p)) => (sanitize_branch_name(b), p.to_string()),
-                None => (sanitize_branch_name(inc), "default".to_string()),
+                Some((s, p)) => (s.to_string(), p.to_string()),
+                None => (inc.to_string(), "default".to_string()),
             }
         };
 
-        let inc_paths = resolve_profile(&inc_branch, &inc_profile, git_root, dir_name, visited)?;
+        let inc_paths = resolve_profile(&inc_scope, &inc_profile, git_root, dir_name, visited)?;
         accumulator.extend(inc_paths);
     }
 
     for art in &profile.artifacts {
-        let path = parse_artifact_path(art, branch_dir, git_root, dir_name)?;
+        let path = parse_artifact_path(art, scope, git_root, dir_name)?;
 
         if art.contains('*') || art.contains('?') || art.contains('[') {
             let pattern = path.to_string_lossy();
@@ -172,16 +167,10 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
     let config = Config::load(&git_root)?;
     let dir_name = &config.dir_name;
     let cue_dir = git_root.join(dir_name);
-    let sanitized_branch = cuelib::head::resolve_scope(&cue_dir)?;
+    let scope = cuelib::head::resolve_scope(&cue_dir)?;
 
     let mut visited = HashSet::new();
-    let paths = resolve_profile(
-        &sanitized_branch,
-        profile_name,
-        &git_root,
-        dir_name,
-        &mut visited,
-    )?;
+    let paths = resolve_profile(&scope, profile_name, &git_root, dir_name, &mut visited)?;
 
     let mut artifacts = Vec::new();
     for path in paths {
@@ -216,7 +205,7 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
         });
     }
 
-    let context_path = context_json_path(&git_root, &sanitized_branch, dir_name);
+    let context_path = context_json_path(&git_root, &scope, dir_name);
     let context_config = load_context_config(&context_path)?;
     let profile_obj = context_config.get(profile_name).ok_or_else(|| {
         anyhow::anyhow!(
@@ -238,8 +227,8 @@ pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
     let git_root = get_git_root(cwd)?;
     let config = Config::load(&git_root)?;
     let cue_dir = git_root.join(&config.dir_name);
-    let sanitized_branch = cuelib::head::resolve_scope(&cue_dir)?;
-    let config_path = context_json_path(&git_root, &sanitized_branch, &config.dir_name);
+    let scope = cuelib::head::resolve_scope(&cue_dir)?;
+    let config_path = context_json_path(&git_root, &scope, &config.dir_name);
 
     if config_path.exists() && !force {
         anyhow::bail!(
@@ -275,7 +264,7 @@ mod tests {
         let data = json!({
             "default": {
                 "artifacts": ["./spec/index.md"],
-                "include": ["@other-branch"],
+                "include": ["@other-scope"],
                 "instructions": "Go fast"
             },
             "brief": {
@@ -286,7 +275,7 @@ mod tests {
 
         assert_eq!(config.len(), 2);
         assert_eq!(config["default"].artifacts, vec!["./spec/index.md"]);
-        assert_eq!(config["default"].include, vec!["@other-branch"]);
+        assert_eq!(config["default"].include, vec!["@other-scope"]);
         assert_eq!(config["default"].instructions, Some("Go fast".to_string()));
         assert_eq!(config["brief"].artifacts, vec!["./spec/index.md"]);
         assert_eq!(config["brief"].include, Vec::<String>::new());
@@ -323,48 +312,39 @@ mod tests {
         let root = Path::new("/repo");
         let current = "feat-ctx";
 
-        // Current branch with ./
+        // Current scope with ./
         let path = parse_artifact_path("./spec/index.md", current, root, DIR).unwrap();
         assert_eq!(path, root.join(DIR).join(current).join("spec/index.md"));
 
-        // Current branch without prefix
+        // Current scope without prefix
         let path = parse_artifact_path("spec/plan.md", current, root, DIR).unwrap();
         assert_eq!(path, root.join(DIR).join(current).join("spec/plan.md"));
 
-        // Current branch with parent traversal (allowed now)
+        // Current scope with parent traversal (allowed)
         let path = parse_artifact_path("../master/spec/index.md", current, root, DIR).unwrap();
         assert_eq!(
             path,
             root.join(DIR).join(current).join("../master/spec/index.md")
         );
 
-        // Cross branch
+        // Cross-context reference
         let path = parse_artifact_path("@other:spec/plan.md", current, root, DIR).unwrap();
         assert_eq!(path, root.join(DIR).join("other").join("spec/plan.md"));
 
-        // Cross branch with colon in branch name (This will now fail or split differently)
-        // Since git doesn't allow colons, we don't need to support them.
-        // But let's see how our split_once handles it.
+        // Cross-context with colon in path (split_once takes the first colon)
         let path = parse_artifact_path("@feat:context:spec/index.md", current, root, DIR).unwrap();
         assert_eq!(
             path,
             root.join(DIR).join("feat").join("context:spec/index.md")
         );
 
-        // Cross branch without path
+        // Cross-context without path
         let path = parse_artifact_path("@other", current, root, DIR).unwrap();
         assert_eq!(path, root.join(DIR).join("other").join(""));
 
         // Failures
         assert!(parse_artifact_path("/absolute.md", current, root, DIR).is_err());
         assert!(parse_artifact_path("@other:/etc/passwd", current, root, DIR).is_err());
-
-        // Cross-branch reference with slash (now supported via sanitization)
-        let path = parse_artifact_path("@branch/with/slash:spec.md", current, root, DIR).unwrap();
-        assert_eq!(
-            path,
-            root.join(DIR).join("branch-with-slash").join("spec.md")
-        );
 
         // Valid path containing ".." as part of filename
         assert!(parse_artifact_path("./spec/my..file.md", current, root, DIR).is_ok());
@@ -375,22 +355,22 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
 
-        let branch_a = root.join(DIR).join("A");
-        let branch_b = root.join(DIR).join("B");
-        let branch_feat = root.join(DIR).join("feat-test");
-        std::fs::create_dir_all(&branch_a).unwrap();
-        std::fs::create_dir_all(&branch_b).unwrap();
-        std::fs::create_dir_all(&branch_feat).unwrap();
+        let scope_a = root.join(DIR).join("A");
+        let scope_b = root.join(DIR).join("B");
+        let scope_feat = root.join(DIR).join("feat-test");
+        std::fs::create_dir_all(&scope_a).unwrap();
+        std::fs::create_dir_all(&scope_b).unwrap();
+        std::fs::create_dir_all(&scope_feat).unwrap();
 
         std::fs::write(
-            branch_a.join("context.json"),
+            scope_a.join("context.json"),
             r#"{
-                "default": { "include": ["B", "B:brief", "@B", "feat/test"] }
+                "default": { "include": ["B", "B:brief", "@B", "feat-test"] }
             }"#,
         )
         .unwrap();
         std::fs::write(
-            branch_b.join("context.json"),
+            scope_b.join("context.json"),
             r#"{
                 "default": { "artifacts": ["./b-default.md"] },
                 "brief": { "artifacts": ["./b-brief.md"] }
@@ -398,7 +378,7 @@ mod tests {
         )
         .unwrap();
         std::fs::write(
-            branch_feat.join("context.json"),
+            scope_feat.join("context.json"),
             r#"{
                 "default": { "artifacts": ["./feat.md"] }
             }"#,
@@ -406,9 +386,9 @@ mod tests {
         .unwrap();
 
         // Create dummy files
-        std::fs::write(branch_b.join("b-default.md"), "b-default").unwrap();
-        std::fs::write(branch_b.join("b-brief.md"), "b-brief").unwrap();
-        std::fs::write(branch_feat.join("feat.md"), "feat").unwrap();
+        std::fs::write(scope_b.join("b-default.md"), "b-default").unwrap();
+        std::fs::write(scope_b.join("b-brief.md"), "b-brief").unwrap();
+        std::fs::write(scope_feat.join("feat.md"), "feat").unwrap();
 
         let mut visited = HashSet::new();
         let res = resolve_profile("A", "default", root, DIR, &mut visited).unwrap();
@@ -427,18 +407,18 @@ mod tests {
         let root = temp.path();
 
         // Setup Cycle: A -> B -> A
-        let branch_a = root.join(DIR).join("A");
-        let branch_b = root.join(DIR).join("B");
-        std::fs::create_dir_all(&branch_a).unwrap();
-        std::fs::create_dir_all(&branch_b).unwrap();
+        let scope_a = root.join(DIR).join("A");
+        let scope_b = root.join(DIR).join("B");
+        std::fs::create_dir_all(&scope_a).unwrap();
+        std::fs::create_dir_all(&scope_b).unwrap();
 
         std::fs::write(
-            branch_a.join("context.json"),
+            scope_a.join("context.json"),
             r#"{"default": {"include": ["@B"]}}"#,
         )
         .unwrap();
         std::fs::write(
-            branch_b.join("context.json"),
+            scope_b.join("context.json"),
             r#"{"default": {"include": ["@A"]}}"#,
         )
         .unwrap();
@@ -455,32 +435,32 @@ mod tests {
         let root = temp.path();
 
         // Setup Diamond: A -> [B, C], B -> D, C -> D
-        let branch_a = root.join(DIR).join("A");
-        let branch_b = root.join(DIR).join("B");
-        let branch_c = root.join(DIR).join("C");
-        let branch_d = root.join(DIR).join("D");
-        std::fs::create_dir_all(&branch_a).unwrap();
-        std::fs::create_dir_all(&branch_b).unwrap();
-        std::fs::create_dir_all(&branch_c).unwrap();
-        std::fs::create_dir_all(&branch_d).unwrap();
+        let scope_a = root.join(DIR).join("A");
+        let scope_b = root.join(DIR).join("B");
+        let scope_c = root.join(DIR).join("C");
+        let scope_d = root.join(DIR).join("D");
+        std::fs::create_dir_all(&scope_a).unwrap();
+        std::fs::create_dir_all(&scope_b).unwrap();
+        std::fs::create_dir_all(&scope_c).unwrap();
+        std::fs::create_dir_all(&scope_d).unwrap();
 
         std::fs::write(
-            branch_a.join("context.json"),
+            scope_a.join("context.json"),
             r#"{"default": {"include": ["@B", "@C"]}}"#,
         )
         .unwrap();
         std::fs::write(
-            branch_b.join("context.json"),
+            scope_b.join("context.json"),
             r#"{"default": {"include": ["@D"], "artifacts": ["./spec/b.md"]}}"#,
         )
         .unwrap();
         std::fs::write(
-            branch_c.join("context.json"),
+            scope_c.join("context.json"),
             r#"{"default": {"include": ["@D"], "artifacts": ["./spec/c.md"]}}"#,
         )
         .unwrap();
         std::fs::write(
-            branch_d.join("context.json"),
+            scope_d.join("context.json"),
             r#"{"default": {"artifacts": ["./spec/d.md"]}}"#,
         )
         .unwrap();
@@ -501,14 +481,14 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
 
-        let branch_a = root.join(DIR).join("A");
-        let spec_a = branch_a.join("spec");
+        let scope_a = root.join(DIR).join("A");
+        let spec_a = scope_a.join("spec");
         std::fs::create_dir_all(&spec_a).unwrap();
 
         std::fs::write(spec_a.join("1.md"), "1").unwrap();
         std::fs::write(spec_a.join("2.md"), "2").unwrap();
         std::fs::write(
-            branch_a.join("context.json"),
+            scope_a.join("context.json"),
             r#"{"default": {"artifacts": ["./spec/*.md"]}}"#,
         )
         .unwrap();
@@ -530,15 +510,15 @@ mod tests {
         let temp = tempfile::tempdir().unwrap();
         let root = temp.path();
 
-        let branch_a = root.join(DIR).join("A");
-        let spec_a = branch_a.join("spec");
+        let scope_a = root.join(DIR).join("A");
+        let spec_a = scope_a.join("spec");
         let sub_dir = spec_a.join("notes");
         std::fs::create_dir_all(&sub_dir).unwrap();
 
         std::fs::write(spec_a.join("1.md"), "1").unwrap();
         std::fs::write(sub_dir.join("2.md"), "2").unwrap();
         std::fs::write(
-            branch_a.join("context.json"),
+            scope_a.join("context.json"),
             r#"{"default": {"artifacts": ["./spec/**/*"]}}"#,
         )
         .unwrap();
