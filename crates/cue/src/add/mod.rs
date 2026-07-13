@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
@@ -44,19 +44,19 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         );
     }
 
-    // 3. Get branch
-    let branch = if let Some(s) = scope_name {
+    // 3. Resolve scope
+    let scope = if let Some(s) = scope_name {
         s
     } else {
         cuelib::head::resolve_scope(&cue_path)?
     };
-    if branch.trim().is_empty() {
+    if scope.trim().is_empty() {
         bail!("Scope name cannot be empty.");
     }
-    let branch_dir = git::sanitize_branch_name(&branch);
+    let scope_dir = git::sanitize_branch_name(&scope);
 
     // 4. Resolve destination directory
-    let type_dir = cue_path.join(&branch_dir).join(&cue_type);
+    let type_dir = cue_path.join(&scope_dir).join(&cue_type);
     let dest_dir = if save_at_root {
         type_dir
     } else {
