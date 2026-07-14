@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::git;
 use anyhow::{bail, Context, Result};
+use cuelib::store;
 use std::fs;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
@@ -26,9 +27,11 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         scope_name,
     } = opts;
 
-    // 1. Check if .cue exists
+    // 1. Check if .cue exists and resolve store
     let cue_path = root.join(&config.dir_name);
-    if !cue_path.exists() {
+    let resolved = store::resolve_store(cue_path)?;
+
+    if !resolved.head_dir.exists() {
         bail!(
             "{} directory does not exist. Run `cue init` first.",
             config.dir_name
@@ -44,19 +47,19 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         );
     }
 
-    // 3. Resolve scope
+    // 3. Resolve scope (HEAD read from head_dir)
     let scope = if let Some(s) = scope_name {
         cuelib::head::validate_slug(&s)?;
         s
     } else {
-        cuelib::head::resolve_scope(&cue_path)?
+        cuelib::head::resolve_scope(&resolved.head_dir)?
     };
     if scope.trim().is_empty() {
         bail!("Scope name cannot be empty.");
     }
 
-    // 4. Resolve destination directory
-    let type_dir = cue_path.join(&scope).join(&cue_type);
+    // 4. Resolve destination directory (artifact write into store_dir)
+    let type_dir = resolved.store_dir.join(&scope).join(&cue_type);
     let dest_dir = if save_at_root {
         type_dir
     } else {

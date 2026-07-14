@@ -1,8 +1,9 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::head;
+use cuelib::store;
 use serde::Deserialize;
 use serde_json::json;
 use std::fs;
@@ -44,8 +45,9 @@ pub fn handle(
     let root = git::get_git_root(cwd).context("Not in a git repository")?;
     let config = Config::load(&root)?;
     let cue_dir = root.join(&config.dir_name);
+    let resolved = store::resolve_store(cue_dir)?;
 
-    if !cue_dir.exists() {
+    if !resolved.head_dir.exists() {
         bail!(
             "{} directory does not exist. Run `cue init` first.",
             config.dir_name
@@ -53,7 +55,7 @@ pub fn handle(
     }
 
     let slug = if let Some(b) = branch {
-        match find_task_for_branch(&cue_dir, &b)? {
+        match find_task_for_branch(&resolved.store_dir, &b)? {
             Some(s) => s,
             None => bail!("no task matched branch: {}. HEAD unchanged.", b),
         }
@@ -72,12 +74,12 @@ pub fn handle(
     // filesystem write.
     head::validate_slug(&slug)?;
 
-    // Write HEAD
-    head::write_head(&cue_dir, &slug)?;
+    // Write HEAD to the local head_dir (always local, never redirected)
+    head::write_head(&resolved.head_dir, &slug)?;
 
-    // Create context directory if needed (for non-master slugs)
+    // Create context directory in the shared store
     if slug != "master" {
-        let task_dir = cue_dir.join(&slug);
+        let task_dir = resolved.store_dir.join(&slug);
         fs::create_dir_all(&task_dir).with_context(|| {
             format!("Failed to create context directory: {}", task_dir.display())
         })?;

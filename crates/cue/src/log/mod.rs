@@ -1,6 +1,7 @@
 use crate::config::Config;
 use crate::git;
 use anyhow::{bail, Context, Result};
+use cuelib::store;
 use serde::Deserialize;
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
@@ -43,7 +44,9 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
 
     // 3. Resolve path
     let cue_path = root.join(&config.dir_name);
-    if !cue_path.exists() {
+    let resolved = store::resolve_store(cue_path)?;
+
+    if !resolved.head_dir.exists() {
         bail!(
             "{} directory does not exist. Run `cue init` first.",
             config.dir_name
@@ -54,14 +57,13 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
         cuelib::head::validate_slug(&s)?;
         s
     } else {
-        let cue_path = root.join(&config.dir_name);
-        cuelib::head::resolve_scope(&cue_path)?
+        cuelib::head::resolve_scope(&resolved.head_dir)?
     };
     if scope.trim().is_empty() {
         bail!("Scope name cannot be empty.");
     }
 
-    let log_file_path = cue_path.join(&scope).join("log.md");
+    let log_file_path = resolved.store_dir.join(&scope).join("log.md");
 
     // 4. Open file and get metadata (to check if it's new) before building markdown
     if let Some(parent) = log_file_path.parent() {
