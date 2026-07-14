@@ -143,12 +143,11 @@ fn find_task_for_branch(cue_dir: &Path, branch_name: &str) -> Result<Option<Stri
             continue;
         }
 
-        if let Some(yaml) = extract_frontmatter_yaml(&path) {
-            if let Ok(fm) = serde_yaml::from_str::<TaskFm>(&yaml) {
-                if fm.branch.contains(branch_name) {
-                    return Ok(Some(slug));
-                }
-            }
+        if let Some(yaml) = extract_frontmatter_yaml(&path)
+            && let Ok(fm) = serde_yaml::from_str::<TaskFm>(&yaml)
+            && fm.branch.contains(branch_name)
+        {
+            return Ok(Some(slug));
         }
     }
 
