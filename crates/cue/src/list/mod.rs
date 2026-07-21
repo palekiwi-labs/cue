@@ -257,7 +257,8 @@ pub fn to_cue_file(path: &Path, cue_path: &Path, root: &Path) -> Option<CueFile>
         .into_owned();
 
     let rel_path = path
-        .strip_prefix(root)
+        .strip_prefix(cue_path)
+        .or_else(|_| path.strip_prefix(root))
         .unwrap_or(path)
         .to_string_lossy()
         .to_string();

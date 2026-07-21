@@ -30,7 +30,10 @@ pub fn handle(cwd: &Path, opts: ListOptions) -> Result<()> {
     // 6. Output
     if !json_output {
         for (path, _) in filtered {
-            let rel_path = path.strip_prefix(&root).unwrap_or(&path);
+            let rel_path = path
+                .strip_prefix(&resolved.store_dir)
+                .or_else(|_| path.strip_prefix(&root))
+                .unwrap_or(&path);
             println!("{}", rel_path.display());
         }
     } else {

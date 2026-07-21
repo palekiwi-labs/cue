@@ -17,8 +17,14 @@ pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
 
 fn handle_init(cwd: &Path, force: bool) -> anyhow::Result<()> {
     let git_root = get_git_root(cwd)?;
+    let config = Config::load(&git_root)?;
+    let cue_dir = git_root.join(&config.dir_name);
+    let resolved_store = store::resolve_store(cue_dir)?;
     let config_path = init_context(cwd, force)?;
-    let relative_path = config_path.strip_prefix(&git_root).unwrap_or(&config_path);
+    let relative_path = config_path
+        .strip_prefix(&resolved_store.store_dir)
+        .or_else(|_| config_path.strip_prefix(&git_root))
+        .unwrap_or(&config_path);
     println!("Created {}", relative_path.display());
     Ok(())
 }
@@ -58,12 +64,16 @@ fn handle_profiles(cwd: &Path) -> anyhow::Result<()> {
 
 fn handle_render(cwd: &Path, profile: Option<String>) -> anyhow::Result<()> {
     let git_root = get_git_root(cwd)?;
+    let config = Config::load(&git_root)?;
+    let cue_dir = git_root.join(&config.dir_name);
+    let resolved_store = store::resolve_store(cue_dir)?;
     let resolved = gather_context(cwd, profile.as_deref())?;
 
     for artifact in resolved.artifacts {
         let relative_path = artifact
             .path
-            .strip_prefix(&git_root)
+            .strip_prefix(&resolved_store.store_dir)
+            .or_else(|_| artifact.path.strip_prefix(&git_root))
             .unwrap_or(&artifact.path);
         let normalized_path = relative_path.display().to_string().replace('\\', "/");
 
