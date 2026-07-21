@@ -83,7 +83,8 @@ fn link_with_task_master_is_permitted() -> anyhow::Result<()> {
         .arg("--task")
         .arg("master")
         .assert()
-        .success();
+        .success()
+        .stderr(predicate::str::is_empty());
 
     let head = fs::read_to_string(worktree.join(".cue/HEAD"))?;
     assert_eq!(head.trim(), "master");

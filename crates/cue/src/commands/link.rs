@@ -1,24 +1,13 @@
 use anyhow::{bail, Context, Result};
-use cuelib::head;
+use cuelib::{head, store};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 pub fn handle(cwd: &Path, store_path: PathBuf, task: Option<String>) -> Result<()> {
-    // 1. Validate store_path exists.
-    if !store_path.exists() {
-        bail!("store path does not exist: {}", store_path.display());
-    }
+    // 1. Validate store_path: exists, contains master/, not a proxy (chaining).
+    store::validate_store_target(&store_path)?;
 
-    // 2. Validate store_path contains master/ (structural check).
-    if !store_path.join("master").is_dir() {
-        bail!(
-            "store path is not a valid cue store \
-             (missing master/ subdirectory): {}",
-            store_path.display()
-        );
-    }
-
-    // 3. Canonicalize the store path.
+    // 2. Canonicalize the store path.
     let canonical_store = store_path
         .canonicalize()
         .with_context(|| format!("Failed to canonicalize: {}", store_path.display()))?;
@@ -51,7 +40,7 @@ pub fn handle(cwd: &Path, store_path: PathBuf, task: Option<String>) -> Result<(
             .join("master")
             .join("task")
             .join(format!("{}.md", slug));
-        if !card.exists() {
+        if slug != "master" && !card.exists() {
             eprintln!(
                 "warning: no task card found for '{}' at {}",
                 slug,
