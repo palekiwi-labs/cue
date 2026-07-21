@@ -1,6 +1,7 @@
 use crate::config::Config;
 use anyhow::Result;
 use cuelib::artifact::{collect_files, extract_frontmatter_yaml};
+use cuelib::store;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
@@ -135,9 +136,11 @@ pub fn list(
     // Parse frontmatter once when either filtering or outputting it requires it.
     let need_frontmatter = frontmatter || !filters.is_empty();
 
-    // 1. Check if .cue exists
+    // 1. Check if .cue exists and resolve store
     let cue_path = root.join(&config.dir_name);
-    if !cue_path.is_dir() {
+    let resolved = store::resolve_store(cue_path)?;
+
+    if !resolved.head_dir.is_dir() {
         anyhow::bail!(
             "{} directory does not exist. Run `cue init` first.",
             config.dir_name
@@ -145,7 +148,7 @@ pub fn list(
     }
 
     // 2. Determine scan directory/directories
-    let mut paths = resolve_scan_paths(&cue_path, all, scope)?;
+    let mut paths = resolve_scan_paths(&resolved.head_dir, &resolved.store_dir, all, scope)?;
 
     // 3. Sort
     paths.sort();
@@ -154,7 +157,7 @@ pub fn list(
     let valid_paths = paths.into_iter().filter(|path| {
         is_valid_cue_file(
             path,
-            &cue_path,
+            &resolved.store_dir,
             cue_type.as_deref(),
             include_gitignored,
             &config.ignored_types,
@@ -181,20 +184,21 @@ pub fn list(
 }
 
 pub fn resolve_scan_paths(
-    cue_path: &Path,
+    head_dir: &Path,
+    store_dir: &Path,
     all: bool,
     scope: Option<String>,
 ) -> Result<Vec<PathBuf>> {
     if all {
-        collect_files(cue_path)
+        collect_files(store_dir)
     } else {
         let scope = if let Some(s) = scope {
             cuelib::head::validate_slug(&s)?;
             s
         } else {
-            cuelib::head::resolve_scope(cue_path)?
+            cuelib::head::resolve_scope(head_dir)?
         };
-        let scan_dir = cue_path.join(&scope);
+        let scan_dir = store_dir.join(&scope);
 
         if scan_dir.exists() {
             collect_files(&scan_dir)
@@ -253,7 +257,8 @@ pub fn to_cue_file(path: &Path, cue_path: &Path, root: &Path) -> Option<CueFile>
         .into_owned();
 
     let rel_path = path
-        .strip_prefix(root)
+        .strip_prefix(cue_path)
+        .or_else(|_| path.strip_prefix(root))
         .unwrap_or(path)
         .to_string_lossy()
         .to_string();

@@ -34,8 +34,8 @@ fn test_context_render_with_globs() -> anyhow::Result<()> {
         .success()
         .stdout(predicate::str::contains("content 1"))
         .stdout(predicate::str::contains("content 2"))
-        .stdout(predicate::str::contains("path=\".cue/master/spec/1.md\""))
-        .stdout(predicate::str::contains("path=\".cue/master/spec/2.md\""));
+        .stdout(predicate::str::contains("path=\"master/spec/1.md\""))
+        .stdout(predicate::str::contains("path=\"master/spec/2.md\""));
 
     Ok(())
 }
@@ -102,7 +102,7 @@ fn test_context_render_uses_head_scope() -> anyhow::Result<()> {
         .success()
         .stdout(predicate::str::contains("task scoped content"))
         .stdout(predicate::str::contains(
-            "path=\".cue/my-task/spec/task-file.md\"",
+            "path=\"my-task/spec/task-file.md\"",
         ));
 
     Ok(())

@@ -1,10 +1,10 @@
 mod helpers;
 
-/// Integration tests for the global --dir / -C flag.
-///
-/// The flag overrides the process CWD for all subcommands so they
-/// operate on the project at <PATH> rather than the directory from
-/// which `cue` was invoked.
+// Integration tests for the global --dir / -C flag.
+//
+// The flag overrides the process CWD for all subcommands so they
+// operate on the project at <PATH> rather than the directory from
+// which `cue` was invoked.
 
 // ── Helpers ──────────────────────────────────────────────────────────────────
 

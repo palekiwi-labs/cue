@@ -24,7 +24,7 @@ fn test_context_init_empty_by_default() -> anyhow::Result<()> {
         .arg("init")
         .assert()
         .success()
-        .stdout(predicate::str::contains("Created .cue/master/context.json"));
+        .stdout(predicate::str::contains("Created master/context.json"));
 
     // Verify content: artifacts should be empty even though spec files exist
     let context_json = env.root().join(".cue").join("master").join("context.json");

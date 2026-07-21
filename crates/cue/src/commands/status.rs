@@ -18,8 +18,9 @@ pub fn handle(cwd: &Path, json: bool) -> Result<()> {
     let root = git::get_git_root(cwd).context("Not in a git repository")?;
     let config = Config::load(&root)?;
     let cue_dir = root.join(&config.dir_name);
+    let resolved = cuelib::store::resolve_store(cue_dir)?;
 
-    let slug = head::read_head(&cue_dir);
+    let slug = head::read_head(&resolved.head_dir);
 
     match slug.as_deref() {
         None | Some("master") => {
@@ -35,7 +36,8 @@ pub fn handle(cwd: &Path, json: bool) -> Result<()> {
         }
         Some(s) => {
             // Attempt to read task card for title/status
-            let task_card = cue_dir
+            let task_card = resolved
+                .store_dir
                 .join("master")
                 .join("task")
                 .join(format!("{}.md", s));

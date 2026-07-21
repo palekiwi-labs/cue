@@ -3,6 +3,7 @@ use crate::config::Config;
 use crate::git;
 use crate::log::{self, LogAddOptions, LogEntry};
 use anyhow::{Context, Result};
+use cuelib::store;
 use std::fs;
 use std::path::Path;
 
@@ -57,20 +58,21 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
             println!("{}", rel_path.display());
         }
         LogCommands::List { task } => {
+            let cue_path = root.join(&config.dir_name);
+            let resolved = store::resolve_store(cue_path)?;
+
             let scope = if let Some(t) = task {
                 cuelib::head::validate_slug(&t)?;
                 t
             } else {
-                let cue_path = root.join(&config.dir_name);
-                cuelib::head::resolve_scope(&cue_path)?
+                cuelib::head::resolve_scope(&resolved.head_dir)?
             };
 
-            let cue_path = root.join(&config.dir_name);
-            if !cue_path.exists() {
+            if !resolved.head_dir.exists() {
                 return Ok(()); // Silently exit
             }
 
-            let log_file_path = cue_path.join(&scope).join("log.md");
+            let log_file_path = resolved.store_dir.join(&scope).join("log.md");
 
             match fs::read_to_string(&log_file_path) {
                 Ok(content) => print!("{}", content),

@@ -884,6 +884,137 @@ fn kanban_help_line(layout: KanbanLayout, empty_store: bool) -> Line<'static> {
     Line::from(spans)
 }
 
+/// Format a UTC ISO-8601 timestamp string for display in the sessions pane.
+///
+/// Converts to the host local timezone. Returns:
+/// - `"HH:MM:SS"` (8 chars) when the date is today
+/// - `"YYYY-MM-DD"` (10 chars) for other days
+///
+/// Falls back to the first 10 chars of `ts` if parsing fails (or the full
+/// string if it is shorter than 10 chars).
+///
+/// Takes a precomputed `today` so the caller can compute
+/// `Local::now().date_naive()` once per frame and reuse it across all rows
+/// (avoids per-row clock reads and midnight-boundary disagreement).
+pub(crate) fn format_datetime_on(ts: &str, today: chrono::NaiveDate) -> String {
+    use chrono::{DateTime, Local, Utc};
+    let Ok(dt_utc) = ts.parse::<DateTime<Utc>>() else {
+        return ts.get(..10).unwrap_or(ts).to_string();
+    };
+    let local = dt_utc.with_timezone(&Local);
+    if local.date_naive() == today {
+        local.format("%H:%M:%S").to_string()
+    } else {
+        local.format("%Y-%m-%d").to_string()
+    }
+}
+
+/// Map a harness identifier to its two-letter abbreviation for the sessions pane.
+pub(crate) fn harness_abbrev(harness: &str) -> &'static str {
+    match harness {
+        "opencode" => "oc",
+        "claudecode" => "cc",
+        "pi" => "pi",
+        _ => "??",
+    }
+}
+
+/// Truncate `s` to at most `width` chars and left-pad to exactly `width`.
+///
+/// Unlike `format!("{:<width$}")`, this also truncates strings that are
+/// already longer than `width`, producing a fixed-width column.
+pub(crate) fn trunc_pad(s: &str, width: usize) -> String {
+    let char_count = s.chars().count();
+    if char_count >= width {
+        s.chars().take(width).collect()
+    } else {
+        format!("{s:<width$}")
+    }
+}
+
+/// Format an integer with thousands-separator commas (e.g. `1234567` → `"1,234,567"`).
+pub(crate) fn format_tokens(n: u64) -> String {
+    let s = n.to_string();
+    let bytes = s.as_bytes();
+    let total = bytes.len();
+    let mut result = String::with_capacity(total + total / 3);
+    for (i, b) in bytes.iter().enumerate() {
+        let remaining = total - i;
+        if i > 0 && remaining.is_multiple_of(3) {
+            result.push(',');
+        }
+        result.push(*b as char);
+    }
+    result
+}
+
+/// Format a UTC ISO-8601 timestamp for display in the events pane.
+///
+/// Converts to host local timezone and returns `"YYYY-MM-DD HH:MM:SS"` (19 chars).
+/// Falls back to the first 19 chars of the raw string on parse error.
+pub(crate) fn format_event_datetime(ts: &str) -> String {
+    use chrono::{DateTime, Local, Utc};
+    let Ok(dt_utc) = ts.parse::<DateTime<Utc>>() else {
+        return ts.get(..19).unwrap_or(ts).to_string();
+    };
+    let local = dt_utc.with_timezone(&Local);
+    local.format("%Y-%m-%d %H:%M:%S").to_string()
+}
+
+/// Collect unique agent identifiers for a session.
+///
+/// Reads from the cached `unique_agents` on `SessionSummary` (accumulated
+/// incrementally in `push_event`). Order is first-seen. Survives ring-buffer
+/// eviction (the cache lives on the summary, not the ring buffer).
+pub(crate) fn session_unique_agents(app: &App, session_id: &str) -> Vec<String> {
+    app.sessions
+        .get(session_id)
+        .map(|s| s.unique_agents.clone())
+        .unwrap_or_default()
+}
+
+/// Collect unique model identifiers for a session.
+///
+/// Reads from the cached `unique_models` on `SessionSummary` (accumulated
+/// incrementally in `push_event` from both `session_updated` and
+/// `agent_turn_completed` events). Order is first-seen. Survives ring-buffer
+/// eviction.
+pub(crate) fn session_unique_models(app: &App, session_id: &str) -> Vec<String> {
+    app.sessions
+        .get(session_id)
+        .map(|s| s.unique_models.clone())
+        .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// Private helpers
+// ---------------------------------------------------------------------------
+
+/// Format the acuity connection status as `(text, Color)` for the status bar.
+fn acuity_status_parts(status: &AcuityStatus) -> (String, Color) {
+    match status {
+        AcuityStatus::Connected => ("connected".to_string(), Color::Green),
+        AcuityStatus::Reconnecting { attempt } => {
+            (format!("reconnecting (attempt {attempt})"), Color::Yellow)
+        }
+        AcuityStatus::Disabled => ("disabled".to_string(), Color::DarkGray),
+    }
+}
+
+/// Build the shared help/status bar line used in Activity and Diagnostics views.
+fn status_help_line(status: &AcuityStatus) -> Line<'static> {
+    let (text, color) = acuity_status_parts(status);
+    Line::from(vec![
+        Span::styled(" q", Style::default().fg(Color::Yellow)),
+        Span::raw(" quit  "),
+        Span::styled("1/2/3", Style::default().fg(Color::Yellow)),
+        Span::raw(" views  "),
+        Span::styled("j/k", Style::default().fg(Color::Yellow)),
+        Span::raw(" navigate  |  acuity: "),
+        Span::styled(text, Style::default().fg(color)),
+    ])
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -1446,135 +1577,4 @@ mod tests {
             "project/priority lines must be exactly 5 rows apart (CARD_HEIGHT=5):\n{rendered}"
         );
     }
-}
-
-/// Format a UTC ISO-8601 timestamp string for display in the sessions pane.
-///
-/// Converts to the host local timezone. Returns:
-/// - `"HH:MM:SS"` (8 chars) when the date is today
-/// - `"YYYY-MM-DD"` (10 chars) for other days
-///
-/// Falls back to the first 10 chars of `ts` if parsing fails (or the full
-/// string if it is shorter than 10 chars).
-///
-/// Takes a precomputed `today` so the caller can compute
-/// `Local::now().date_naive()` once per frame and reuse it across all rows
-/// (avoids per-row clock reads and midnight-boundary disagreement).
-pub(crate) fn format_datetime_on(ts: &str, today: chrono::NaiveDate) -> String {
-    use chrono::{DateTime, Local, Utc};
-    let Ok(dt_utc) = ts.parse::<DateTime<Utc>>() else {
-        return ts.get(..10).unwrap_or(ts).to_string();
-    };
-    let local = dt_utc.with_timezone(&Local);
-    if local.date_naive() == today {
-        local.format("%H:%M:%S").to_string()
-    } else {
-        local.format("%Y-%m-%d").to_string()
-    }
-}
-
-/// Map a harness identifier to its two-letter abbreviation for the sessions pane.
-pub(crate) fn harness_abbrev(harness: &str) -> &'static str {
-    match harness {
-        "opencode" => "oc",
-        "claudecode" => "cc",
-        "pi" => "pi",
-        _ => "??",
-    }
-}
-
-/// Truncate `s` to at most `width` chars and left-pad to exactly `width`.
-///
-/// Unlike `format!("{:<width$}")`, this also truncates strings that are
-/// already longer than `width`, producing a fixed-width column.
-pub(crate) fn trunc_pad(s: &str, width: usize) -> String {
-    let char_count = s.chars().count();
-    if char_count >= width {
-        s.chars().take(width).collect()
-    } else {
-        format!("{s:<width$}")
-    }
-}
-
-/// Format an integer with thousands-separator commas (e.g. `1234567` → `"1,234,567"`).
-pub(crate) fn format_tokens(n: u64) -> String {
-    let s = n.to_string();
-    let bytes = s.as_bytes();
-    let total = bytes.len();
-    let mut result = String::with_capacity(total + total / 3);
-    for (i, b) in bytes.iter().enumerate() {
-        let remaining = total - i;
-        if i > 0 && remaining.is_multiple_of(3) {
-            result.push(',');
-        }
-        result.push(*b as char);
-    }
-    result
-}
-
-/// Format a UTC ISO-8601 timestamp for display in the events pane.
-///
-/// Converts to host local timezone and returns `"YYYY-MM-DD HH:MM:SS"` (19 chars).
-/// Falls back to the first 19 chars of the raw string on parse error.
-pub(crate) fn format_event_datetime(ts: &str) -> String {
-    use chrono::{DateTime, Local, Utc};
-    let Ok(dt_utc) = ts.parse::<DateTime<Utc>>() else {
-        return ts.get(..19).unwrap_or(ts).to_string();
-    };
-    let local = dt_utc.with_timezone(&Local);
-    local.format("%Y-%m-%d %H:%M:%S").to_string()
-}
-
-/// Collect unique agent identifiers for a session.
-///
-/// Reads from the cached `unique_agents` on `SessionSummary` (accumulated
-/// incrementally in `push_event`). Order is first-seen. Survives ring-buffer
-/// eviction (the cache lives on the summary, not the ring buffer).
-pub(crate) fn session_unique_agents(app: &App, session_id: &str) -> Vec<String> {
-    app.sessions
-        .get(session_id)
-        .map(|s| s.unique_agents.clone())
-        .unwrap_or_default()
-}
-
-/// Collect unique model identifiers for a session.
-///
-/// Reads from the cached `unique_models` on `SessionSummary` (accumulated
-/// incrementally in `push_event` from both `session_updated` and
-/// `agent_turn_completed` events). Order is first-seen. Survives ring-buffer
-/// eviction.
-pub(crate) fn session_unique_models(app: &App, session_id: &str) -> Vec<String> {
-    app.sessions
-        .get(session_id)
-        .map(|s| s.unique_models.clone())
-        .unwrap_or_default()
-}
-
-// ---------------------------------------------------------------------------
-// Private helpers
-// ---------------------------------------------------------------------------
-
-/// Format the acuity connection status as `(text, Color)` for the status bar.
-fn acuity_status_parts(status: &AcuityStatus) -> (String, Color) {
-    match status {
-        AcuityStatus::Connected => ("connected".to_string(), Color::Green),
-        AcuityStatus::Reconnecting { attempt } => {
-            (format!("reconnecting (attempt {attempt})"), Color::Yellow)
-        }
-        AcuityStatus::Disabled => ("disabled".to_string(), Color::DarkGray),
-    }
-}
-
-/// Build the shared help/status bar line used in Activity and Diagnostics views.
-fn status_help_line(status: &AcuityStatus) -> Line<'static> {
-    let (text, color) = acuity_status_parts(status);
-    Line::from(vec![
-        Span::styled(" q", Style::default().fg(Color::Yellow)),
-        Span::raw(" quit  "),
-        Span::styled("1/2/3", Style::default().fg(Color::Yellow)),
-        Span::raw(" views  "),
-        Span::styled("j/k", Style::default().fg(Color::Yellow)),
-        Span::raw(" navigate  |  acuity: "),
-        Span::styled(text, Style::default().fg(color)),
-    ])
 }

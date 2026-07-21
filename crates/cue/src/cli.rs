@@ -129,6 +129,17 @@ pub enum Commands {
         #[command(subcommand)]
         command: ProjectCommands,
     },
+    /// Initialize a proxy .cue/ directory that redirects artifact I/O to a
+    /// shared store while keeping HEAD local
+    #[command(arg_required_else_help = true)]
+    Link {
+        /// Absolute path to the real .cue/ store to link to.
+        /// Must exist and contain a master/ subdirectory.
+        store_path: std::path::PathBuf,
+        /// Task slug to write to HEAD
+        #[arg(long = "task")]
+        task: Option<String>,
+    },
 }
 
 #[derive(Subcommand)]

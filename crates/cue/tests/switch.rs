@@ -2,6 +2,8 @@ mod helpers;
 
 use predicates::prelude::*;
 use serde_json::Value;
+use std::fs;
+use std::path::Path;
 
 #[test]
 fn switch_json_to_task() -> anyhow::Result<()> {
@@ -338,6 +340,76 @@ fn switch_human_output_to_master() -> anyhow::Result<()> {
         .assert()
         .success()
         .stdout(predicate::str::diff("switched to global context\n"));
+
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Proxy worktree: cue switch respects STORE redirect
+//
+// Acceptance criterion 7: in a proxy worktree, cue switch must write HEAD to
+// the local head_dir and create the scope directory under the STORE target
+// (store_dir), not under the local .cue/.
+// ---------------------------------------------------------------------------
+
+/// Create a minimal valid cue store (has master/ subdir) at <parent>/.cue.
+fn make_real_store(parent: &Path) -> std::path::PathBuf {
+    let store = parent.join(".cue");
+    fs::create_dir_all(store.join("master")).unwrap();
+    store
+}
+
+#[test]
+fn switch_in_proxy_writes_head_locally_scope_dir_in_store() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+
+    // The shared real store lives outside the worktree's git root.
+    let real_store = make_real_store(env.root());
+
+    // The worktree is its own git repo (simulates a real git worktree where
+    // `git rev-parse --show-toplevel` returns the worktree path itself).
+    let worktree = env.root().join("worktrees/agent1");
+    fs::create_dir_all(&worktree)?;
+    helpers::setup_git_repo(&worktree);
+
+    // Link the worktree to the shared store (creates proxy .cue/STORE).
+    env.command()
+        .current_dir(&worktree)
+        .arg("link")
+        .arg(real_store.to_str().unwrap())
+        .assert()
+        .success();
+
+    // Switch context inside the proxy worktree.
+    env.command()
+        .current_dir(&worktree)
+        .arg("switch")
+        .arg("proj-123-impl")
+        .assert()
+        .success();
+
+    // HEAD must be written to the LOCAL proxy .cue/HEAD.
+    let local_head = worktree.join(".cue/HEAD");
+    assert!(
+        local_head.exists(),
+        "HEAD must be written to local proxy .cue/HEAD"
+    );
+    assert_eq!(fs::read_to_string(&local_head)?.trim(), "proj-123-impl");
+
+    // The scope directory must be created in the SHARED store (STORE target),
+    // not in the worktree's local .cue/.
+    let store_scope_dir = real_store.join("proj-123-impl");
+    assert!(
+        store_scope_dir.is_dir(),
+        "scope dir must be created in shared store: {}",
+        store_scope_dir.display()
+    );
+
+    // No local scope directory leaks into the worktree.
+    assert!(
+        !worktree.join("proj-123-impl").exists(),
+        "scope dir must NOT be created inside the worktree"
+    );
 
     Ok(())
 }

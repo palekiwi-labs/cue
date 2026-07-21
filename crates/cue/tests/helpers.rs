@@ -55,6 +55,7 @@ impl TestEnv {
     }
 }
 
+#[allow(dead_code)]
 pub fn setup_git_repo(dir: &Path) {
     Command::new("git")
         .args(["init", "-b", "main"])

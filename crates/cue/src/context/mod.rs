@@ -1,5 +1,6 @@
 use crate::config::{Config, ContextConfig, ContextProfile};
 use crate::git::get_git_root;
+use cuelib::store;
 use glob::glob;
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
@@ -17,8 +18,12 @@ pub struct ResolvedContext {
     pub instructions: Option<String>,
 }
 
-pub fn context_json_path(root: &Path, scope: &str, dir_name: &str) -> PathBuf {
-    root.join(dir_name).join(scope).join("context.json")
+/// Returns the path to the `context.json` file for `scope` within `cue_dir`.
+///
+/// `cue_dir` is the resolved store directory (may differ from the local `.cue/`
+/// when a `STORE` redirect is in effect).
+pub fn context_json_path(cue_dir: &Path, scope: &str) -> PathBuf {
+    cue_dir.join(scope).join("context.json")
 }
 
 pub fn load_context_config(path: &Path) -> anyhow::Result<ContextConfig> {
@@ -33,8 +38,7 @@ pub fn load_context_config(path: &Path) -> anyhow::Result<ContextConfig> {
 pub fn parse_artifact_path(
     raw: &str,
     current_scope: &str,
-    git_root: &Path,
-    dir_name: &str,
+    cue_dir: &Path,
 ) -> anyhow::Result<PathBuf> {
     let (scope, rest) = if let Some(stripped) = raw.strip_prefix('@') {
         // Cross-context reference
@@ -61,7 +65,7 @@ pub fn parse_artifact_path(
         );
     }
 
-    let full_path = git_root.join(dir_name).join(scope).join(rest_path);
+    let full_path = cue_dir.join(scope).join(rest_path);
 
     Ok(full_path)
 }
@@ -69,8 +73,7 @@ pub fn parse_artifact_path(
 pub fn resolve_profile(
     scope: &str,
     profile_name: &str,
-    git_root: &Path,
-    dir_name: &str,
+    store_dir: &Path,
     visited: &mut HashSet<(String, String)>,
 ) -> anyhow::Result<Vec<PathBuf>> {
     let key = (scope.to_string(), profile_name.to_string());
@@ -83,7 +86,7 @@ pub fn resolve_profile(
     }
     visited.insert(key.clone());
 
-    let config_path = context_json_path(git_root, scope, dir_name);
+    let config_path = context_json_path(store_dir, scope);
     let config = match load_context_config(&config_path) {
         Ok(c) => c,
         Err(_) => {
@@ -120,12 +123,12 @@ pub fn resolve_profile(
             }
         };
 
-        let inc_paths = resolve_profile(&inc_scope, &inc_profile, git_root, dir_name, visited)?;
+        let inc_paths = resolve_profile(&inc_scope, &inc_profile, store_dir, visited)?;
         accumulator.extend(inc_paths);
     }
 
     for art in &profile.artifacts {
-        let path = parse_artifact_path(art, scope, git_root, dir_name)?;
+        let path = parse_artifact_path(art, scope, store_dir)?;
 
         if art.contains('*') || art.contains('?') || art.contains('[') {
             let pattern = path.to_string_lossy();
@@ -163,14 +166,14 @@ pub fn resolve_profile(
 pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<ResolvedContext> {
     let profile_name = profile_name.unwrap_or("default");
     let git_root = get_git_root(cwd)?;
-    let canonical_git_root = git_root.canonicalize()?;
     let config = Config::load(&git_root)?;
-    let dir_name = &config.dir_name;
-    let cue_dir = git_root.join(dir_name);
-    let scope = cuelib::head::resolve_scope(&cue_dir)?;
+    let cue_dir = git_root.join(&config.dir_name);
+    let resolved = store::resolve_store(cue_dir)?;
+    let canonical_store = resolved.store_dir.canonicalize()?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
 
     let mut visited = HashSet::new();
-    let paths = resolve_profile(&scope, profile_name, &git_root, dir_name, &mut visited)?;
+    let paths = resolve_profile(&scope, profile_name, &resolved.store_dir, &mut visited)?;
 
     let mut artifacts = Vec::new();
     for path in paths {
@@ -185,7 +188,7 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
             }
         };
 
-        if !canonical_path.starts_with(&canonical_git_root) {
+        if !canonical_path.starts_with(&canonical_store) {
             eprintln!("Warning: Path traversal blocked: {}", path.display());
             continue;
         }
@@ -205,7 +208,7 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
         });
     }
 
-    let context_path = context_json_path(&git_root, &scope, dir_name);
+    let context_path = context_json_path(&resolved.store_dir, &scope);
     let context_config = load_context_config(&context_path)?;
     let profile_obj = context_config.get(profile_name).ok_or_else(|| {
         anyhow::anyhow!(
@@ -227,8 +230,9 @@ pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
     let git_root = get_git_root(cwd)?;
     let config = Config::load(&git_root)?;
     let cue_dir = git_root.join(&config.dir_name);
-    let scope = cuelib::head::resolve_scope(&cue_dir)?;
-    let config_path = context_json_path(&git_root, &scope, &config.dir_name);
+    let resolved = store::resolve_store(cue_dir)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+    let config_path = context_json_path(&resolved.store_dir, &scope);
 
     if config_path.exists() && !force {
         anyhow::bail!(
@@ -310,44 +314,39 @@ mod tests {
     #[test]
     fn test_parse_artifact_path() {
         let root = Path::new("/repo");
+        let cue_dir = root.join(DIR);
         let current = "feat-ctx";
 
         // Current scope with ./
-        let path = parse_artifact_path("./spec/index.md", current, root, DIR).unwrap();
-        assert_eq!(path, root.join(DIR).join(current).join("spec/index.md"));
+        let path = parse_artifact_path("./spec/index.md", current, &cue_dir).unwrap();
+        assert_eq!(path, cue_dir.join(current).join("spec/index.md"));
 
         // Current scope without prefix
-        let path = parse_artifact_path("spec/plan.md", current, root, DIR).unwrap();
-        assert_eq!(path, root.join(DIR).join(current).join("spec/plan.md"));
+        let path = parse_artifact_path("spec/plan.md", current, &cue_dir).unwrap();
+        assert_eq!(path, cue_dir.join(current).join("spec/plan.md"));
 
         // Current scope with parent traversal (allowed)
-        let path = parse_artifact_path("../master/spec/index.md", current, root, DIR).unwrap();
-        assert_eq!(
-            path,
-            root.join(DIR).join(current).join("../master/spec/index.md")
-        );
+        let path = parse_artifact_path("../master/spec/index.md", current, &cue_dir).unwrap();
+        assert_eq!(path, cue_dir.join(current).join("../master/spec/index.md"));
 
         // Cross-context reference
-        let path = parse_artifact_path("@other:spec/plan.md", current, root, DIR).unwrap();
-        assert_eq!(path, root.join(DIR).join("other").join("spec/plan.md"));
+        let path = parse_artifact_path("@other:spec/plan.md", current, &cue_dir).unwrap();
+        assert_eq!(path, cue_dir.join("other").join("spec/plan.md"));
 
         // Cross-context with colon in path (split_once takes the first colon)
-        let path = parse_artifact_path("@feat:context:spec/index.md", current, root, DIR).unwrap();
-        assert_eq!(
-            path,
-            root.join(DIR).join("feat").join("context:spec/index.md")
-        );
+        let path = parse_artifact_path("@feat:context:spec/index.md", current, &cue_dir).unwrap();
+        assert_eq!(path, cue_dir.join("feat").join("context:spec/index.md"));
 
         // Cross-context without path
-        let path = parse_artifact_path("@other", current, root, DIR).unwrap();
-        assert_eq!(path, root.join(DIR).join("other").join(""));
+        let path = parse_artifact_path("@other", current, &cue_dir).unwrap();
+        assert_eq!(path, cue_dir.join("other").join(""));
 
         // Failures
-        assert!(parse_artifact_path("/absolute.md", current, root, DIR).is_err());
-        assert!(parse_artifact_path("@other:/etc/passwd", current, root, DIR).is_err());
+        assert!(parse_artifact_path("/absolute.md", current, &cue_dir).is_err());
+        assert!(parse_artifact_path("@other:/etc/passwd", current, &cue_dir).is_err());
 
         // Valid path containing ".." as part of filename
-        assert!(parse_artifact_path("./spec/my..file.md", current, root, DIR).is_ok());
+        assert!(parse_artifact_path("./spec/my..file.md", current, &cue_dir).is_ok());
     }
 
     #[test]
@@ -391,7 +390,7 @@ mod tests {
         std::fs::write(scope_feat.join("feat.md"), "feat").unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, DIR, &mut visited).unwrap();
+        let res = resolve_profile("A", "default", &root.join(DIR), &mut visited).unwrap();
 
         // Accumulator: [b-default, b-brief, b-default (deduped), feat]
         // Final: [b-default, b-brief, feat]
@@ -424,7 +423,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, DIR, &mut visited);
+        let res = resolve_profile("A", "default", &root.join(DIR), &mut visited);
         assert!(res.is_err());
         assert!(res.unwrap_err().to_string().contains("Cycle detected"));
     }
@@ -466,7 +465,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, DIR, &mut visited).unwrap();
+        let res = resolve_profile("A", "default", &root.join(DIR), &mut visited).unwrap();
 
         // Deduplication should ensure D appears once, and DFS ordering
         // Accumulator: [D, B, D, C] -> Deduplicated: [D, B, C]
@@ -494,7 +493,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, DIR, &mut visited).unwrap();
+        let res = resolve_profile("A", "default", &root.join(DIR), &mut visited).unwrap();
 
         assert_eq!(res.len(), 2);
         let mut paths: Vec<_> = res
@@ -524,7 +523,7 @@ mod tests {
         .unwrap();
 
         let mut visited = HashSet::new();
-        let res = resolve_profile("A", "default", root, DIR, &mut visited).unwrap();
+        let res = resolve_profile("A", "default", &root.join(DIR), &mut visited).unwrap();
 
         // Should include 1.md and 2.md, but NOT the 'notes' directory
         assert_eq!(res.len(), 2);
