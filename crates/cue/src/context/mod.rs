@@ -35,6 +35,22 @@ pub fn load_context_config(path: &Path) -> anyhow::Result<ContextConfig> {
     Ok(config)
 }
 
+/// Load the scope's `context.json`, falling back to `config_context` when the
+/// file is absent. A present-but-invalid file is still a hard error.
+/// Returns an error if the file is absent and `config_context` is empty.
+pub fn load_context_or_config(
+    context_path: &Path,
+    config_context: &ContextConfig,
+) -> anyhow::Result<ContextConfig> {
+    if context_path.exists() {
+        load_context_config(context_path)
+    } else if !config_context.is_empty() {
+        Ok(config_context.clone())
+    } else {
+        anyhow::bail!("Context file not found: {}", context_path.display());
+    }
+}
+
 pub fn parse_artifact_path(
     raw: &str,
     current_scope: &str,
@@ -163,6 +179,74 @@ pub fn resolve_profile(
     Ok(final_paths)
 }
 
+/// Like `resolve_profile` but uses an already-loaded `root_config` for the
+/// root scope instead of re-reading `context.json`. Includes within the root
+/// profile are still resolved via `resolve_profile` (which reads their own
+/// `context.json` files normally).
+pub fn resolve_profile_with_config(
+    scope: &str,
+    profile_name: &str,
+    root_config: &ContextConfig,
+    store_dir: &Path,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let profile = root_config.get(profile_name).ok_or_else(|| {
+        anyhow::anyhow!("Profile '{}' not found in config default", profile_name,)
+    })?;
+
+    let mut accumulator = Vec::new();
+    let mut visited = HashSet::new();
+
+    for inc in &profile.include {
+        let (inc_scope, inc_profile) = if let Some(rest) = inc.strip_prefix('@') {
+            match rest.split_once(':') {
+                Some((s, p)) => (s.to_string(), p.to_string()),
+                None => (rest.to_string(), "default".to_string()),
+            }
+        } else {
+            match inc.split_once(':') {
+                Some((s, p)) => (s.to_string(), p.to_string()),
+                None => (inc.to_string(), "default".to_string()),
+            }
+        };
+
+        let inc_paths = resolve_profile(&inc_scope, &inc_profile, store_dir, &mut visited)?;
+        accumulator.extend(inc_paths);
+    }
+
+    for art in &profile.artifacts {
+        let path = parse_artifact_path(art, scope, store_dir)?;
+
+        if art.contains('*') || art.contains('?') || art.contains('[') {
+            let pattern = path.to_string_lossy();
+            match glob::glob(&pattern) {
+                Ok(entries) => {
+                    for p in entries.flatten() {
+                        if p.is_file() {
+                            accumulator.push(p);
+                        }
+                    }
+                }
+                Err(e) => {
+                    eprintln!("Warning: Invalid glob pattern '{}': {}", art, e);
+                }
+            }
+        } else {
+            accumulator.push(path);
+        }
+    }
+
+    // Deduplicate: first occurrence wins
+    let mut final_paths = Vec::new();
+    let mut seen = HashSet::new();
+    for path in accumulator {
+        if seen.insert(path.clone()) {
+            final_paths.push(path);
+        }
+    }
+
+    Ok(final_paths)
+}
+
 pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<ResolvedContext> {
     let profile_name = profile_name.unwrap_or("default");
     let git_root = get_git_root(cwd)?;
@@ -172,8 +256,12 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
     let canonical_store = resolved.store_dir.canonicalize()?;
     let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
 
-    let mut visited = HashSet::new();
-    let paths = resolve_profile(&scope, profile_name, &resolved.store_dir, &mut visited)?;
+    // Load root context config, falling back to config default when absent.
+    let context_path = context_json_path(&resolved.store_dir, &scope);
+    let root_config = load_context_or_config(&context_path, &config.context)?;
+
+    let paths =
+        resolve_profile_with_config(&scope, profile_name, &root_config, &resolved.store_dir)?;
 
     let mut artifacts = Vec::new();
     for path in paths {
@@ -208,14 +296,13 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
         });
     }
 
-    let context_path = context_json_path(&resolved.store_dir, &scope);
-    let context_config = load_context_config(&context_path)?;
-    let profile_obj = context_config.get(profile_name).ok_or_else(|| {
-        anyhow::anyhow!(
-            "Profile '{}' not found in {}",
-            profile_name,
-            context_path.display()
-        )
+    let profile_obj = root_config.get(profile_name).ok_or_else(|| {
+        let source = if context_path.exists() {
+            context_path.display().to_string()
+        } else {
+            "config default".to_string()
+        };
+        anyhow::anyhow!("Profile '{}' not found in {}", profile_name, source)
     })?;
 
     let instructions = profile_obj.instructions.clone();
@@ -262,6 +349,119 @@ pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    // --- load_context_or_config tests ---
+
+    #[test]
+    fn test_load_context_or_config_returns_file_when_present() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("context.json");
+        std::fs::write(&path, r#"{"default": {"artifacts": ["./spec/index.md"]}}"#).unwrap();
+
+        let fallback: ContextConfig = HashMap::new();
+        let result = load_context_or_config(&path, &fallback).unwrap();
+        assert!(result.contains_key("default"));
+        assert_eq!(result["default"].artifacts, vec!["./spec/index.md"]);
+    }
+
+    #[test]
+    fn test_load_context_or_config_falls_back_to_config_when_absent() {
+        let temp = tempfile::tempdir().unwrap();
+        let absent_path = temp.path().join("context.json");
+
+        let mut fallback: ContextConfig = HashMap::new();
+        fallback.insert(
+            "default".to_string(),
+            ContextProfile {
+                artifacts: vec!["./spec/fallback.md".to_string()],
+                include: vec![],
+                instructions: Some("fallback instructions".to_string()),
+            },
+        );
+
+        let result = load_context_or_config(&absent_path, &fallback).unwrap();
+        assert!(result.contains_key("default"));
+        assert_eq!(result["default"].artifacts, vec!["./spec/fallback.md"]);
+        assert_eq!(
+            result["default"].instructions,
+            Some("fallback instructions".to_string())
+        );
+    }
+
+    #[test]
+    fn test_load_context_or_config_errors_when_absent_and_no_fallback() {
+        let temp = tempfile::tempdir().unwrap();
+        let absent_path = temp.path().join("context.json");
+        let fallback: ContextConfig = HashMap::new();
+
+        let result = load_context_or_config(&absent_path, &fallback);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Context file not found")
+        );
+    }
+
+    #[test]
+    fn test_load_context_or_config_errors_on_invalid_json_even_with_fallback() {
+        let temp = tempfile::tempdir().unwrap();
+        let path = temp.path().join("context.json");
+        std::fs::write(&path, "this is not json").unwrap();
+
+        let mut fallback: ContextConfig = HashMap::new();
+        fallback.insert("default".to_string(), ContextProfile::default());
+
+        // A present-but-invalid file must not silently fall back.
+        let result = load_context_or_config(&path, &fallback);
+        assert!(result.is_err());
+    }
+
+    // --- resolve_profile_with_config tests ---
+
+    #[test]
+    fn test_resolve_profile_with_config_returns_artifacts() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = temp.path().join(".cue");
+        let scope_dir = store.join("my-task");
+        let spec_dir = scope_dir.join("spec");
+        std::fs::create_dir_all(&spec_dir).unwrap();
+        std::fs::write(spec_dir.join("index.md"), "content").unwrap();
+
+        let mut root_config: ContextConfig = HashMap::new();
+        root_config.insert(
+            "default".to_string(),
+            ContextProfile {
+                artifacts: vec!["./spec/index.md".to_string()],
+                include: vec![],
+                instructions: None,
+            },
+        );
+
+        let paths =
+            resolve_profile_with_config("my-task", "default", &root_config, &store).unwrap();
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].to_str().unwrap().contains("index.md"));
+    }
+
+    #[test]
+    fn test_resolve_profile_with_config_errors_on_missing_profile() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = temp.path().join(".cue");
+
+        let mut root_config: ContextConfig = HashMap::new();
+        root_config.insert("other".to_string(), ContextProfile::default());
+
+        let result = resolve_profile_with_config("my-task", "default", &root_config, &store);
+        assert!(result.is_err());
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Profile 'default' not found in config default")
+        );
+    }
 
     #[test]
     fn test_deserialize_full_schema() {
