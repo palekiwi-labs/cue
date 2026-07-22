@@ -18,6 +18,15 @@ pub struct ResolvedContext {
     pub instructions: Option<String>,
 }
 
+/// Indicates where a resolved `ContextConfig` was loaded from.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ContextSource {
+    /// Loaded from the scope's `context.json` file on disk.
+    File,
+    /// No `context.json` was found; the value came from `config.context`.
+    ConfigDefault,
+}
+
 /// Returns the path to the `context.json` file for `scope` within `cue_dir`.
 ///
 /// `cue_dir` is the resolved store directory (may differ from the local `.cue/`
@@ -38,14 +47,17 @@ pub fn load_context_config(path: &Path) -> anyhow::Result<ContextConfig> {
 /// Load the scope's `context.json`, falling back to `config_context` when the
 /// file is absent. A present-but-invalid file is still a hard error.
 /// Returns an error if the file is absent and `config_context` is empty.
+///
+/// The returned `ContextSource` indicates whether the config came from disk or
+/// from the config default, so callers do not need to re-stat the path.
 pub fn load_context_or_config(
     context_path: &Path,
     config_context: &ContextConfig,
-) -> anyhow::Result<ContextConfig> {
+) -> anyhow::Result<(ContextConfig, ContextSource)> {
     if context_path.exists() {
-        load_context_config(context_path)
+        Ok((load_context_config(context_path)?, ContextSource::File))
     } else if !config_context.is_empty() {
-        Ok(config_context.clone())
+        Ok((config_context.clone(), ContextSource::ConfigDefault))
     } else {
         anyhow::bail!("Context file not found: {}", context_path.display());
     }
@@ -219,7 +231,10 @@ pub fn resolve_profile_with_config(
     resolve_profile_body(scope, profile, store_dir, &mut visited)
 }
 
-pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<ResolvedContext> {
+pub fn gather_context(
+    cwd: &Path,
+    profile_name: Option<&str>,
+) -> anyhow::Result<(ResolvedContext, ContextSource)> {
     let profile_name = profile_name.unwrap_or("default");
     let git_root = get_git_root(cwd)?;
     let config = Config::load(&git_root)?;
@@ -230,7 +245,7 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
 
     // Load root context config, falling back to config default when absent.
     let context_path = context_json_path(&resolved.store_dir, &scope);
-    let root_config = load_context_or_config(&context_path, &config.context)?;
+    let (root_config, context_source) = load_context_or_config(&context_path, &config.context)?;
 
     let paths =
         resolve_profile_with_config(&scope, profile_name, &root_config, &resolved.store_dir)?;
@@ -269,20 +284,22 @@ pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<
     }
 
     let profile_obj = root_config.get(profile_name).ok_or_else(|| {
-        let source = if context_path.exists() {
-            context_path.display().to_string()
-        } else {
-            "config default".to_string()
+        let source = match context_source {
+            ContextSource::File => context_path.display().to_string(),
+            ContextSource::ConfigDefault => "config default".to_string(),
         };
         anyhow::anyhow!("Profile '{}' not found in {}", profile_name, source)
     })?;
 
     let instructions = profile_obj.instructions.clone();
 
-    Ok(ResolvedContext {
-        artifacts,
-        instructions,
-    })
+    Ok((
+        ResolvedContext {
+            artifacts,
+            instructions,
+        },
+        context_source,
+    ))
 }
 
 pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
@@ -331,7 +348,8 @@ mod tests {
         std::fs::write(&path, r#"{"default": {"artifacts": ["./spec/index.md"]}}"#).unwrap();
 
         let fallback: ContextConfig = HashMap::new();
-        let result = load_context_or_config(&path, &fallback).unwrap();
+        let (result, source) = load_context_or_config(&path, &fallback).unwrap();
+        assert_eq!(source, ContextSource::File);
         assert!(result.contains_key("default"));
         assert_eq!(result["default"].artifacts, vec!["./spec/index.md"]);
     }
@@ -351,7 +369,8 @@ mod tests {
             },
         );
 
-        let result = load_context_or_config(&absent_path, &fallback).unwrap();
+        let (result, source) = load_context_or_config(&absent_path, &fallback).unwrap();
+        assert_eq!(source, ContextSource::ConfigDefault);
         assert!(result.contains_key("default"));
         assert_eq!(result["default"].artifacts, vec!["./spec/fallback.md"]);
         assert_eq!(
