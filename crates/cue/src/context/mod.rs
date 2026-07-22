@@ -387,12 +387,10 @@ mod tests {
 
         let result = load_context_or_config(&absent_path, &fallback);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Context file not found")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Context file not found"));
     }
 
     #[test]
@@ -446,12 +444,73 @@ mod tests {
 
         let result = resolve_profile_with_config("my-task", "default", &root_config, &store);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Profile 'default' not found in config default")
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Profile 'default' not found in config default"));
+    }
+
+    #[test]
+    fn test_resolve_profile_with_config_with_include() {
+        // A config-default profile that includes another on-disk scope.
+        // The included scope MUST have its own context.json (asymmetry from
+        // review #1 is intentional and documented).
+        let temp = tempfile::tempdir().unwrap();
+        let store = temp.path().join(".cue");
+
+        // Create the included scope with its own context.json.
+        let other_dir = store.join("other-task");
+        let other_spec = other_dir.join("spec");
+        std::fs::create_dir_all(&other_spec).unwrap();
+        std::fs::write(other_spec.join("other.md"), "other content").unwrap();
+        std::fs::write(
+            other_dir.join("context.json"),
+            r#"{"default": {"artifacts": ["./spec/other.md"]}}"#,
+        )
+        .unwrap();
+
+        let mut root_config: ContextConfig = HashMap::new();
+        root_config.insert(
+            "default".to_string(),
+            ContextProfile {
+                artifacts: vec![],
+                include: vec!["@other-task".to_string()],
+                instructions: None,
+            },
         );
+
+        let paths =
+            resolve_profile_with_config("my-task", "default", &root_config, &store).unwrap();
+        assert_eq!(paths.len(), 1);
+        assert!(paths[0].to_str().unwrap().contains("other.md"));
+    }
+
+    #[test]
+    fn test_resolve_profile_with_config_with_glob() {
+        let temp = tempfile::tempdir().unwrap();
+        let store = temp.path().join(".cue");
+        let scope_dir = store.join("my-task");
+        let spec_dir = scope_dir.join("spec");
+        std::fs::create_dir_all(&spec_dir).unwrap();
+        std::fs::write(spec_dir.join("a.md"), "a").unwrap();
+        std::fs::write(spec_dir.join("b.md"), "b").unwrap();
+
+        let mut root_config: ContextConfig = HashMap::new();
+        root_config.insert(
+            "default".to_string(),
+            ContextProfile {
+                artifacts: vec!["./spec/*.md".to_string()],
+                include: vec![],
+                instructions: None,
+            },
+        );
+
+        let mut paths =
+            resolve_profile_with_config("my-task", "default", &root_config, &store).unwrap();
+        paths.sort();
+        assert_eq!(paths.len(), 2);
+        assert!(paths[0].to_str().unwrap().ends_with("a.md"));
+        assert!(paths[1].to_str().unwrap().ends_with("b.md"));
     }
 
     #[test]

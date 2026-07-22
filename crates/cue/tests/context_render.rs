@@ -108,6 +108,101 @@ fn test_context_render_uses_head_scope() -> anyhow::Result<()> {
     Ok(())
 }
 
+// -- config-default fallback tests -------------------------------------------
+
+/// render produces output when context.json is absent but config.context
+/// supplies the profile (review #11).
+#[test]
+fn test_context_render_uses_config_default_when_no_context_json() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    // Write a real artifact under the master scope directory.
+    let master_dir = env.root().join(".cue").join("master");
+    let spec_dir = master_dir.join("spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(spec_dir.join("index.md"), "hello from config default")?;
+
+    // No context.json — the profile lives in cue.json instead.
+    fs::write(
+        env.root().join("cue.json"),
+        r#"{"context": {"default": {"artifacts": ["./spec/index.md"]}}}"#,
+    )?;
+
+    env.command()
+        .arg("context")
+        .arg("render")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("no context.json"))
+        .stdout(predicate::str::contains("hello from config default"));
+
+    Ok(())
+}
+
+/// A config-default profile that includes an on-disk scope resolves that
+/// scope's artifacts correctly (review #12).
+#[test]
+fn test_context_render_config_default_with_include() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    // "master" scope has no context.json — profile comes from cue.json.
+    // The profile includes "@other-task".
+    let other_dir = env.root().join(".cue").join("other-task");
+    let other_spec = other_dir.join("spec");
+    fs::create_dir_all(&other_spec)?;
+    fs::write(other_spec.join("other.md"), "from included scope")?;
+    fs::write(
+        other_dir.join("context.json"),
+        r#"{"default": {"artifacts": ["./spec/other.md"]}}"#,
+    )?;
+
+    fs::write(
+        env.root().join("cue.json"),
+        r#"{"context": {"default": {"include": ["@other-task"], "artifacts": []}}}"#,
+    )?;
+
+    env.command()
+        .arg("context")
+        .arg("render")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("from included scope"));
+
+    Ok(())
+}
+
+/// A config-default profile with a glob pattern expands correctly
+/// (review #13).
+#[test]
+fn test_context_render_config_default_with_glob() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    let master_dir = env.root().join(".cue").join("master");
+    let spec_dir = master_dir.join("spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(spec_dir.join("a.md"), "file a")?;
+    fs::write(spec_dir.join("b.md"), "file b")?;
+
+    // No context.json; glob pattern comes from config default.
+    fs::write(
+        env.root().join("cue.json"),
+        r#"{"context": {"default": {"artifacts": ["./spec/*.md"]}}}"#,
+    )?;
+
+    env.command()
+        .arg("context")
+        .arg("render")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("file a"))
+        .stdout(predicate::str::contains("file b"));
+
+    Ok(())
+}
+
 /// When .cue/HEAD is absent, render falls back to the "master" scope,
 /// not the git branch name.
 #[test]
