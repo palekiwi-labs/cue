@@ -86,44 +86,17 @@ pub fn parse_artifact_path(
     Ok(full_path)
 }
 
-pub fn resolve_profile(
+/// Core resolution logic shared by `resolve_profile` and
+/// `resolve_profile_with_config`. Resolves the includes and artifacts of an
+/// already-loaded `profile`, appending to `accumulator` and deduplicating on
+/// return. `visited` must already contain the `(scope, profile_name)` key for
+/// the profile being resolved before this function is called.
+fn resolve_profile_body(
     scope: &str,
-    profile_name: &str,
+    profile: &ContextProfile,
     store_dir: &Path,
     visited: &mut HashSet<(String, String)>,
 ) -> anyhow::Result<Vec<PathBuf>> {
-    let key = (scope.to_string(), profile_name.to_string());
-    if visited.contains(&key) {
-        anyhow::bail!(
-            "Cycle detected in context profile includes: {}:{}",
-            scope,
-            profile_name
-        );
-    }
-    visited.insert(key.clone());
-
-    let config_path = context_json_path(store_dir, scope);
-    let config = match load_context_config(&config_path) {
-        Ok(c) => c,
-        Err(_) => {
-            eprintln!(
-                "Warning: Could not load context for scope {}, skipping",
-                scope
-            );
-            visited.remove(&key);
-            return Ok(Vec::new());
-        }
-    };
-
-    let profile = config.get(profile_name).ok_or_else(|| {
-        visited.remove(&key);
-        anyhow::anyhow!(
-            "Profile '{}' not found in {}",
-            profile_name,
-            config_path.display()
-        )
-    })?;
-
     let mut accumulator = Vec::new();
 
     for inc in &profile.include {
@@ -165,8 +138,6 @@ pub fn resolve_profile(
         }
     }
 
-    visited.remove(&key);
-
     // Deduplicate: first occurrence wins
     let mut final_paths = Vec::new();
     let mut seen = HashSet::new();
@@ -179,72 +150,73 @@ pub fn resolve_profile(
     Ok(final_paths)
 }
 
+pub fn resolve_profile(
+    scope: &str,
+    profile_name: &str,
+    store_dir: &Path,
+    visited: &mut HashSet<(String, String)>,
+) -> anyhow::Result<Vec<PathBuf>> {
+    let key = (scope.to_string(), profile_name.to_string());
+    if visited.contains(&key) {
+        anyhow::bail!(
+            "Cycle detected in context profile includes: {}:{}",
+            scope,
+            profile_name
+        );
+    }
+    visited.insert(key.clone());
+
+    let config_path = context_json_path(store_dir, scope);
+    let config = match load_context_config(&config_path) {
+        Ok(c) => c,
+        Err(_) => {
+            eprintln!(
+                "Warning: Could not load context for scope {}, skipping",
+                scope
+            );
+            visited.remove(&key);
+            return Ok(Vec::new());
+        }
+    };
+
+    let profile = config.get(profile_name).ok_or_else(|| {
+        visited.remove(&key);
+        anyhow::anyhow!(
+            "Profile '{}' not found in {}",
+            profile_name,
+            config_path.display()
+        )
+    })?;
+
+    let result = resolve_profile_body(scope, profile, store_dir, visited);
+    visited.remove(&key);
+    result
+}
+
 /// Like `resolve_profile` but uses an already-loaded `root_config` for the
 /// root scope instead of re-reading `context.json`. Includes within the root
 /// profile are still resolved via `resolve_profile` (which reads their own
 /// `context.json` files normally).
+///
+/// Note: the config fallback applies only to the root scope. If an included
+/// scope also lacks a `context.json`, `resolve_profile` will warn and return
+/// empty for that include rather than consulting `config_context`.
 pub fn resolve_profile_with_config(
     scope: &str,
     profile_name: &str,
     root_config: &ContextConfig,
     store_dir: &Path,
 ) -> anyhow::Result<Vec<PathBuf>> {
-    let profile = root_config.get(profile_name).ok_or_else(|| {
-        anyhow::anyhow!("Profile '{}' not found in config default", profile_name,)
-    })?;
+    let profile = root_config
+        .get(profile_name)
+        .ok_or_else(|| anyhow::anyhow!("Profile '{}' not found in config default", profile_name))?;
 
-    let mut accumulator = Vec::new();
+    // Seed visited with the root key so that a config-default profile whose
+    // include list references the root scope back is detected as a cycle.
     let mut visited = HashSet::new();
+    visited.insert((scope.to_string(), profile_name.to_string()));
 
-    for inc in &profile.include {
-        let (inc_scope, inc_profile) = if let Some(rest) = inc.strip_prefix('@') {
-            match rest.split_once(':') {
-                Some((s, p)) => (s.to_string(), p.to_string()),
-                None => (rest.to_string(), "default".to_string()),
-            }
-        } else {
-            match inc.split_once(':') {
-                Some((s, p)) => (s.to_string(), p.to_string()),
-                None => (inc.to_string(), "default".to_string()),
-            }
-        };
-
-        let inc_paths = resolve_profile(&inc_scope, &inc_profile, store_dir, &mut visited)?;
-        accumulator.extend(inc_paths);
-    }
-
-    for art in &profile.artifacts {
-        let path = parse_artifact_path(art, scope, store_dir)?;
-
-        if art.contains('*') || art.contains('?') || art.contains('[') {
-            let pattern = path.to_string_lossy();
-            match glob::glob(&pattern) {
-                Ok(entries) => {
-                    for p in entries.flatten() {
-                        if p.is_file() {
-                            accumulator.push(p);
-                        }
-                    }
-                }
-                Err(e) => {
-                    eprintln!("Warning: Invalid glob pattern '{}': {}", art, e);
-                }
-            }
-        } else {
-            accumulator.push(path);
-        }
-    }
-
-    // Deduplicate: first occurrence wins
-    let mut final_paths = Vec::new();
-    let mut seen = HashSet::new();
-    for path in accumulator {
-        if seen.insert(path.clone()) {
-            final_paths.push(path);
-        }
-    }
-
-    Ok(final_paths)
+    resolve_profile_body(scope, profile, store_dir, &mut visited)
 }
 
 pub fn gather_context(cwd: &Path, profile_name: Option<&str>) -> anyhow::Result<ResolvedContext> {
