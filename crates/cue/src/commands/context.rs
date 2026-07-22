@@ -1,6 +1,8 @@
 use crate::cli::ContextCommands;
 use crate::config::Config;
-use crate::context::{context_json_path, gather_context, init_context, load_context_config};
+use crate::context::{
+    ContextSource, context_json_path, gather_context, init_context, load_context_or_config,
+};
 use crate::git::get_git_root;
 use cuelib::store;
 use std::path::Path;
@@ -37,7 +39,10 @@ fn handle_show(cwd: &Path) -> anyhow::Result<()> {
     let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
     let config_path = context_json_path(&resolved.store_dir, &scope);
 
-    let context_config = load_context_config(&config_path)?;
+    let (context_config, source) = load_context_or_config(&config_path, &config.context)?;
+    if source == ContextSource::ConfigDefault {
+        eprintln!("(no context.json; showing config default)");
+    }
     println!("{}", serde_json::to_string_pretty(&context_config)?);
 
     Ok(())
@@ -51,8 +56,11 @@ fn handle_profiles(cwd: &Path) -> anyhow::Result<()> {
     let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
     let config_path = context_json_path(&resolved.store_dir, &scope);
 
-    let config = load_context_config(&config_path)?;
-    let mut names: Vec<_> = config.keys().collect();
+    let (context_config, source) = load_context_or_config(&config_path, &config.context)?;
+    if source == ContextSource::ConfigDefault {
+        eprintln!("(no context.json; showing config default)");
+    }
+    let mut names: Vec<_> = context_config.keys().collect();
     names.sort();
 
     for name in names {
@@ -67,7 +75,10 @@ fn handle_render(cwd: &Path, profile: Option<String>) -> anyhow::Result<()> {
     let config = Config::load(&git_root)?;
     let cue_dir = git_root.join(&config.dir_name);
     let resolved_store = store::resolve_store(cue_dir)?;
-    let resolved = gather_context(cwd, profile.as_deref())?;
+    let (resolved, source) = gather_context(cwd, profile.as_deref())?;
+    if source == ContextSource::ConfigDefault {
+        eprintln!("(no context.json; using config default)");
+    }
 
     for artifact in resolved.artifacts {
         let relative_path = artifact
