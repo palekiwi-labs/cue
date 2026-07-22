@@ -30,17 +30,13 @@ pub fn handle(cwd: &Path, opts: ListOptions) -> Result<()> {
     // 6. Output
     if !json_output {
         for (path, _) in filtered {
-            let rel_path = path
-                .strip_prefix(&resolved.store_dir)
-                .or_else(|_| path.strip_prefix(&root))
-                .unwrap_or(&path);
-            println!("{}", rel_path.display());
+            println!("{}", path.display());
         }
     } else {
         let cue_files: Vec<list::CueFile> = filtered
             .into_iter()
             .filter_map(|(path, cached_fm)| {
-                let mut mf = list::to_cue_file(&path, &resolved.store_dir, &root)?;
+                let mut mf = list::to_cue_file(&path, &resolved.store_dir)?;
                 if include_frontmatter {
                     mf.frontmatter =
                         cached_fm.and_then(|v| if v.is_null() { None } else { Some(v) });
