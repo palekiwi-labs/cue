@@ -40,11 +40,11 @@ fn setup_proxy(env: &helpers::TestEnv, worktree: &Path, real_store: &Path, task:
 }
 
 // ---------------------------------------------------------------------------
-// cue list --json: paths must be store-relative (no absolute host prefix)
+// cue list --json: paths must be absolute
 // ---------------------------------------------------------------------------
 
 #[test]
-fn list_json_in_proxy_emits_store_relative_paths() -> anyhow::Result<()> {
+fn list_json_in_proxy_emits_absolute_paths() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     let real_store = make_real_store_with_artifact(env.root());
 
@@ -69,14 +69,10 @@ fn list_json_in_proxy_emits_store_relative_paths() -> anyhow::Result<()> {
     assert!(!artifacts.is_empty(), "expected at least one artifact");
     for entry in artifacts {
         let path = entry["path"].as_str().expect("path field must be a string");
+        assert!(path.starts_with('/'), "path must be absolute, got: {path}");
         assert!(
-            !path.starts_with('/'),
-            "path must be store-relative, got: {path}"
-        );
-        // Must begin with the scope slug (master in this case).
-        assert!(
-            path.starts_with("master/"),
-            "path must start with scope slug, got: {path}"
+            path.contains("master/"),
+            "path must contain scope slug, got: {path}"
         );
     }
 
@@ -84,11 +80,11 @@ fn list_json_in_proxy_emits_store_relative_paths() -> anyhow::Result<()> {
 }
 
 // ---------------------------------------------------------------------------
-// cue list (human output): paths must be store-relative
+// cue list (human output): paths must be absolute
 // ---------------------------------------------------------------------------
 
 #[test]
-fn list_human_in_proxy_emits_store_relative_paths() -> anyhow::Result<()> {
+fn list_human_in_proxy_emits_absolute_paths() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     let real_store = make_real_store_with_artifact(env.root());
 
@@ -108,13 +104,10 @@ fn list_human_in_proxy_emits_store_relative_paths() -> anyhow::Result<()> {
 
     let text = String::from_utf8(output)?;
     for line in text.lines() {
+        assert!(line.starts_with('/'), "path must be absolute, got: {line}");
         assert!(
-            !line.starts_with('/'),
-            "path must be store-relative, got: {line}"
-        );
-        assert!(
-            line.starts_with("master/"),
-            "path must start with scope slug, got: {line}"
+            line.contains("master/"),
+            "path must contain scope slug, got: {line}"
         );
     }
 

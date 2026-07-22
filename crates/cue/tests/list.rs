@@ -279,8 +279,16 @@ fn test_list_from_subdirectory() -> anyhow::Result<()> {
             .stdout
             .clone(),
     )?;
-    // Path should be relative to the store dir, NOT to the subdirectory
-    assert_eq!(output.trim(), "master/spec/index.md");
+    // Path should be absolute and contain the store-relative suffix
+    let trimmed = output.trim();
+    assert!(
+        trimmed.starts_with('/'),
+        "expected absolute path, got: {trimmed}"
+    );
+    assert!(
+        trimmed.ends_with("master/spec/index.md"),
+        "expected path ending with master/spec/index.md, got: {trimmed}"
+    );
 
     Ok(())
 }

@@ -241,7 +241,7 @@ pub fn is_valid_cue_file(
     true
 }
 
-pub fn to_cue_file(path: &Path, cue_path: &Path, root: &Path) -> Option<CueFile> {
+pub fn to_cue_file(path: &Path, cue_path: &Path) -> Option<CueFile> {
     let rel_to_mem = path.strip_prefix(cue_path).ok()?;
     let mut components = rel_to_mem.components();
 
@@ -256,12 +256,7 @@ pub fn to_cue_file(path: &Path, cue_path: &Path, root: &Path) -> Option<CueFile>
         .to_string_lossy()
         .into_owned();
 
-    let rel_path = path
-        .strip_prefix(cue_path)
-        .or_else(|_| path.strip_prefix(root))
-        .unwrap_or(path)
-        .to_string_lossy()
-        .to_string();
+    let rel_path = path.to_string_lossy().to_string();
 
     let mut cue_file = CueFile {
         path: rel_path,
