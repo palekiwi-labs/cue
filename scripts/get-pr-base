@@ -1,0 +1,57 @@
+#!/usr/bin/env bash
+# Fast offline reader for target base branch (<5ms).
+#
+# Resolution hierarchy:
+#   1. Local Git config: branch.<current-branch>.base
+#   2. Local origin/HEAD: git symbolic-ref refs/remotes/origin/HEAD
+#   3. Local branch discovery: main, then master
+#   4. Fallback: "master"
+
+set -euo pipefail
+
+if ! command -v git >/dev/null 2>&1; then
+  echo "master"
+  exit 0
+fi
+
+# Use supplied branch argument or resolve current branch.
+branch="${1:-}"
+if [ -z "$branch" ]; then
+  branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+fi
+
+# Step 1: Check Git config for the branch
+if [ -n "$branch" ]; then
+  base=$(git config "branch.${branch}.base" 2>/dev/null || true)
+  if [ -n "$base" ]; then
+    echo "$base"
+    exit 0
+  fi
+fi
+
+# Step 2: Check standard remote HEAD
+remote_head=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+if [ -n "$remote_head" ]; then
+  base="${remote_head#origin/}"
+  if [ -n "$base" ]; then
+    echo "$base"
+    exit 0
+  fi
+fi
+
+# Step 3: Fallback heuristics based on existing refs
+if git show-ref --quiet --verify refs/heads/main 2>/dev/null || \
+   git show-ref --quiet --verify refs/remotes/origin/main 2>/dev/null; then
+  echo "main"
+  exit 0
+fi
+
+if git show-ref --quiet --verify refs/heads/master 2>/dev/null || \
+   git show-ref --quiet --verify refs/remotes/origin/master 2>/dev/null; then
+  echo "master"
+  exit 0
+fi
+
+# Default fallback
+echo "master"
+exit 0

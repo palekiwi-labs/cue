@@ -113,6 +113,49 @@
         #   nix run <cue-flake>#acuity-schema-codegen -- src/
         packages.acuity-schema-codegen = acuity-schema-codegen;
 
+        # `git-pr-sync` synchronizes PR metadata to local Git config.
+        packages.git-pr-sync = pkgs.stdenv.mkDerivation {
+          pname = "git-pr-sync";
+          version = common.version;
+          src = ./scripts;
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          installPhase = ''
+            mkdir -p $out/bin
+            install -m 755 git-pr-sync $out/bin/git-pr-sync
+            wrapProgram $out/bin/git-pr-sync \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git pkgs.gh pkgs.jq pkgs.coreutils ]}
+          '';
+          meta = with pkgs.lib; {
+            description = "Synchronize GitHub PR metadata into native Git config";
+            mainProgram = "git-pr-sync";
+            license = licenses.mit;
+          };
+        };
+
+        # `git-scripts` provides git-pr-sync and reader utilities (get-pr-base, get-pr-number).
+        packages.git-scripts = pkgs.stdenv.mkDerivation {
+          pname = "git-scripts";
+          version = common.version;
+          src = ./scripts;
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          installPhase = ''
+            mkdir -p $out/bin
+            install -m 755 git-pr-sync $out/bin/git-pr-sync
+            install -m 755 get-pr-base $out/bin/get-pr-base
+            install -m 755 get-pr-number $out/bin/get-pr-number
+            wrapProgram $out/bin/git-pr-sync \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git pkgs.gh pkgs.jq pkgs.coreutils ]}
+            wrapProgram $out/bin/get-pr-base \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git pkgs.coreutils ]}
+            wrapProgram $out/bin/get-pr-number \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git pkgs.coreutils ]}
+          '';
+          meta = with pkgs.lib; {
+            description = "Git PR metadata sync and reader utilities";
+            license = licenses.mit;
+          };
+        };
+
         # --- checks -----------------------------------------------------
 
         # Full workspace test suite via nextest. Run with:

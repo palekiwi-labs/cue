@@ -70,8 +70,8 @@ independent today; Phase 6 will wire live `acuity` data into `curator`.
 
 ## Install (Nix)
 
-A Nix flake is provided. `cue` is the default package; `curator` and `acuity`
-are available as additional flake outputs.
+A Nix flake is provided. `cue` is the default package; `curator`, `acuity`,
+and `git-pr-sync` (plus `git-scripts`) are available as additional flake outputs.
 
 Run without installing:
 
@@ -79,6 +79,7 @@ Run without installing:
 nix run github:palekiwi-labs/cue             # cue (default)
 nix run github:palekiwi-labs/cue#curator
 nix run github:palekiwi-labs/cue#acuity
+nix run github:palekiwi-labs/cue#git-pr-sync
 ```
 
 Install to your user profile:
@@ -87,6 +88,7 @@ Install to your user profile:
 nix profile add github:palekiwi-labs/cue             # cue (default)
 nix profile add github:palekiwi-labs/cue#curator
 nix profile add github:palekiwi-labs/cue#acuity
+nix profile add github:palekiwi-labs/cue#git-scripts
 ```
 
 Or consume the flake from a system configuration — `acuity` ships a
@@ -94,6 +96,37 @@ Or consume the flake from a system configuration — `acuity` ships a
 [docs/acuity.md](docs/acuity.md)).
 
 A dev shell is available via `nix develop` (or `direnv allow`).
+
+## Git PR Metadata Protocol
+
+Agent harnesses and tooling frequently require branch target and PR metadata
+(e.g., base branch, PR number, upstream status) for diff computation, prompt
+context injection, and review generation without making network requests on
+the hot path.
+
+This repository defines an open storage contract in local repository Git config:
+
+- `branch.<branch>.base`: Target base branch (e.g. `master`, `main`).
+- `branch.<branch>.pr`: PR number (e.g. `123`).
+- `branch.<branch>.ahead`: Set to `"true"` if upstream base has commits not
+  merged into current HEAD; unset otherwise.
+
+Because configuration is stored in `.git/config`, metadata is natively shared
+across all Git worktrees and retained across branch checkouts.
+
+### Reference Scripts (`scripts/`)
+
+Portable reference scripts are provided under `scripts/`:
+
+- `git-pr-sync`: Writer script that syncs GitHub PR metadata via `gh` CLI.
+  Designed for `post-checkout` / `post-merge` hooks; preserves cached state on
+  network or authentication failures, and safely exits with code 0.
+- `get-pr-base`: Pure offline reader (<5ms) resolving base branch via Git
+  config (`branch.<branch>.base`), `origin/HEAD`, and local ref heuristics.
+- `get-pr-number`: Pure offline reader (<5ms) returning `branch.<branch>.pr`.
+
+Custom forge integrators (GitLab, Gitea, Bitbucket) can provide their own sync
+scripts populating the standard `branch.<name>.*` keys.
 
 ## Docs
 

@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+# Synchronize GitHub PR metadata into native Git config (branch.<name>.*).
+#
+# Storage contract:
+#   branch.<name>.base  - Target base branch name (e.g., master, main)
+#   branch.<name>.pr    - Pull request number (e.g., 123)
+#   branch.<name>.ahead - "true" if origin/<base> has commits not merged into HEAD
+#
+# Exit code is always 0 to ensure post-checkout/post-merge hook safety.
+
+set -u
+
+# Ensure required commands are available; silently exit 0 if missing.
+if ! command -v git >/dev/null 2>&1; then
+  exit 0
+fi
+
+# Ensure we are inside a Git working tree.
+if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+  exit 0
+fi
+
+# Resolve current branch name. Exit 0 if detached HEAD.
+branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+if [ -z "$branch" ]; then
+  exit 0
+fi
+
+# Check for gh and jq; exit 0 safely if not installed.
+if ! command -v gh >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+  exit 0
+fi
+
+# Query GitHub CLI for PR metadata.
+err_file=$(mktemp)
+trap 'rm -f "$err_file"' EXIT
+
+json_out=$(gh pr view --json number,baseRefName 2>"$err_file")
+gh_status=$?
+err_text=$(cat "$err_file" 2>/dev/null || true)
+
+if [ "$gh_status" -eq 0 ] && [ -n "$json_out" ] && [ "$json_out" != "null" ]; then
+  # Case 1: Authenticated & PR Found
+  pr_number=$(printf '%s\n' "$json_out" | jq -r '.number // empty' 2>/dev/null || true)
+  base_branch=$(printf '%s\n' "$json_out" | jq -r '.baseRefName // empty' 2>/dev/null || true)
+
+  if [ -n "$pr_number" ] && [ -n "$base_branch" ]; then
+    git config "branch.${branch}.base" "$base_branch"
+    git config "branch.${branch}.pr" "$pr_number"
+
+    # Best-effort fetch of the upstream base branch
+    git fetch origin "$base_branch" --quiet 2>/dev/null || true
+
+    # Check if origin/<base_branch> is ahead of our merge base
+    origin_ref="origin/$base_branch"
+    if git rev-parse --verify "$origin_ref" >/dev/null 2>&1; then
+      merge_base=$(git merge-base HEAD "$origin_ref" 2>/dev/null || true)
+      origin_rev=$(git rev-parse "$origin_ref" 2>/dev/null || true)
+
+      if [ -n "$origin_rev" ] && [ -n "$merge_base" ] && [ "$origin_rev" != "$merge_base" ]; then
+        git config "branch.${branch}.ahead" "true"
+        printf "\033[33mBase branch '%s' has new commits\033[0m\n" "$base_branch" >&2
+      else
+        git config --unset "branch.${branch}.ahead" 2>/dev/null || true
+      fi
+    else
+      git config --unset "branch.${branch}.ahead" 2>/dev/null || true
+    fi
+
+    printf "\033[32mUpdated PR info: #%s (base: %s)\033[0m\n" "$pr_number" "$base_branch" >&2
+  fi
+else
+  # Inspect error to distinguish definitely no PR vs auth/network failures
+  if printf '%s\n' "$err_text" | grep -qiE "no (open )?pull requests? found|could not resolve to a PullRequest"; then
+    # Case 2: Authenticated & Definitely No PR
+    git config --unset "branch.${branch}.base" 2>/dev/null || true
+    git config --unset "branch.${branch}.pr" 2>/dev/null || true
+    git config --unset "branch.${branch}.ahead" 2>/dev/null || true
+    printf "\033[32mCleared PR info (not on a PR branch)\033[0m\n" >&2
+  else
+    # Case 3 & 4: Auth Missing / Token Expired / Network Offline / Rate-Limit
+    # Preserve existing cached configuration keys.
+    :
+  fi
+fi
+
+# Case 5: Hook Safety
+exit 0
