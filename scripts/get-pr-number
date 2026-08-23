@@ -1,0 +1,28 @@
+#!/usr/bin/env bash
+# Fast offline reader for GitHub PR number (<5ms).
+#
+# Returns the configured PR number for the branch (or exits 1 if not set).
+
+set -euo pipefail
+
+if ! command -v git >/dev/null 2>&1; then
+  exit 1
+fi
+
+# Use supplied branch argument or resolve current branch.
+branch="${1:-}"
+if [ -z "$branch" ]; then
+  branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
+fi
+
+if [ -z "$branch" ]; then
+  exit 1
+fi
+
+pr_number=$(git config "branch.${branch}.pr" 2>/dev/null || true)
+if [ -n "$pr_number" ]; then
+  echo "$pr_number"
+  exit 0
+else
+  exit 1
+fi
