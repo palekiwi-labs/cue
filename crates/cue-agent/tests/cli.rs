@@ -70,3 +70,91 @@ fn missing_spec_file_exits_2() {
         .stdout("")
         .stderr(predicates::str::contains("/nonexistent/spec.json"));
 }
+
+#[test]
+fn task_slug_with_separator_exits_2() {
+    cmd()
+        .args(["run", "--task", "a/b", r#"[{"prompt": "x"}]"#])
+        .assert()
+        .failure()
+        .code(2)
+        .stdout("")
+        .stderr(predicates::str::contains("--task"));
+}
+
+#[test]
+fn task_slug_traversal_exits_2() {
+    cmd()
+        .args(["run", "--task", "..", r#"[{"prompt": "x"}]"#])
+        .assert()
+        .failure()
+        .code(2)
+        .stdout("");
+}
+
+#[test]
+fn valid_task_slug_is_accepted() {
+    cmd()
+        .args(["run", "--task", "cue-agent", r#"[{"prompt": "x"}]"#])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
+fn negative_concurrency_exits_2() {
+    cmd()
+        .args(["run", "--concurrency", "-1", r#"[{"prompt": "x"}]"#])
+        .assert()
+        .failure()
+        .code(2)
+        .stdout("");
+}
+
+#[test]
+fn zero_concurrency_means_unbounded_and_is_accepted() {
+    cmd()
+        .args(["run", "--concurrency", "0", r#"[{"prompt": "x"}]"#])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
+fn positive_concurrency_is_accepted() {
+    cmd()
+        .args(["run", "--concurrency", "4", r#"[{"prompt": "x"}]"#])
+        .assert()
+        .success()
+        .stdout("");
+}
+
+#[test]
+fn batch_timeout_zero_exits_2() {
+    cmd()
+        .args(["run", "--timeout", "0", r#"[{"prompt": "x"}]"#])
+        .assert()
+        .failure()
+        .code(2)
+        .stdout("")
+        .stderr(predicates::str::contains("--timeout"));
+}
+
+#[test]
+fn batch_timeout_negative_exits_2() {
+    cmd()
+        .args(["run", "--timeout", "-5", r#"[{"prompt": "x"}]"#])
+        .assert()
+        .failure()
+        .code(2)
+        .stdout("");
+}
+
+#[test]
+fn batch_timeout_positive_is_accepted() {
+    cmd()
+        .args(["run", "--timeout", "600", r#"[{"prompt": "x"}]"#])
+        .assert()
+        .success()
+        .stdout("");
+}

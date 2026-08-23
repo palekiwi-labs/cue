@@ -1,6 +1,6 @@
 use clap::{Parser, Subcommand};
 use std::io::Read;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 #[derive(Parser)]
 #[command(
@@ -24,6 +24,19 @@ enum Commands {
         /// Read the JSON spec from a file
         #[arg(long = "spec-file", value_name = "PATH")]
         spec_file: Option<PathBuf>,
+
+        /// cue context receiving artifacts (default: active context
+        /// from .cue/HEAD, else master)
+        #[arg(long = "task", value_name = "SLUG")]
+        task: Option<String>,
+
+        /// Maximum number of simultaneous children (0 = unbounded)
+        #[arg(long = "concurrency", value_name = "N", default_value = "0")]
+        concurrency: u64,
+
+        /// Overall wall-clock cap for the whole batch, in seconds
+        #[arg(long = "timeout", value_name = "SECS")]
+        timeout: Option<u64>,
     },
 }
 
@@ -35,11 +48,26 @@ fn die(msg: impl std::fmt::Display) -> ! {
 
 fn main() {
     let cli = Cli::parse();
-    let Commands::Run { spec, spec_file } = cli.command;
+    let Commands::Run {
+        spec,
+        spec_file,
+        task,
+        concurrency: _concurrency,
+        timeout,
+    } = cli.command;
 
-    let _spec_json: String = match (spec, spec_file) {
+    if let Some(slug) = &task
+        && let Err(e) = cuelib::head::validate_slug(slug)
+    {
+        die(format!("--task: {e}"));
+    }
+    if timeout == Some(0) {
+        die("--timeout must be greater than zero");
+    }
+
+    let (spec_json, base_dir) = match (spec, spec_file) {
         (Some(json), None) => {
-            if json == "-" {
+            let json = if json == "-" {
                 let mut buf = String::new();
                 std::io::stdin()
                     .read_to_string(&mut buf)
@@ -47,10 +75,22 @@ fn main() {
                 buf
             } else {
                 json
-            }
+            };
+            let cwd = std::env::current_dir()
+                .unwrap_or_else(|e| die(format!("failed to resolve current directory: {e}")));
+            (json, cwd)
         }
-        (None, Some(path)) => std::fs::read_to_string(&path)
-            .unwrap_or_else(|e| die(format!("failed to read spec file {}: {e}", path.display()))),
+        (None, Some(path)) => {
+            let json = std::fs::read_to_string(&path).unwrap_or_else(|e| {
+                die(format!("failed to read spec file {}: {e}", path.display()))
+            });
+            let base = path
+                .parent()
+                .filter(|p| !p.as_os_str().is_empty())
+                .map(Path::to_path_buf)
+                .unwrap_or_else(|| Path::new(".").to_path_buf());
+            (json, base)
+        }
         (None, None) => {
             die("no spec provided: pass a JSON string, --spec-file PATH, or '-' for stdin")
         }
@@ -58,4 +98,6 @@ fn main() {
             die("conflicting spec inputs: pass only one of JSON string, --spec-file, or '-'")
         }
     };
+
+    let _specs = cue_agent::spec::load_spec(&spec_json, &base_dir).unwrap_or_else(|e| die(e));
 }
