@@ -723,6 +723,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "cue-agent"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "clap",
+ "cuelib",
+ "predicates",
+ "serde",
+ "serde_json",
+ "tempfile",
+]
+
+[[package]]
 name = "cuelib"
 version = "0.1.0"
 dependencies = [
