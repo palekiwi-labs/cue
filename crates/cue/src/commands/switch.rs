@@ -24,8 +24,6 @@ pub fn handle(cwd: &Path, target: Option<String>, json: bool) -> Result<()> {
 
     let slug = match target {
         None => {
-            // Restore: switch to the task associated with the current
-            // branch (branch.<name>.cue-task).
             let branch = branch
                 .as_ref()
                 .context("detached HEAD: no branch task association to restore")?;
@@ -54,11 +52,8 @@ pub fn handle(cwd: &Path, target: Option<String>, json: bool) -> Result<()> {
         })?;
     }
 
-    // Mirror the association into git config (branch.<name>.cue-task) so
-    // checkouts can restore the context. "master" is the clear surface: the
-    // global context is never associated with a branch. Best-effort: the
-    // HEAD switch above is the primary action, so a failed write (detached
-    // HEAD, stale config lock, read-only .git) only warns.
+    // Best-effort association write so future checkouts can restore the
+    // context; the HEAD switch above is the primary action.
     if let Some(branch) = &branch {
         let result = if slug == "master" {
             git::clear_branch_task(&root, branch)

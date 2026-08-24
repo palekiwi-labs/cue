@@ -4,18 +4,6 @@ use helpers::TestEnv;
 use predicates::prelude::*;
 use std::process::Command;
 
-// ---------------------------------------------------------------------------
-// Branch-to-task association (branch.<name>.cue-task) owned by `cue switch`.
-//
-// Contract:
-//   cue switch <slug>   switches, then best-effort writes the association.
-//                       slug "master" clears it. Detached HEAD skips it.
-//                       Write failure warns on stderr, never fails the switch.
-//   cue switch          restores the associated task for the current branch.
-//                       Errors when nothing is associated or HEAD is detached.
-// ---------------------------------------------------------------------------
-
-/// Run git in the test repo, asserting success.
 fn git(env: &TestEnv, args: &[&str]) {
     let out = Command::new("git")
         .args(args)
@@ -30,7 +18,6 @@ fn git(env: &TestEnv, args: &[&str]) {
     );
 }
 
-/// Read branch.<branch>.cue-task from the test repo's local git config.
 fn branch_task(env: &TestEnv, branch: &str) -> Option<String> {
     let out = Command::new("git")
         .args([
@@ -49,7 +36,6 @@ fn branch_task(env: &TestEnv, branch: &str) -> Option<String> {
     }
 }
 
-/// Isolated cue store in a git repo, checked out on `branch`.
 fn setup_on_branch(branch: &str) -> TestEnv {
     let env = TestEnv::new();
     helpers::setup_git_repo(env.root());
@@ -60,7 +46,6 @@ fn setup_on_branch(branch: &str) -> TestEnv {
     env
 }
 
-/// Fully configured `cue` command bound to this env's store.
 fn cue(env: &TestEnv) -> assert_cmd::Command {
     let mut cmd = env.command();
     cmd.env("CUE_BRANCH_NAME", "test-mem")
@@ -114,8 +99,7 @@ fn switch_no_args_restores_associated_task() -> anyhow::Result<()> {
     let env = setup_on_branch("feat/auth");
 
     cue(&env).arg("switch").arg("auth-login").assert().success();
-    // The association lives in git config, so it survives checkouts away
-    // and back (this is the post-checkout hook's restore path).
+    // The association lives in git config, surviving checkouts away and back.
     git(&env, &["checkout", "main"]);
     git(&env, &["checkout", "feat/auth"]);
 
@@ -165,7 +149,6 @@ fn switch_on_detached_head_skips_association() -> anyhow::Result<()> {
     let env = setup_on_branch("feat/auth");
     git(&env, &["checkout", "--detach"]);
 
-    // The switch itself must succeed even though no branch can be associated.
     cue(&env)
         .arg("switch")
         .arg("auth-login")
@@ -201,7 +184,6 @@ fn dotted_branch_name_round_trips() -> anyhow::Result<()> {
         "switching to master must clear the dotted-branch association"
     );
 
-    // Re-associate, then restore through the no-arg path.
     cue(&env)
         .arg("switch")
         .arg("release-polish")
