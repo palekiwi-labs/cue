@@ -22,7 +22,7 @@ pub fn handle(cwd: &Path, target: Option<String>, json: bool) -> Result<()> {
 
     let branch = git::current_branch(&root);
 
-    let slug = match target {
+    let slug = match target.as_deref() {
         None => {
             let branch = branch
                 .as_ref()
@@ -30,7 +30,7 @@ pub fn handle(cwd: &Path, target: Option<String>, json: bool) -> Result<()> {
             git::get_branch_task(&root, branch)
                 .with_context(|| format!("no task associated with branch '{}'", branch))?
         }
-        Some(t) => resolve_slug_from_target(&t),
+        Some(t) => resolve_slug_from_target(t),
     };
 
     if slug.trim().is_empty() {
@@ -53,8 +53,9 @@ pub fn handle(cwd: &Path, target: Option<String>, json: bool) -> Result<()> {
     }
 
     // Best-effort association write so future checkouts can restore the
-    // context; the HEAD switch above is the primary action.
-    if let Some(branch) = &branch {
+    // context; the HEAD switch above is the primary action. Restore mode
+    // reads the association and never rewrites it.
+    if let (Some(branch), Some(_)) = (&branch, &target) {
         let result = if slug == "master" {
             git::clear_branch_task(&root, branch)
         } else {

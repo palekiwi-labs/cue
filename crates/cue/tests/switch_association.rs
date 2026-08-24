@@ -126,6 +126,9 @@ fn switch_no_args_restores_associated_task() -> anyhow::Result<()> {
     git(&env, &["checkout", "main"]);
     git(&env, &["checkout", "feat/auth"]);
 
+    // Simulate a stale HEAD so the restore assertion carries weight.
+    std::fs::write(env.root().join(".test-mem/HEAD"), "master")?;
+
     cue(&env)
         .arg("switch")
         .assert()
@@ -134,6 +137,25 @@ fn switch_no_args_restores_associated_task() -> anyhow::Result<()> {
 
     let head = std::fs::read_to_string(env.root().join(".test-mem/HEAD"))?;
     assert_eq!(head.trim(), "auth-login");
+
+    Ok(())
+}
+
+#[test]
+fn switch_no_args_does_not_rewrite_association() -> anyhow::Result<()> {
+    let env = setup_on_branch("feat/auth");
+    cue(&env).arg("switch").arg("auth-login").assert().success();
+
+    // Restore must be read-only towards git config: the association
+    // already exists, so even a locked config cannot produce a warning.
+    std::fs::write(env.root().join(".git/config.lock"), b"stale")?;
+
+    cue(&env)
+        .arg("switch")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff("switched to task: auth-login\n"))
+        .stderr(predicate::str::contains("warning:").not());
 
     Ok(())
 }
