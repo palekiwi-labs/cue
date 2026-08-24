@@ -32,9 +32,6 @@ pub enum Commands {
     Switch {
         /// Task slug or path to a task card file
         target: Option<String>,
-        /// Resolve a task whose branch: list contains this branch name
-        #[arg(long = "branch")]
-        branch: Option<String>,
         /// Output structured JSON instead of human-readable text
         #[arg(long)]
         json: bool,
