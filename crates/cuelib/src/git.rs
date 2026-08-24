@@ -147,13 +147,18 @@ pub fn set_branch_task(root: &Path, branch: &str, slug: &str) -> anyhow::Result<
     run_git(["config", "--local", &branch_task_key(branch), slug], root).map(|_| ())
 }
 
-/// Idempotent: an absent key counts as success.
+/// Idempotent: an absent key counts as success, real write failures
+/// propagate. `--unset-all` so multi-valued keys clear too (`--unset`
+/// refuses them without removing anything).
 pub fn clear_branch_task(root: &Path, branch: &str) -> anyhow::Result<()> {
-    let _ = run_git(
-        ["config", "--local", "--unset", &branch_task_key(branch)],
+    if get_branch_task(root, branch).is_none() {
+        return Ok(());
+    }
+    run_git(
+        ["config", "--local", "--unset-all", &branch_task_key(branch)],
         root,
-    );
-    Ok(())
+    )
+    .map(|_| ())
 }
 
 pub fn get_short_head_hash(cwd: &Path) -> anyhow::Result<String> {

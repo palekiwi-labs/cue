@@ -222,6 +222,26 @@ fn dotted_branch_name_round_trips() -> anyhow::Result<()> {
 }
 
 #[test]
+fn association_clear_failure_warns_but_switch_succeeds() -> anyhow::Result<()> {
+    let env = setup_on_branch("feat/auth");
+    cue(&env).arg("switch").arg("auth-login").assert().success();
+    assert!(branch_task(&env, "feat/auth").is_some());
+
+    // A stale config lock makes every `git config` write fail.
+    std::fs::write(env.root().join(".git/config.lock"), b"stale")?;
+
+    cue(&env)
+        .arg("switch")
+        .arg("master")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff("switched to global context\n"))
+        .stderr(predicate::str::contains("warning:"));
+
+    Ok(())
+}
+
+#[test]
 fn association_write_failure_warns_but_switch_succeeds() -> anyhow::Result<()> {
     let env = setup_on_branch("feat/auth");
 
