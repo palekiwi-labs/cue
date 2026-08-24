@@ -122,6 +122,53 @@ pub fn get_current_branch(cwd: &Path) -> anyhow::Result<String> {
     run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
 }
 
+/// Current branch name, or `None` when HEAD is detached or git is
+/// unavailable. (`rev-parse --abbrev-ref HEAD` prints "HEAD" when
+/// detached, so that case is normalized away here.)
+pub fn current_branch(cwd: &Path) -> Option<String> {
+    match get_current_branch(cwd) {
+        Ok(branch) if branch != "HEAD" => Some(branch),
+        _ => None,
+    }
+}
+
+/// Git config key associating a branch with a cue task slug.
+/// Dotted branch names are fine: git treats everything between the
+/// section and the final dot as an opaque subsection.
+pub fn branch_task_key(branch: &str) -> String {
+    format!("branch.{}.cue-task", branch)
+}
+
+/// Read the cue task slug associated with `branch`, if any.
+pub fn get_branch_task(root: &Path, branch: &str) -> Option<String> {
+    let value = run_git(
+        ["config", "--local", "--get", &branch_task_key(branch)],
+        root,
+    )
+    .ok()?;
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+/// Associate `branch` with a cue task slug.
+pub fn set_branch_task(root: &Path, branch: &str, slug: &str) -> anyhow::Result<()> {
+    run_git(["config", "--local", &branch_task_key(branch), slug], root).map(|_| ())
+}
+
+/// Clear the branch's cue task association. Idempotent: an absent key
+/// counts as success.
+pub fn clear_branch_task(root: &Path, branch: &str) -> anyhow::Result<()> {
+    let _ = run_git(
+        ["config", "--local", "--unset", &branch_task_key(branch)],
+        root,
+    );
+    Ok(())
+}
+
 pub fn get_short_head_hash(cwd: &Path) -> anyhow::Result<String> {
     run_git(["rev-parse", "--short", "HEAD"], cwd)
 }

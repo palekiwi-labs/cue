@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use cuelib::head;
 use cuelib::store;
 use serde_json::json;
@@ -20,8 +20,18 @@ pub fn handle(cwd: &Path, target: Option<String>, json: bool) -> Result<()> {
         );
     }
 
+    let branch = git::current_branch(&root);
+
     let slug = match target {
-        None => bail!("Provide a task slug or a task card path"),
+        None => {
+            // Restore: switch to the task associated with the current
+            // branch (branch.<name>.cue-task).
+            let branch = branch
+                .as_ref()
+                .context("detached HEAD: no branch task association to restore")?;
+            git::get_branch_task(&root, branch)
+                .with_context(|| format!("no task associated with branch '{}'", branch))?
+        }
         Some(t) => resolve_slug_from_target(&t),
     };
 
@@ -42,6 +52,28 @@ pub fn handle(cwd: &Path, target: Option<String>, json: bool) -> Result<()> {
         fs::create_dir_all(&task_dir).with_context(|| {
             format!("Failed to create context directory: {}", task_dir.display())
         })?;
+    }
+
+    // Mirror the association into git config (branch.<name>.cue-task) so
+    // checkouts can restore the context. "master" is the clear surface: the
+    // global context is never associated with a branch. Best-effort: the
+    // HEAD switch above is the primary action, so a failed write (detached
+    // HEAD, stale config lock, read-only .git) only warns.
+    if let Some(branch) = &branch {
+        let result = if slug == "master" {
+            git::clear_branch_task(&root, branch)
+        } else {
+            git::set_branch_task(&root, branch, &slug)
+        };
+        if let Err(err) = result {
+            eprintln!(
+                "warning: failed to update task association for branch '{}': {}",
+                branch, err
+            );
+        }
+    }
+
+    if slug != "master" {
         if json {
             let out = json!({
                 "context": slug,
