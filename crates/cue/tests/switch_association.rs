@@ -73,6 +73,29 @@ fn switch_on_branch_writes_association() -> anyhow::Result<()> {
 }
 
 #[test]
+fn switch_on_unborn_branch_writes_association() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    // init only: HEAD points at an unborn branch with no commits yet.
+    git(&env, &["init", "-b", "main"]);
+    cue(&env).arg("init").assert().success();
+
+    cue(&env)
+        .arg("switch")
+        .arg("auth-login")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff("switched to task: auth-login\n"));
+
+    assert_eq!(
+        branch_task(&env, "main").as_deref(),
+        Some("auth-login"),
+        "an unborn branch still has a name the association can target"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn switch_to_master_clears_association() -> anyhow::Result<()> {
     let env = setup_on_branch("feat/auth");
 

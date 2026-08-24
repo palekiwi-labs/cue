@@ -118,16 +118,9 @@ pub fn git_commit(cwd: &Path, msg: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn get_current_branch(cwd: &Path) -> anyhow::Result<String> {
-    run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
-}
-
-/// `None` when HEAD is detached (`abbrev-ref` prints "HEAD") or git fails.
+/// `None` when HEAD is detached; an unborn branch still yields its name.
 pub fn current_branch(cwd: &Path) -> Option<String> {
-    match get_current_branch(cwd) {
-        Ok(branch) if branch != "HEAD" => Some(branch),
-        _ => None,
-    }
+    run_git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd).ok()
 }
 
 /// Dotted branch names are safe: the config subsection is opaque up to
