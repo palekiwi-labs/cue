@@ -132,7 +132,30 @@
           };
         };
 
-        # `git-scripts` provides git-pr-sync and reader utilities (get-pr-base, get-pr-number).
+        # `git-cue-sync` manages the branch-to-task cue association
+        # (branch.<name>.cue-task) and switches the active context on
+        # checkout. Bundles the cue CLI so the hook's `cue switch`
+        # invocation stays pinned to the same flake revision.
+        packages.git-cue-sync = pkgs.stdenv.mkDerivation {
+          pname = "git-cue-sync";
+          version = common.version;
+          src = ./scripts;
+          nativeBuildInputs = [ pkgs.makeWrapper ];
+          installPhase = ''
+            mkdir -p $out/bin
+            install -m 755 git-cue-sync $out/bin/git-cue-sync
+            wrapProgram $out/bin/git-cue-sync \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git pkgs.coreutils self.packages.${system}.cue ]}
+          '';
+          meta = with pkgs.lib; {
+            description = "Associate branches with cue tasks and auto-switch context on checkout";
+            mainProgram = "git-cue-sync";
+            license = licenses.mit;
+          };
+        };
+
+        # `git-scripts` provides git-pr-sync, git-cue-sync, and reader
+        # utilities (get-pr-base, get-pr-number).
         packages.git-scripts = pkgs.stdenv.mkDerivation {
           pname = "git-scripts";
           version = common.version;
@@ -143,15 +166,18 @@
             install -m 755 git-pr-sync $out/bin/git-pr-sync
             install -m 755 get-pr-base $out/bin/get-pr-base
             install -m 755 get-pr-number $out/bin/get-pr-number
+            install -m 755 git-cue-sync $out/bin/git-cue-sync
             wrapProgram $out/bin/git-pr-sync \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git pkgs.gh pkgs.jq pkgs.coreutils ]}
             wrapProgram $out/bin/get-pr-base \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git pkgs.coreutils ]}
             wrapProgram $out/bin/get-pr-number \
               --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git pkgs.coreutils ]}
+            wrapProgram $out/bin/git-cue-sync \
+              --prefix PATH : ${pkgs.lib.makeBinPath [ pkgs.git pkgs.coreutils self.packages.${system}.cue ]}
           '';
           meta = with pkgs.lib; {
-            description = "Git PR metadata sync and reader utilities";
+            description = "Git PR metadata sync, cue task association, and reader utilities";
             license = licenses.mit;
           };
         };

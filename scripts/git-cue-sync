@@ -1,0 +1,127 @@
+#!/usr/bin/env bash
+# Manage the branch-to-task cue association in native Git config.
+#
+# Storage contract:
+#   branch.<name>.cue-task - cue task slug associated with the branch
+#
+# Modes:
+#   git-cue-sync             Read mode (post-checkout hook): switch the
+#                            active cue context to the associated task.
+#                            Silent no-op when the key is absent, `cue` is
+#                            missing, or the repo has no cue store.
+#                            Always exits 0 (hook safety).
+#   git-cue-sync set <slug>  Associate the current branch with <slug>.
+#                            "master" or an empty slug clears the key.
+#   git-cue-sync unset       Clear the association for the current branch.
+#
+# The association is user-facing only: it drives `.cue/HEAD` for
+# interactive tooling. Agents are expected to pass the active task
+# explicitly on their tool operations.
+
+set -u
+
+usage() {
+  printf 'usage: git-cue-sync [set <slug> | unset]\n' >&2
+  exit 1
+}
+
+current_branch() {
+  git symbolic-ref --quiet --short HEAD 2>/dev/null || true
+}
+
+# --- write mode -----------------------------------------------------------
+
+write_association() {
+  local slug="$1"
+  local branch
+  branch=$(current_branch)
+
+  if [ -z "$branch" ]; then
+    printf 'git-cue-sync: detached HEAD; cannot associate a task\n' >&2
+    exit 1
+  fi
+
+  local key="branch.${branch}.cue-task"
+
+  if [ -n "$slug" ] && [ "$slug" != "master" ]; then
+    if git config "$key" "$slug"; then
+      printf '\033[32mcue: associated branch %s with task %s\033[0m\n' \
+        "$branch" "$slug" >&2
+    else
+      printf 'git-cue-sync: failed to set %s\n' "$key" >&2
+      exit 1
+    fi
+  else
+    git config --unset "$key" 2>/dev/null || true
+    printf '\033[32mcue: cleared task association for branch %s\033[0m\n' \
+      "$branch" >&2
+  fi
+  exit 0
+}
+
+# --- read mode (hook) -----------------------------------------------------
+
+read_association() {
+  if ! command -v git >/dev/null 2>&1; then
+    exit 0
+  fi
+
+  if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
+    exit 0
+  fi
+
+  local branch
+  branch=$(current_branch)
+  if [ -z "$branch" ]; then
+    # Detached HEAD: nothing to associate with.
+    exit 0
+  fi
+
+  local slug
+  slug=$(git config "branch.${branch}.cue-task" 2>/dev/null || true)
+  if [ -z "$slug" ]; then
+    # No association: explicitly a no-op.
+    exit 0
+  fi
+
+  # Only act where a cue store exists; never create one as a side effect.
+  local root
+  root=$(git rev-parse --show-toplevel 2>/dev/null || true)
+  if [ -z "$root" ] || [ ! -d "$root/.cue" ]; then
+    exit 0
+  fi
+
+  if ! command -v cue >/dev/null 2>&1; then
+    exit 0
+  fi
+
+  local out
+  if out=$(cd "$root" && cue switch "$slug" 2>&1); then
+    printf '\033[32mcue: switched context to %s (branch %s)\033[0m\n' \
+      "$slug" "$branch" >&2
+  else
+    printf '\033[33mcue: failed to switch context to %s\033[0m\n' "$slug" >&2
+    printf '%s\n' "$out" >&2
+  fi
+
+  # Hook safety: never fail the checkout.
+  exit 0
+}
+
+# --- dispatch --------------------------------------------------------------
+
+case "${1:-}" in
+  set)
+    [ $# -ge 2 ] || usage
+    write_association "$2"
+    ;;
+  unset)
+    write_association ""
+    ;;
+  "")
+    read_association
+    ;;
+  *)
+    usage
+    ;;
+esac
