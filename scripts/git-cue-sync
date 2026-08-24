@@ -44,9 +44,13 @@ write_association() {
   local key="branch.${branch}.cue-task"
 
   if [ -n "$slug" ] && [ "$slug" != "master" ]; then
-    git config "$key" "$slug"
-    printf '\033[32mcue: associated branch %s with task %s\033[0m\n' \
-      "$branch" "$slug" >&2
+    if git config "$key" "$slug"; then
+      printf '\033[32mcue: associated branch %s with task %s\033[0m\n' \
+        "$branch" "$slug" >&2
+    else
+      printf 'git-cue-sync: failed to set %s\n' "$key" >&2
+      exit 1
+    fi
   else
     git config --unset "$key" 2>/dev/null || true
     printf '\033[32mcue: cleared task association for branch %s\033[0m\n' \

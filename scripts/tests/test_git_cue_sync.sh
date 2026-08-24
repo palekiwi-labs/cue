@@ -228,4 +228,27 @@ set -e
 
 echo "PASS: Test 13 (hook mode safe when cue crashes)"
 
+# --------------------------------------------------------------------------
+# Test 14: set fails loudly when the config write fails
+# --------------------------------------------------------------------------
+# A stale config.lock (e.g. lock contention) makes `git config key value`
+# fail; set mode must surface that as a non-zero exit instead of printing
+# the success message.
+touch .git/config.lock
+set +e
+err=$("$SYNC_BIN" set some-task 2>&1 >/dev/null)
+status=$?
+set -e
+rm -f .git/config.lock
+[ "$status" -ne 0 ] || { echo "FAIL: set must exit non-zero when config write fails"; exit 1; }
+case "$err" in
+  *git-cue-sync*) ;;
+  *) echo "FAIL: set must report the write failure (got: $err)"; exit 1 ;;
+esac
+case "$err" in
+  *associated*) echo "FAIL: set reported success despite write failure"; exit 1 ;;
+esac
+
+echo "PASS: Test 14 (set fails loudly on config write failure)"
+
 echo "ALL TESTS PASSED SUCCESSFULLY!"
