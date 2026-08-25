@@ -1,4 +1,6 @@
-use anyhow::{bail, Result};
+use crate::config::Config;
+use crate::git::{get_git_root, list_worktrees};
+use anyhow::{Context, Result, bail};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -98,6 +100,54 @@ pub fn validate_store_target(target: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Resolve the store-owning git root for a repository containing `start`.
+///
+/// The git root is the **main worktree**: the first entry of
+/// `git worktree list --porcelain`, normalized through
+/// `git rev-parse --show-toplevel`. The normalization is idempotent for
+/// normal repositories, resolves a submodule to its own toplevel (no
+/// inheritance from the parent repository), and fails loudly for a bare
+/// main worktree.
+///
+/// Deliberately NOT `git rev-parse --git-common-dir`: that is
+/// cwd-relative and unreliable for submodules and
+/// `--separate-git-dir` checkouts.
+pub fn git_root(start: &Path) -> Result<PathBuf> {
+    let worktrees = list_worktrees(start)
+        .with_context(|| format!("Failed to list git worktrees from {}", start.display()))?;
+    let entry0 = worktrees.first().ok_or_else(|| {
+        anyhow::anyhow!(
+            "`git worktree list` returned no worktrees for {}",
+            start.display()
+        )
+    })?;
+    get_git_root(entry0).with_context(|| {
+        format!(
+            "Failed to resolve main worktree {} to a toplevel",
+            entry0.display()
+        )
+    })
+}
+
+/// Open the cue store for the repository containing `root`.
+///
+/// `root` may be any directory inside a worktree of the repository
+/// (usually the current working directory). The store is always the
+/// `<git-root>/<dir_name>` directory, where the git root is the **main
+/// worktree** (see [`git_root`]); `head_dir` stays the local checkout's
+/// `<toplevel>/<dir_name>`.
+///
+/// The caller should load `config` from [`git_root`] (the store owner),
+/// not from the current worktree.
+pub fn open(root: &Path, config: &Config) -> Result<ResolvedStore> {
+    let store_dir = git_root(root)?.join(&config.dir_name);
+    let head_dir = get_git_root(root)?.join(&config.dir_name);
+    Ok(ResolvedStore {
+        head_dir,
+        store_dir,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -107,6 +157,69 @@ mod tests {
     // Helper: create a minimal valid cue store (contains master/ subdir).
     fn make_store(path: &Path) {
         fs::create_dir_all(path.join("master")).unwrap();
+    }
+
+    // Helper: run git in `dir`, panicking on failure.
+    fn git(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("failed to spawn git");
+        assert!(
+            out.status.success(),
+            "git {:?} in {} failed: {}",
+            args,
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    // Helper: init a normal git repo with one commit.
+    fn init_repo(dir: &Path) {
+        fs::create_dir_all(dir).unwrap();
+        git(dir, &["init", "-b", "main"]);
+        git(dir, &["config", "user.email", "test@example.com"]);
+        git(dir, &["config", "user.name", "Test"]);
+        git(dir, &["config", "commit.gpgsign", "false"]);
+        fs::write(dir.join("initial.txt"), "hello").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-m", "initial"]);
+    }
+
+    #[test]
+    fn open_plain_repo_resolves_root_cue_dir() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        init_repo(&main);
+        make_store(&main.join(".cue"));
+
+        let resolved = open(&main, &Config::default()).unwrap();
+
+        let root = get_git_root(&main).unwrap();
+        assert_eq!(resolved.head_dir, root.join(".cue"));
+        assert_eq!(resolved.store_dir, root.join(".cue"));
+    }
+
+    #[test]
+    fn open_worktree_splits_head_and_store_dirs() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let wt = tmp.path().join("wt");
+        init_repo(&main);
+        make_store(&main.join(".cue"));
+        git(
+            &main,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "topic"],
+        );
+
+        let resolved = open(&wt, &Config::default()).unwrap();
+
+        // Store dir is the main worktree's .cue; head dir is the local one.
+        let main_root = get_git_root(&main).unwrap();
+        let wt_root = get_git_root(&wt).unwrap();
+        assert_eq!(resolved.store_dir, main_root.join(".cue"));
+        assert_eq!(resolved.head_dir, wt_root.join(".cue"));
     }
 
     #[test]
