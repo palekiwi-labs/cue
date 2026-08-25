@@ -192,6 +192,7 @@ fn switch_no_args_on_detached_head_fails() -> anyhow::Result<()> {
 #[test]
 fn switch_on_detached_head_skips_association() -> anyhow::Result<()> {
     let env = setup_on_branch("feat/auth");
+    cue(&env).arg("switch").arg("seeded").assert().success();
     git(&env, &["checkout", "--detach"]);
 
     cue(&env)
@@ -201,9 +202,14 @@ fn switch_on_detached_head_skips_association() -> anyhow::Result<()> {
         .success()
         .stdout(predicate::str::diff("switched to task: auth-login\n"));
 
+    assert_eq!(
+        branch_task(&env, "feat/auth").as_deref(),
+        Some("seeded"),
+        "a detached-HEAD switch must not touch the on-branch association"
+    );
     assert!(
-        branch_task(&env, "feat/auth").is_none(),
-        "no association may be written from a detached HEAD"
+        branch_task(&env, "HEAD").is_none(),
+        "no bogus 'HEAD' branch key may be created"
     );
 
     Ok(())
