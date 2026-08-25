@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git::{get_git_root, list_worktrees};
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -141,6 +141,13 @@ pub fn git_root(start: &Path) -> Result<PathBuf> {
 /// not from the current worktree.
 pub fn open(root: &Path, config: &Config) -> Result<ResolvedStore> {
     let store_dir = git_root(root)?.join(&config.dir_name);
+    if !store_dir.join("master").is_dir() {
+        bail!(
+            "no cue store at {} (missing `master/`); \
+             run `cue init` in the main repository to create it",
+            store_dir.display()
+        );
+    }
     let head_dir = get_git_root(root)?.join(&config.dir_name);
     Ok(ResolvedStore {
         head_dir,
@@ -199,6 +206,23 @@ mod tests {
         let root = get_git_root(&main).unwrap();
         assert_eq!(resolved.head_dir, root.join(".cue"));
         assert_eq!(resolved.store_dir, root.join(".cue"));
+    }
+
+    #[test]
+    fn open_missing_master_errors_with_init_hint() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        init_repo(&main);
+
+        let err = open(&main, &Config::default()).unwrap_err();
+
+        let msg = format!("{err:#}");
+        assert!(msg.contains("cue init"), "unexpected error: {msg}");
+        let root = get_git_root(&main).unwrap();
+        assert!(
+            msg.contains(&root.join(".cue").display().to_string()),
+            "unexpected error: {msg}"
+        );
     }
 
     #[test]
