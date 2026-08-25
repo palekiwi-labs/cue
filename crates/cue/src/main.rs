@@ -114,9 +114,6 @@ fn main() -> anyhow::Result<()> {
         Commands::Project { command } => {
             commands::project::handle(&cwd, command)?;
         }
-        Commands::Link { store_path, task } => {
-            commands::link::handle(&cwd, store_path, task)?;
-        }
     }
 
     Ok(())
