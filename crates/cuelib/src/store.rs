@@ -247,6 +247,157 @@ mod tests {
     }
 
     #[test]
+    fn open_bare_main_worktree_fails_loudly() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("src");
+        init_repo(&src);
+        let bare = tmp.path().join("bare.git");
+        git(
+            &src,
+            &[
+                "clone",
+                "--bare",
+                src.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
+        );
+        let wt = tmp.path().join("wt");
+        git(
+            &bare,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "topic"],
+        );
+
+        let err = open(&wt, &Config::default()).unwrap_err();
+
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Failed to resolve main worktree"),
+            "unexpected error: {msg}"
+        );
+        assert!(msg.contains("bare.git"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn open_submodule_resolves_own_toplevel_only() {
+        let tmp = tempdir().unwrap();
+        let sub_src = tmp.path().join("subsrc");
+        init_repo(&sub_src);
+        let parent = tmp.path().join("parent");
+        init_repo(&parent);
+        // Parent has a store; the submodule must NOT inherit it.
+        make_store(&parent.join(".cue"));
+        // git >= 2.38.1 denies the file transport for submodule clones;
+        // repo-local config is ignored for this security setting, so it
+        // must be passed inline.
+        git(
+            &parent,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                sub_src.to_str().unwrap(),
+                "sub",
+            ],
+        );
+        git(&parent, &["commit", "-m", "add submodule"]);
+        let sub = parent.join("sub");
+        make_store(&sub.join(".cue"));
+
+        let resolved = open(&sub, &Config::default()).unwrap();
+
+        let sub_root = get_git_root(&sub).unwrap();
+        assert_eq!(resolved.store_dir, sub_root.join(".cue"));
+        assert_eq!(resolved.head_dir, sub_root.join(".cue"));
+    }
+
+    #[test]
+    fn open_ignores_stray_local_store_in_worktree() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let wt = tmp.path().join("wt");
+        init_repo(&main);
+        make_store(&main.join(".cue"));
+        git(
+            &main,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "topic"],
+        );
+        // Stray local store content in the worktree must not win.
+        make_store(&wt.join(".cue"));
+
+        let resolved = open(&wt, &Config::default()).unwrap();
+
+        let main_root = get_git_root(&main).unwrap();
+        let wt_root = get_git_root(&wt).unwrap();
+        assert_eq!(resolved.store_dir, main_root.join(".cue"));
+        assert_ne!(resolved.store_dir, wt_root.join(".cue"));
+        assert_eq!(resolved.head_dir, wt_root.join(".cue"));
+    }
+
+    #[test]
+    fn open_stray_local_master_does_not_satisfy_store() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let wt = tmp.path().join("wt");
+        init_repo(&main);
+        // Main has no store; only the worktree has a stray .cue/master.
+        git(
+            &main,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "topic"],
+        );
+        make_store(&wt.join(".cue"));
+
+        let err = open(&wt, &Config::default()).unwrap_err();
+
+        let msg = format!("{err:#}");
+        assert!(msg.contains("cue init"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn open_honors_custom_dir_name_at_git_root() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let wt = tmp.path().join("wt");
+        init_repo(&main);
+        make_store(&main.join(".memory"));
+        git(
+            &main,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "topic"],
+        );
+
+        let config = Config {
+            dir_name: ".memory".into(),
+            ..Config::default()
+        };
+        let resolved = open(&wt, &config).unwrap();
+
+        let main_root = get_git_root(&main).unwrap();
+        let wt_root = get_git_root(&wt).unwrap();
+        assert_eq!(resolved.store_dir, main_root.join(".memory"));
+        assert_eq!(resolved.head_dir, wt_root.join(".memory"));
+    }
+
+    #[test]
+    fn git_root_returns_main_worktree_from_linked_worktree() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let wt = tmp.path().join("wt");
+        init_repo(&main);
+        git(
+            &main,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "topic"],
+        );
+
+        // From a subdirectory of the linked worktree, too.
+        let sub = wt.join("nested");
+        fs::create_dir_all(&sub).unwrap();
+
+        let main_root = get_git_root(&main).unwrap();
+        assert_eq!(git_root(&wt).unwrap(), main_root);
+        assert_eq!(git_root(&sub).unwrap(), main_root);
+    }
+
+    #[test]
     fn no_store_file_returns_passthrough() {
         let dir = tempdir().unwrap();
         let cue_dir = dir.path().join(".cue");
