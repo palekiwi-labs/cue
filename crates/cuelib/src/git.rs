@@ -118,8 +118,47 @@ pub fn git_commit(cwd: &Path, msg: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub fn get_current_branch(cwd: &Path) -> anyhow::Result<String> {
-    run_git(["rev-parse", "--abbrev-ref", "HEAD"], cwd)
+/// `None` when HEAD is detached; an unborn branch still yields its name.
+pub fn current_branch(cwd: &Path) -> Option<String> {
+    run_git(["symbolic-ref", "--quiet", "--short", "HEAD"], cwd).ok()
+}
+
+/// Dotted branch names are safe: the config subsection is opaque up to
+/// the last dot.
+pub fn branch_task_key(branch: &str) -> String {
+    format!("branch.{}.cue-task", branch)
+}
+
+pub fn get_branch_task(root: &Path, branch: &str) -> Option<String> {
+    let value = run_git(
+        ["config", "--local", "--get", &branch_task_key(branch)],
+        root,
+    )
+    .ok()?;
+    let value = value.trim();
+    if value.is_empty() {
+        None
+    } else {
+        Some(value.to_string())
+    }
+}
+
+pub fn set_branch_task(root: &Path, branch: &str, slug: &str) -> anyhow::Result<()> {
+    run_git(["config", "--local", &branch_task_key(branch), slug], root).map(|_| ())
+}
+
+/// Idempotent: an absent key counts as success, real write failures
+/// propagate. `--unset-all` so multi-valued keys clear too (`--unset`
+/// refuses them without removing anything).
+pub fn clear_branch_task(root: &Path, branch: &str) -> anyhow::Result<()> {
+    if get_branch_task(root, branch).is_none() {
+        return Ok(());
+    }
+    run_git(
+        ["config", "--local", "--unset-all", &branch_task_key(branch)],
+        root,
+    )
+    .map(|_| ())
 }
 
 pub fn get_short_head_hash(cwd: &Path) -> anyhow::Result<String> {

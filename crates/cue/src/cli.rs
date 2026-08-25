@@ -30,7 +30,8 @@ pub enum Commands {
     /// Switch the active task context
     #[command(arg_required_else_help = false)]
     Switch {
-        /// Task slug or path to a task card file
+        /// Task slug or path to a task card file; omit to restore the
+        /// task associated with the current branch
         target: Option<String>,
         /// Output structured JSON instead of human-readable text
         #[arg(long)]
