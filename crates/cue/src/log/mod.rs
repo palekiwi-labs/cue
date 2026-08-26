@@ -42,16 +42,8 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
         hash.push_str("-dirty");
     }
 
-    // 3. Resolve path
-    let cue_path = root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_path)?;
-
-    if !resolved.head_dir.exists() {
-        bail!(
-            "{} directory does not exist. Run `cue init` first.",
-            config.dir_name
-        );
-    }
+    // 3. Open store
+    let resolved = store::open(root, config)?;
 
     let scope = if let Some(s) = scope_name {
         cuelib::head::validate_slug(&s)?;

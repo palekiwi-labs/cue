@@ -27,16 +27,8 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         scope_name,
     } = opts;
 
-    // 1. Check if .cue exists and resolve store
-    let cue_path = root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_path)?;
-
-    if !resolved.head_dir.exists() {
-        bail!(
-            "{} directory does not exist. Run `cue init` first.",
-            config.dir_name
-        );
-    }
+    // 1. Open store
+    let resolved = store::open(root, config)?;
 
     // 2. Validate artifact type
     if !config.artifact_types.contains(&cue_type) {

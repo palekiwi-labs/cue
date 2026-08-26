@@ -1329,9 +1329,7 @@ fn test_list_not_initialized() -> anyhow::Result<()> {
         .arg("list")
         .assert()
         .failure()
-        .stderr(predicates::str::contains(
-            "directory does not exist. Run `cue init` first.",
-        ));
+        .stderr(predicates::str::contains("cue init"));
 
     Ok(())
 }

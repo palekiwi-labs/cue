@@ -64,6 +64,9 @@ fn test_context_path_missing_errors() -> anyhow::Result<()> {
     let env = TestEnv::new();
     helpers::setup_git_repo(env.root());
 
+    // Initialize cue
+    env.command().arg("init").assert().success();
+
     env.command()
         .arg("context")
         .arg("path")

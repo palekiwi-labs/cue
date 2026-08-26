@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use cuelib::head;
 use cuelib::store;
 use serde_json::json;
@@ -8,17 +8,10 @@ use std::fs;
 use std::path::Path;
 
 pub fn handle(cwd: &Path, target: Option<String>, json: bool) -> Result<()> {
-    let root = git::get_git_root(cwd).context("Not in a git repository")?;
-    let config = Config::load(&root)?;
-    let cue_dir = root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_dir)?;
-
-    if !resolved.head_dir.exists() {
-        bail!(
-            "{} directory does not exist. Run `cue init` first.",
-            config.dir_name
-        );
-    }
+    let store_root = store::git_root(cwd).context("Not in a git repository")?;
+    let config = Config::load(&store_root)?;
+    let resolved = store::open(cwd, &config)?;
+    let root = git::get_git_root(cwd)?;
 
     let branch = git::current_branch(&root);
 

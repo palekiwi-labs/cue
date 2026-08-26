@@ -246,8 +246,8 @@ fn test_log_list() -> anyhow::Result<()> {
         .arg("log")
         .arg("list")
         .assert()
-        .success()
-        .stdout(predicate::str::is_empty());
+        .failure()
+        .stderr(predicate::str::contains("cue init"));
 
     // Initialize mem
     env.command()

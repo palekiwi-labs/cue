@@ -136,16 +136,8 @@ pub fn list(
     // Parse frontmatter once when either filtering or outputting it requires it.
     let need_frontmatter = frontmatter || !filters.is_empty();
 
-    // 1. Check if .cue exists and resolve store
-    let cue_path = root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_path)?;
-
-    if !resolved.head_dir.is_dir() {
-        anyhow::bail!(
-            "{} directory does not exist. Run `cue init` first.",
-            config.dir_name
-        );
-    }
+    // 1. Open store
+    let resolved = store::open(root, config)?;
 
     // 2. Determine scan directory/directories
     let mut paths = resolve_scan_paths(&resolved.head_dir, &resolved.store_dir, all, scope)?;

@@ -79,6 +79,7 @@ fn test_context_render_uses_head_scope() -> anyhow::Result<()> {
     helpers::setup_git_repo(env.root());
 
     let cue_dir = env.root().join(".cue");
+    fs::create_dir_all(cue_dir.join("master"))?;
     let task_dir = cue_dir.join("my-task");
     let spec_dir = task_dir.join("spec");
     fs::create_dir_all(&spec_dir)?;
@@ -149,6 +150,8 @@ fn test_context_render_config_default_with_include() -> anyhow::Result<()> {
 
     // "master" scope has no context.json — profile comes from cue.json.
     // The profile includes "@other-task".
+    let master_dir = env.root().join(".cue").join("master");
+    fs::create_dir_all(&master_dir)?;
     let other_dir = env.root().join(".cue").join("other-task");
     let other_spec = other_dir.join("spec");
     fs::create_dir_all(&other_spec)?;

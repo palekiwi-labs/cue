@@ -10,16 +10,17 @@ pub fn handle(cwd: &Path, opts: AddOptions) -> Result<()> {
     // 1. Verify git repo
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
 
-    // 2. Get git root
-    let root = git::get_git_root(cwd)?;
+    // 2. Derive store owner
+    let store_root = cuelib::store::git_root(cwd)?;
 
-    // 3. Load config
-    let config = Config::load(&root)?;
+    // 3. Load config from git root
+    let config = Config::load(&store_root)?;
 
     // 4. Delegate to domain module
-    let file_path = add::add(&root, &config, opts)?;
+    let file_path = add::add(cwd, &config, opts)?;
 
     // 5. Print confirmation
+    let root = git::get_git_root(cwd)?;
     let rel_path = file_path.strip_prefix(&root).unwrap_or(&file_path);
     eprintln!("✓ Created");
     println!("{}", rel_path.to_string_lossy());

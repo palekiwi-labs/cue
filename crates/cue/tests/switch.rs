@@ -181,3 +181,83 @@ fn switch_human_output_to_master() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn switch_in_linked_worktree_updates_local_head_and_main_store() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // Create a linked worktree
+    let wt = env.root().join("wt");
+    let out = std::process::Command::new("git")
+        .args(["worktree", "add", wt.to_str().unwrap(), "-b", "topic"])
+        .current_dir(env.root())
+        .output()
+        .expect("git worktree add failed");
+    assert!(
+        out.status.success(),
+        "git worktree add failed: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+
+    // Run `cue switch auth-login` from inside the linked worktree
+    env.command()
+        .current_dir(&wt)
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("switch")
+        .arg("auth-login")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff("switched to task: auth-login\n"));
+
+    // Verify local worktree .test-mem/HEAD is written
+    let wt_head = wt.join(".test-mem/HEAD");
+    assert!(wt_head.exists(), "worktree HEAD must be written");
+    let wt_head_content = std::fs::read_to_string(&wt_head)?;
+    assert_eq!(wt_head_content.trim(), "auth-login");
+
+    // Verify main root .test-mem/HEAD is NOT modified
+    let main_head = env.root().join(".test-mem/HEAD");
+    if main_head.exists() {
+        let main_head_content = std::fs::read_to_string(&main_head)?;
+        assert_ne!(main_head_content.trim(), "auth-login");
+    }
+
+    // Verify task directory created under main root store (.test-mem/auth-login)
+    let main_task_dir = env.root().join(".test-mem/auth-login");
+    assert!(
+        main_task_dir.is_dir(),
+        "task context directory must be created in main store"
+    );
+
+    // Verify NO local scope leakage (worktree does NOT have .test-mem/auth-login)
+    let wt_task_dir = wt.join(".test-mem/auth-login");
+    assert!(
+        !wt_task_dir.exists(),
+        "task directory must not leak into linked worktree"
+    );
+
+    // Verify switching to master from worktree updates worktree HEAD
+    env.command()
+        .current_dir(&wt)
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("switch")
+        .arg("master")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff("switched to global context\n"));
+
+    let wt_head_content = std::fs::read_to_string(&wt_head)?;
+    assert_eq!(wt_head_content.trim(), "master");
+
+    Ok(())
+}

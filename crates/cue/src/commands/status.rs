@@ -1,8 +1,8 @@
 use crate::config::Config;
-use crate::git;
 use anyhow::{Context, Result};
 use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::head;
+use cuelib::store;
 use serde::Deserialize;
 use serde_json::json;
 use std::path::Path;
@@ -15,10 +15,9 @@ struct StatusFm {
 }
 
 pub fn handle(cwd: &Path, json: bool) -> Result<()> {
-    let root = git::get_git_root(cwd).context("Not in a git repository")?;
-    let config = Config::load(&root)?;
-    let cue_dir = root.join(&config.dir_name);
-    let resolved = cuelib::store::resolve_store(cue_dir)?;
+    let store_root = store::git_root(cwd).context("Not in a git repository")?;
+    let config = Config::load(&store_root)?;
+    let resolved = store::open(cwd, &config)?;
 
     let slug = head::read_head(&resolved.head_dir);
 
