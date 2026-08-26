@@ -60,13 +60,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
         }
         LogCommands::List { task } => {
             let resolved = store::open(cwd, &config)?;
-
-            let scope = if let Some(t) = task {
-                cuelib::head::validate_slug(&t)?;
-                t
-            } else {
-                cuelib::head::resolve_scope(&resolved.head_dir)?
-            };
+            let scope = cuelib::head::resolve_scope(&resolved.head_dir, task.as_deref())?;
 
             let log_file_path = resolved.store_dir.join(&scope).join("log.md");
 

@@ -40,12 +40,7 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
     }
 
     // 3. Resolve scope (HEAD read from head_dir)
-    let scope = if let Some(s) = scope_name {
-        cuelib::head::validate_slug(&s)?;
-        s
-    } else {
-        cuelib::head::resolve_scope(&resolved.head_dir)?
-    };
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, scope_name.as_deref())?;
     if scope.trim().is_empty() {
         bail!("Scope name cannot be empty.");
     }

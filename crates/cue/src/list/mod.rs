@@ -184,12 +184,7 @@ pub fn resolve_scan_paths(
     if all {
         collect_files(store_dir)
     } else {
-        let scope = if let Some(s) = scope {
-            cuelib::head::validate_slug(&s)?;
-            s
-        } else {
-            cuelib::head::resolve_scope(head_dir)?
-        };
+        let scope = cuelib::head::resolve_scope(head_dir, scope.as_deref())?;
         let scan_dir = store_dir.join(&scope);
 
         if scan_dir.exists() {

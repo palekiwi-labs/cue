@@ -45,12 +45,7 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
     // 3. Open store
     let resolved = store::open(root, config)?;
 
-    let scope = if let Some(s) = scope_name {
-        cuelib::head::validate_slug(&s)?;
-        s
-    } else {
-        cuelib::head::resolve_scope(&resolved.head_dir)?
-    };
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, scope_name.as_deref())?;
     if scope.trim().is_empty() {
         bail!("Scope name cannot be empty.");
     }

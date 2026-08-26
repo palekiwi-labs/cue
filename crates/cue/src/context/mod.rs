@@ -239,7 +239,7 @@ pub fn gather_context(
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
     let canonical_store = resolved.store_dir.canonicalize()?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, None)?;
 
     // Load root context config, falling back to config default when absent.
     let context_path = context_json_path(&resolved.store_dir, &scope);
@@ -304,7 +304,7 @@ pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
     let store_root = store::git_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, None)?;
     let config_path = context_json_path(&resolved.store_dir, &scope);
 
     if config_path.exists() && !force {

@@ -33,7 +33,7 @@ fn handle_show(cwd: &Path) -> anyhow::Result<()> {
     let store_root = store::git_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, None)?;
     let config_path = context_json_path(&resolved.store_dir, &scope);
 
     let (context_config, source) = load_context_or_config(&config_path, &config.context)?;
@@ -49,7 +49,7 @@ fn handle_profiles(cwd: &Path) -> anyhow::Result<()> {
     let store_root = store::git_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, None)?;
     let config_path = context_json_path(&resolved.store_dir, &scope);
 
     let (context_config, source) = load_context_or_config(&config_path, &config.context)?;
@@ -121,7 +121,7 @@ fn handle_path(cwd: &Path, all: bool) -> anyhow::Result<()> {
             println!("{}", path.display());
         }
     } else {
-        let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+        let scope = cuelib::head::resolve_scope(&resolved.head_dir, None)?;
         let config_path = context_json_path(&resolved.store_dir, &scope);
         if config_path.exists() {
             println!("{}", config_path.display());
