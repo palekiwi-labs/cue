@@ -237,3 +237,66 @@ fn test_context_render_no_head_falls_back_to_master() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_context_render_with_task_flag_overrides_env_and_head() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    let cue_dir = env.root().join(".cue");
+    fs::create_dir_all(cue_dir.join("master"))?;
+
+    // Create head-task
+    let head_task_dir = cue_dir.join("head-task");
+    fs::create_dir_all(head_task_dir.join("spec"))?;
+    fs::write(head_task_dir.join("spec/head.md"), "from head task")?;
+    fs::write(
+        head_task_dir.join("context.json"),
+        r#"{"default": {"artifacts": ["./spec/head.md"]}}"#,
+    )?;
+
+    // Create env-task
+    let env_task_dir = cue_dir.join("env-task");
+    fs::create_dir_all(env_task_dir.join("spec"))?;
+    fs::write(env_task_dir.join("spec/env.md"), "from env task")?;
+    fs::write(
+        env_task_dir.join("context.json"),
+        r#"{"default": {"artifacts": ["./spec/env.md"]}}"#,
+    )?;
+
+    // Create flag-task
+    let flag_task_dir = cue_dir.join("flag-task");
+    fs::create_dir_all(flag_task_dir.join("spec"))?;
+    fs::write(flag_task_dir.join("spec/flag.md"), "from flag task")?;
+    fs::write(
+        flag_task_dir.join("context.json"),
+        r#"{"default": {"artifacts": ["./spec/flag.md"]}}"#,
+    )?;
+
+    // Set HEAD to head-task
+    fs::write(cue_dir.join("HEAD"), "head-task")?;
+
+    // 1. Env overrides HEAD
+    env.command()
+        .env("CUE_TASK", "env-task")
+        .arg("context")
+        .arg("render")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("from env task"))
+        .stdout(predicate::str::contains("path=\"env-task/spec/env.md\""));
+
+    // 2. Flag overrides both Env and HEAD
+    env.command()
+        .env("CUE_TASK", "env-task")
+        .arg("context")
+        .arg("render")
+        .arg("--task")
+        .arg("flag-task")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("from flag task"))
+        .stdout(predicate::str::contains("path=\"flag-task/spec/flag.md\""));
+
+    Ok(())
+}

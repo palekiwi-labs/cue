@@ -39,6 +39,9 @@ pub enum Commands {
     },
     /// Print the active task context
     Status {
+        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        #[arg(long = "task")]
+        task: Option<String>,
         /// Output structured JSON instead of human-readable text
         #[arg(long)]
         json: bool,
@@ -144,7 +147,11 @@ pub enum ContextCommands {
         force: bool,
     },
     /// Print raw context.json
-    Show,
+    Show {
+        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        #[arg(long = "task")]
+        task: Option<String>,
+    },
     /// List available profile names
     Profiles,
     /// Expand and stream context to stdout
@@ -152,6 +159,9 @@ pub enum ContextCommands {
         /// Profile name to render
         #[arg(short = 'p', long, default_value = "default")]
         profile: Option<String>,
+        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        #[arg(long = "task")]
+        task: Option<String>,
     },
     /// Print absolute path to context.json
     Path {

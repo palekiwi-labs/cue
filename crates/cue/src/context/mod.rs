@@ -233,13 +233,14 @@ pub fn resolve_profile_with_config(
 pub fn gather_context(
     cwd: &Path,
     profile_name: Option<&str>,
+    task: Option<&str>,
 ) -> anyhow::Result<(ResolvedContext, ContextSource)> {
     let profile_name = profile_name.unwrap_or("default");
     let store_root = store::git_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
     let canonical_store = resolved.store_dir.canonicalize()?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir, None)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
 
     // Load root context config, falling back to config default when absent.
     let context_path = context_json_path(&resolved.store_dir, &scope);

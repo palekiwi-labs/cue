@@ -60,3 +60,50 @@ fn test_context_missing_file_errors() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_context_show_with_task_flag_and_env() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+    env.command().arg("init").assert().success();
+
+    let cue_dir = env.root().join(".cue");
+
+    // Create env-task context.json
+    let env_task_dir = cue_dir.join("env-task");
+    fs::create_dir_all(&env_task_dir)?;
+    fs::write(
+        env_task_dir.join("context.json"),
+        r#"{"default": {"artifacts": ["./spec/env-task.md"]}}"#,
+    )?;
+
+    // Create flag-task context.json
+    let flag_task_dir = cue_dir.join("flag-task");
+    fs::create_dir_all(&flag_task_dir)?;
+    fs::write(
+        flag_task_dir.join("context.json"),
+        r#"{"default": {"artifacts": ["./spec/flag-task.md"]}}"#,
+    )?;
+
+    // 1. Env scope
+    env.command()
+        .env("CUE_TASK", "env-task")
+        .arg("context")
+        .arg("show")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("env-task.md"));
+
+    // 2. Flag overrides Env
+    env.command()
+        .env("CUE_TASK", "env-task")
+        .arg("context")
+        .arg("show")
+        .arg("--task")
+        .arg("flag-task")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("flag-task.md"));
+
+    Ok(())
+}

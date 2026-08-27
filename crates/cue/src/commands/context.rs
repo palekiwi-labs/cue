@@ -9,9 +9,11 @@ use std::path::Path;
 pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
     match command {
         ContextCommands::Init { force } => handle_init(cwd, force),
-        ContextCommands::Show => handle_show(cwd),
+        ContextCommands::Show { task } => handle_show(cwd, task.as_deref()),
         ContextCommands::Profiles => handle_profiles(cwd),
-        ContextCommands::Render { profile } => handle_render(cwd, profile),
+        ContextCommands::Render { profile, task } => {
+            handle_render(cwd, profile, task.as_deref())
+        }
         ContextCommands::Path { all } => handle_path(cwd, all),
     }
 }
@@ -29,11 +31,11 @@ fn handle_init(cwd: &Path, force: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_show(cwd: &Path) -> anyhow::Result<()> {
+fn handle_show(cwd: &Path, task: Option<&str>) -> anyhow::Result<()> {
     let store_root = store::git_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir, None)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
     let config_path = context_json_path(&resolved.store_dir, &scope);
 
     let (context_config, source) = load_context_or_config(&config_path, &config.context)?;
@@ -66,11 +68,11 @@ fn handle_profiles(cwd: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_render(cwd: &Path, profile: Option<String>) -> anyhow::Result<()> {
+fn handle_render(cwd: &Path, profile: Option<String>, task: Option<&str>) -> anyhow::Result<()> {
     let store_root = store::git_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved_store = store::open(cwd, &config)?;
-    let (resolved, source) = gather_context(cwd, profile.as_deref())?;
+    let (resolved, source) = gather_context(cwd, profile.as_deref(), task)?;
     if source == ContextSource::ConfigDefault {
         eprintln!("(no context.json; using config default)");
     }

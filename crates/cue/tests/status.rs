@@ -33,6 +33,9 @@ fn status_json_global_when_head_absent() -> anyhow::Result<()> {
 
     assert_eq!(json["context"], "master");
     assert_eq!(json["global"], true);
+    assert_eq!(json["provenance"], "default");
+    let store_path = env.root().join(".test-mem");
+    assert_eq!(json["store"], store_path.to_str().unwrap());
     assert!(json.get("title").is_none());
     assert!(json.get("status").is_none());
 
@@ -84,6 +87,9 @@ fn status_json_task_with_card() -> anyhow::Result<()> {
 
     assert_eq!(json["context"], "auth-login");
     assert_eq!(json["global"], false);
+    assert_eq!(json["provenance"], "head");
+    let store_path = env.root().join(".test-mem");
+    assert_eq!(json["store"], store_path.to_str().unwrap());
     assert_eq!(json["title"], "Implement Login");
     assert_eq!(json["status"], "in-progress");
 
@@ -134,6 +140,7 @@ fn status_json_task_with_crlf_frontmatter() -> anyhow::Result<()> {
     let json: Value = serde_json::from_str(output.trim())?;
 
     assert_eq!(json["context"], "auth-login");
+    assert_eq!(json["provenance"], "head");
     assert_eq!(json["title"], "CRLF Title");
     assert_eq!(json["status"], "open");
 
@@ -152,13 +159,20 @@ fn status_human_output_global() -> anyhow::Result<()> {
         .assert()
         .success();
 
+    let store_path = env.root().join(".test-mem");
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("status")
         .assert()
         .success()
-        .stdout(predicate::str::diff("active context: master (global)\n"));
+        .stdout(predicate::str::contains(
+            "active context: master (global) (default)",
+        ))
+        .stdout(predicate::str::contains(format!(
+            "store: {}",
+            store_path.display()
+        )));
 
     Ok(())
 }
@@ -190,16 +204,161 @@ fn status_human_output_task_with_card() -> anyhow::Result<()> {
         "---\ntitle: Implement Login\nstatus: in-progress\n---\n# Body",
     )?;
 
+    let store_path = env.root().join(".test-mem");
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("status")
         .assert()
         .success()
-        .stdout(predicate::str::contains("active task: auth-login"))
+        .stdout(predicate::str::contains("active task: auth-login (head)"))
         .stdout(predicate::str::contains("title: Implement Login"))
         .stdout(predicate::str::contains("status: in-progress"))
-        .stdout(predicate::str::contains("context: .cue/auth-login/"));
+        .stdout(predicate::str::contains("context: .cue/auth-login/"))
+        .stdout(predicate::str::contains(format!(
+            "store: {}",
+            store_path.display()
+        )));
+
+    Ok(())
+}
+
+#[test]
+fn status_provenance_env_and_flag() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("switch")
+        .arg("head-task")
+        .assert()
+        .success();
+
+    // 1. Env wins over HEAD
+    let output = String::from_utf8(
+        env.command()
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .env("CUE_TASK", "env-task")
+            .arg("status")
+            .arg("--json")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    )?;
+    let json: Value = serde_json::from_str(output.trim())?;
+    assert_eq!(json["context"], "env-task");
+    assert_eq!(json["provenance"], "env");
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .env("CUE_TASK", "env-task")
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("active task: env-task (env)"));
+
+    // 2. Flag wins over Env and HEAD
+    let output = String::from_utf8(
+        env.command()
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .env("CUE_TASK", "env-task")
+            .arg("status")
+            .arg("--task")
+            .arg("flag-task")
+            .arg("--json")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    )?;
+    let json: Value = serde_json::from_str(output.trim())?;
+    assert_eq!(json["context"], "flag-task");
+    assert_eq!(json["provenance"], "flag");
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .env("CUE_TASK", "env-task")
+        .arg("status")
+        .arg("--task")
+        .arg("flag-task")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("active task: flag-task (flag)"));
+
+    Ok(())
+}
+
+#[test]
+fn status_in_linked_worktree_reports_main_store_path() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    let wt = env.root().join("wt");
+    let out = std::process::Command::new("git")
+        .args(["worktree", "add", wt.to_str().unwrap(), "-b", "topic"])
+        .current_dir(env.root())
+        .output()
+        .expect("git worktree add failed");
+    assert!(out.status.success());
+
+    let main_store = env.root().join(".test-mem");
+
+    // Inside linked worktree without local HEAD: default master provenance, main store path
+    let output = String::from_utf8(
+        env.command()
+            .current_dir(&wt)
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .arg("status")
+            .arg("--json")
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone(),
+    )?;
+    let json: Value = serde_json::from_str(output.trim())?;
+    assert_eq!(json["context"], "master");
+    assert_eq!(json["provenance"], "default");
+    assert_eq!(json["store"], main_store.to_str().unwrap());
+
+    env.command()
+        .current_dir(&wt)
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("status")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(
+            "active context: master (global) (default)",
+        ))
+        .stdout(predicate::str::contains(format!(
+            "store: {}",
+            main_store.display()
+        )));
 
     Ok(())
 }
