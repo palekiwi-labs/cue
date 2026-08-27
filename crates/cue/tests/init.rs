@@ -254,3 +254,124 @@ fn test_init_remote_branch_exists() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn test_init_in_worktree_with_existing_root_store() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    // Init in main repo first
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    let main_store = env.root().join(".test-mem");
+    assert!(main_store.exists());
+
+    // Create a linked worktree
+    let wt = env.root().join("wt");
+    let out = std::process::Command::new("git")
+        .args(["worktree", "add", wt.to_str().unwrap(), "-b", "topic"])
+        .current_dir(env.root())
+        .output()
+        .expect("git worktree add failed");
+    assert!(out.status.success());
+
+    // Finding the existing store is an early exit and must not depend on the
+    // project registry being readable.
+    fs::write(env.data_dir.join("projects.json"), "not valid json")?;
+
+    // A linked-worktree init reports the root store and exits successfully.
+    env.command()
+        .current_dir(&wt)
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(format!(
+            "Store already exists at {}",
+            main_store.display()
+        )));
+
+    // No local store is created in the linked worktree.
+    let wt_store = wt.join(".test-mem");
+    assert!(
+        !wt_store.exists(),
+        "init inside linked worktree must never create a local store"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_init_in_worktree_without_root_store_fails_loudly() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    // Do NOT run init in main repo
+
+    // Create a linked worktree
+    let wt = env.root().join("wt");
+    let out = std::process::Command::new("git")
+        .args(["worktree", "add", wt.to_str().unwrap(), "-b", "topic"])
+        .current_dir(env.root())
+        .output()
+        .expect("git worktree add failed");
+    assert!(out.status.success());
+
+    // A linked-worktree init fails loudly without a root store.
+    env.command()
+        .current_dir(&wt)
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("no cue store at"))
+        .stderr(predicate::str::contains(
+            "run `cue init` in the main repository",
+        ));
+
+    // No local store is created in the linked worktree.
+    let wt_store = wt.join(".test-mem");
+    assert!(
+        !wt_store.exists(),
+        "init inside linked worktree must never create a local store"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn test_init_in_worktree_rejects_incomplete_root_store() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    let main_store = env.root().join(".test-mem");
+    fs::create_dir(&main_store)?;
+
+    let wt = env.root().join("wt");
+    let out = std::process::Command::new("git")
+        .args(["worktree", "add", wt.to_str().unwrap(), "-b", "topic"])
+        .current_dir(env.root())
+        .output()
+        .expect("git worktree add failed");
+    assert!(out.status.success());
+
+    env.command()
+        .current_dir(&wt)
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("missing `master/`"));
+
+    assert!(!wt.join(".test-mem").exists());
+
+    Ok(())
+}
