@@ -69,7 +69,7 @@ pub fn handle(cwd: &Path, task: Option<String>, json: bool) -> Result<()> {
                 if let Some(st) = status {
                     println!("  status: {}", st);
                 }
-                println!("  context: .cue/{}/", s);
+                println!("  context: {}/{}/", config.dir_name, s);
                 println!("  store: {}", resolved.store_dir.display());
             }
         }

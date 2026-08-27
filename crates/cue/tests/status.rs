@@ -214,7 +214,7 @@ fn status_human_output_task_with_card() -> anyhow::Result<()> {
         .stdout(predicate::str::contains("active task: auth-login (head)"))
         .stdout(predicate::str::contains("title: Implement Login"))
         .stdout(predicate::str::contains("status: in-progress"))
-        .stdout(predicate::str::contains("context: .cue/auth-login/"))
+        .stdout(predicate::str::contains("context: .test-mem/auth-login/"))
         .stdout(predicate::str::contains(format!(
             "store: {}",
             store_path.display()

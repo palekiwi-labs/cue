@@ -28,7 +28,6 @@ pub fn init(root: &Path, config: &Config) -> Result<()> {
 
     // 3. Ensure worktree
     ensure_worktree(root, &cue_path, config)?;
-    fs::create_dir_all(cue_path.join("master"))?;
 
     println!("✓ Initialized {}/ directory", config.dir_name);
     Ok(())

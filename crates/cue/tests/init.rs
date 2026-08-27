@@ -347,7 +347,7 @@ fn test_init_in_worktree_without_root_store_fails_loudly() -> anyhow::Result<()>
 }
 
 #[test]
-fn test_init_in_worktree_rejects_incomplete_root_store() -> anyhow::Result<()> {
+fn test_init_in_worktree_accepts_empty_root_store() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
 
@@ -368,8 +368,8 @@ fn test_init_in_worktree_rejects_incomplete_root_store() -> anyhow::Result<()> {
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("init")
         .assert()
-        .failure()
-        .stderr(predicate::str::contains("missing `master/`"));
+        .success()
+        .stdout(predicate::str::contains("Store already exists at"));
 
     assert!(!wt.join(".test-mem").exists());
 

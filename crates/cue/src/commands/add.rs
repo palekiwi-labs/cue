@@ -20,8 +20,7 @@ pub fn handle(cwd: &Path, opts: AddOptions) -> Result<()> {
     let file_path = add::add(cwd, &config, opts)?;
 
     // 5. Print confirmation
-    let root = git::get_git_root(cwd)?;
-    let rel_path = file_path.strip_prefix(&root).unwrap_or(&file_path);
+    let rel_path = file_path.strip_prefix(&store_root).unwrap_or(&file_path);
     eprintln!("✓ Created");
     println!("{}", rel_path.to_string_lossy());
 

@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git::{get_git_root, list_worktrees};
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
 /// The result of resolving a cue store directory.
@@ -57,10 +57,9 @@ pub fn git_root(start: &Path) -> Result<PathBuf> {
 /// not from the current worktree.
 pub fn open(root: &Path, config: &Config) -> Result<ResolvedStore> {
     let store_dir = git_root(root)?.join(&config.dir_name);
-    if !store_dir.join("master").is_dir() {
+    if !store_dir.is_dir() {
         bail!(
-            "no cue store at {} (missing `master/`); \
-             run `cue init` in the main repository to create it",
+            "no cue store at {}; run `cue init` in the main repository to create it",
             store_dir.display()
         );
     }
@@ -125,7 +124,7 @@ mod tests {
     }
 
     #[test]
-    fn open_missing_master_errors_with_init_hint() {
+    fn open_missing_store_errors_with_init_hint() {
         let tmp = tempdir().unwrap();
         let main = tmp.path().join("main");
         init_repo(&main);
@@ -139,6 +138,19 @@ mod tests {
             msg.contains(&root.join(".cue").display().to_string()),
             "unexpected error: {msg}"
         );
+    }
+
+    #[test]
+    fn open_accepts_store_without_master_scope() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        init_repo(&main);
+        fs::create_dir(main.join(".cue")).unwrap();
+
+        let resolved = open(&main, &Config::default()).unwrap();
+
+        assert_eq!(resolved.store_dir, main.join(".cue"));
+        assert!(!resolved.store_dir.join("master").exists());
     }
 
     #[test]

@@ -107,3 +107,25 @@ fn test_context_show_with_task_flag_and_env() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn context_profiles_task_flag_overrides_env() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+    env.command().arg("init").assert().success();
+
+    let task_dir = env.root().join(".cue/flag-task");
+    fs::create_dir_all(&task_dir)?;
+    fs::write(
+        task_dir.join("context.json"),
+        r#"{"flag-profile": {"artifacts": []}}"#,
+    )?;
+
+    env.command()
+        .env("CUE_TASK", "env-task")
+        .args(["context", "profiles", "--task", "flag-task"])
+        .assert()
+        .success()
+        .stdout("flag-profile\n");
+    Ok(())
+}

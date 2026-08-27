@@ -301,11 +301,11 @@ pub fn gather_context(
     ))
 }
 
-pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
+pub fn init_context(cwd: &Path, force: bool, task: Option<&str>) -> anyhow::Result<PathBuf> {
     let store_root = store::git_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir, None)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
     let config_path = context_json_path(&resolved.store_dir, &scope);
 
     if config_path.exists() && !force {
@@ -385,10 +385,12 @@ mod tests {
 
         let result = load_context_or_config(&absent_path, &fallback);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Context file not found"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Context file not found")
+        );
     }
 
     #[test]
@@ -442,10 +444,12 @@ mod tests {
 
         let result = resolve_profile_with_config("my-task", "default", &root_config, &store);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Profile 'default' not found in config default"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Profile 'default' not found in config default")
+        );
     }
 
     #[test]

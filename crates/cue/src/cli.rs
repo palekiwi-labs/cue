@@ -145,6 +145,9 @@ pub enum ContextCommands {
         /// Overwrite existing context.json
         #[arg(long)]
         force: bool,
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        #[arg(long = "task")]
+        task: Option<String>,
     },
     /// Print raw context.json
     Show {
@@ -153,7 +156,11 @@ pub enum ContextCommands {
         task: Option<String>,
     },
     /// List available profile names
-    Profiles,
+    Profiles {
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        #[arg(long = "task")]
+        task: Option<String>,
+    },
     /// Expand and stream context to stdout
     Render {
         /// Profile name to render
@@ -168,6 +175,9 @@ pub enum ContextCommands {
         /// Show paths for all branches
         #[arg(short = 'a', long)]
         all: bool,
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        #[arg(long = "task")]
+        task: Option<String>,
     },
 }
 

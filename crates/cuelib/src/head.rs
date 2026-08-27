@@ -1,4 +1,4 @@
-use anyhow::{bail, Result};
+use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Component, Path};
@@ -71,11 +71,7 @@ pub fn read_head(cue_dir: &Path) -> Option<String> {
     let head_path = cue_dir.join("HEAD");
     let content = fs::read_to_string(&head_path).ok()?;
     let slug = content.trim().to_string();
-    if slug.is_empty() {
-        None
-    } else {
-        Some(slug)
-    }
+    if slug.is_empty() { None } else { Some(slug) }
 }
 
 /// Write `slug` to `<cue_dir>/HEAD`.
@@ -88,7 +84,7 @@ pub fn write_head(cue_dir: &Path, slug: &str) -> Result<()> {
 
 /// Resolve the active scope following precedence:
 /// 1. `--task <slug>` flag override (if provided, validated via [`validate_slug`])
-/// 2. `$CUE_TASK` environment variable (if set and non-empty, passed through unvalidated)
+/// 2. `$CUE_TASK` environment variable (if set and non-empty, validated via [`validate_slug`])
 /// 3. `<cue_dir>/HEAD` file (if present and non-empty)
 /// 4. `"master"` default
 pub fn resolve_scope(cue_dir: &Path, flag: Option<&str>) -> Result<ResolvedScope> {
@@ -103,6 +99,7 @@ pub fn resolve_scope(cue_dir: &Path, flag: Option<&str>) -> Result<ResolvedScope
     if let Ok(env_val) = std::env::var("CUE_TASK") {
         let trimmed = env_val.trim();
         if !trimmed.is_empty() {
+            validate_slug(trimmed)?;
             return Ok(ResolvedScope {
                 slug: trimmed.to_string(),
                 provenance: ScopeProvenance::Env,
@@ -236,14 +233,13 @@ mod tests {
     }
 
     #[test]
-    fn resolve_scope_env_odd_content_passes_through_unvalidated() {
+    fn resolve_scope_env_invalid_slug_errors() {
         let dir = tempdir().unwrap();
         let cue_dir = dir.path().join(".cue");
         fs::create_dir_all(&cue_dir).unwrap();
         temp_env::with_var("CUE_TASK", Some("odd/path..task"), || {
-            let res = resolve_scope(&cue_dir, None).unwrap();
-            assert_eq!(res.slug, "odd/path..task");
-            assert_eq!(res.provenance, ScopeProvenance::Env);
+            let err = resolve_scope(&cue_dir, None).unwrap_err();
+            assert!(err.to_string().contains("Invalid task slug"));
         });
     }
 
