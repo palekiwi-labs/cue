@@ -39,7 +39,7 @@ pub enum Commands {
     },
     /// Print the active task context
     Status {
-        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long = "task")]
         task: Option<String>,
         /// Output structured JSON instead of human-readable text
@@ -69,7 +69,7 @@ pub enum Commands {
         /// Save artifact at the root of the type directory, not under a <timestamp>-<hash> subdir
         #[arg(long)]
         root: bool,
-        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long = "task")]
         task: Option<String>,
         /// Overwrite existing file
@@ -79,7 +79,7 @@ pub enum Commands {
 
     /// List artifacts for a scope
     List {
-        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long = "task", conflicts_with = "all")]
         task: Option<String>,
         /// List files for all branches
@@ -148,7 +148,7 @@ pub enum ContextCommands {
     },
     /// Print raw context.json
     Show {
-        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long = "task")]
         task: Option<String>,
     },
@@ -159,7 +159,7 @@ pub enum ContextCommands {
         /// Profile name to render
         #[arg(short = 'p', long, default_value = "default")]
         profile: Option<String>,
-        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long = "task")]
         task: Option<String>,
     },
@@ -193,13 +193,13 @@ pub enum LogCommands {
         /// Read entry data from a JSON file
         #[arg(long, conflicts_with_all = &["title", "body", "found", "decided", "open"])]
         file: Option<String>,
-        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long = "task")]
         task: Option<String>,
     },
     /// List log entries
     List {
-        /// List log for a specific task scope instead of current
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long)]
         task: Option<String>,
     },
