@@ -62,6 +62,16 @@ pub fn handle(cwd: &Path, target: Option<String>, json: bool) -> Result<()> {
         }
     }
 
+    if let Ok(env_task) = std::env::var("CUE_TASK") {
+        let trimmed = env_task.trim();
+        if !trimmed.is_empty() {
+            eprintln!(
+                "warning: $CUE_TASK is set ('{}'); switch wrote local HEAD, but $CUE_TASK takes precedence",
+                trimmed
+            );
+        }
+    }
+
     if slug != "master" {
         if json {
             let out = json!({

@@ -261,3 +261,100 @@ fn switch_in_linked_worktree_updates_local_head_and_main_store() -> anyhow::Resu
 
     Ok(())
 }
+
+#[test]
+fn switch_warns_on_stderr_when_cue_task_env_is_set() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .env("CUE_TASK", "active-agent-task")
+        .arg("switch")
+        .arg("human-target")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "warning: $CUE_TASK is set ('active-agent-task')",
+        ))
+        .stdout(predicate::str::diff("switched to task: human-target\n"));
+
+    let head = env.root().join(".cue/HEAD");
+    assert_eq!(std::fs::read_to_string(head)?.trim(), "human-target");
+
+    // Also with --json
+    let out = env
+        .command()
+        .env("CUE_TASK", "active-agent-task")
+        .arg("switch")
+        .arg("json-target")
+        .arg("--json")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains(
+            "warning: $CUE_TASK is set ('active-agent-task')",
+        ))
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&out)?;
+    assert_eq!(json["context"], "json-target");
+    assert_eq!(json["global"], false);
+
+    Ok(())
+}
+
+#[test]
+fn switch_in_fresh_worktree_restores_associated_branch_task() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command().arg("init").assert().success();
+
+    // In main repo, create branch topic-feature and associate it with task my-feature
+    let out = std::process::Command::new("git")
+        .args(["checkout", "-b", "topic-feature"])
+        .current_dir(env.root())
+        .output()
+        .expect("git checkout -b failed");
+    assert!(out.status.success());
+
+    env.command()
+        .arg("switch")
+        .arg("my-feature")
+        .assert()
+        .success();
+
+    // Switch main repo back to main branch
+    let out = std::process::Command::new("git")
+        .args(["checkout", "main"])
+        .current_dir(env.root())
+        .output()
+        .expect("git checkout main failed");
+    assert!(out.status.success());
+
+    // Create a new worktree checked out to topic-feature
+    let wt = env.root().join("wt-feature");
+    let out = std::process::Command::new("git")
+        .args(["worktree", "add", wt.to_str().unwrap(), "topic-feature"])
+        .current_dir(env.root())
+        .output()
+        .expect("git worktree add failed");
+    assert!(out.status.success());
+
+    // In fresh worktree (no .cue/ directory yet), running no-arg `cue switch` restores task association
+    env.command()
+        .current_dir(&wt)
+        .arg("switch")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff("switched to task: my-feature\n"));
+
+    let wt_head = wt.join(".cue/HEAD");
+    assert!(wt_head.exists());
+    assert_eq!(std::fs::read_to_string(wt_head)?.trim(), "my-feature");
+
+    Ok(())
+}
