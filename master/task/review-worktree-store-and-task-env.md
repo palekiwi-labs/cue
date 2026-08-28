@@ -1,6 +1,6 @@
 ---
 title: Review git-root store and CUE_TASK PR
-status: in-progress
+status: complete
 priority: high
 refs:
 - .cue/master/task/worktree-store-and-task-env-impl.md
