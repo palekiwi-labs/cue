@@ -20,7 +20,7 @@ pub fn handle(cwd: &Path, opts: AddOptions) -> Result<()> {
     let file_path = add::add(cwd, &config, opts)?;
 
     // 5. Print confirmation
-    let rel_path = file_path.strip_prefix(&store_root).unwrap_or(&file_path);
+    let rel_path = file_path.strip_prefix(cwd).unwrap_or(&file_path);
     eprintln!("✓ Created");
     println!("{}", rel_path.to_string_lossy());
 
