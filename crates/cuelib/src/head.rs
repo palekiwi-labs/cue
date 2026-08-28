@@ -108,6 +108,7 @@ pub fn resolve_scope(cue_dir: &Path, flag: Option<&str>) -> Result<ResolvedScope
     }
 
     if let Some(head_slug) = read_head(cue_dir) {
+        validate_slug(&head_slug)?;
         return Ok(ResolvedScope {
             slug: head_slug,
             provenance: ScopeProvenance::Head,
@@ -250,6 +251,18 @@ mod tests {
         fs::create_dir_all(&cue_dir).unwrap();
         let err = resolve_scope(&cue_dir, Some("../bad")).unwrap_err();
         assert!(err.to_string().contains("Invalid task slug"));
+    }
+
+    #[test]
+    fn resolve_scope_head_invalid_slug_errors() {
+        let dir = tempdir().unwrap();
+        let cue_dir = dir.path().join(".cue");
+        fs::create_dir_all(&cue_dir).unwrap();
+        fs::write(cue_dir.join("HEAD"), "../bad").unwrap();
+        temp_env::with_var_unset("CUE_TASK", || {
+            let err = resolve_scope(&cue_dir, None).unwrap_err();
+            assert!(err.to_string().contains("Invalid task slug"));
+        });
     }
 
     #[test]
