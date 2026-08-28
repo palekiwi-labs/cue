@@ -236,7 +236,7 @@ pub fn gather_context(
     task: Option<&str>,
 ) -> anyhow::Result<(ResolvedContext, ContextSource)> {
     let profile_name = profile_name.unwrap_or("default");
-    let store_root = store::git_root(cwd)?;
+    let store_root = store::main_worktree_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
     let canonical_store = resolved.store_dir.canonicalize()?;
@@ -302,7 +302,7 @@ pub fn gather_context(
 }
 
 pub fn init_context(cwd: &Path, force: bool, task: Option<&str>) -> anyhow::Result<PathBuf> {
-    let store_root = store::git_root(cwd)?;
+    let store_root = store::main_worktree_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
     let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;

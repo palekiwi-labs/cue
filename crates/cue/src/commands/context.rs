@@ -17,7 +17,7 @@ pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
 }
 
 fn handle_init(cwd: &Path, force: bool, task: Option<&str>) -> anyhow::Result<()> {
-    let store_root = store::git_root(cwd)?;
+    let store_root = store::main_worktree_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved_store = store::open(cwd, &config)?;
     let config_path = init_context(cwd, force, task)?;
@@ -30,7 +30,7 @@ fn handle_init(cwd: &Path, force: bool, task: Option<&str>) -> anyhow::Result<()
 }
 
 fn handle_show(cwd: &Path, task: Option<&str>) -> anyhow::Result<()> {
-    let store_root = store::git_root(cwd)?;
+    let store_root = store::main_worktree_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
     let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
@@ -46,7 +46,7 @@ fn handle_show(cwd: &Path, task: Option<&str>) -> anyhow::Result<()> {
 }
 
 fn handle_profiles(cwd: &Path, task: Option<&str>) -> anyhow::Result<()> {
-    let store_root = store::git_root(cwd)?;
+    let store_root = store::main_worktree_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
     let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
@@ -67,7 +67,7 @@ fn handle_profiles(cwd: &Path, task: Option<&str>) -> anyhow::Result<()> {
 }
 
 fn handle_render(cwd: &Path, profile: Option<String>, task: Option<&str>) -> anyhow::Result<()> {
-    let store_root = store::git_root(cwd)?;
+    let store_root = store::main_worktree_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved_store = store::open(cwd, &config)?;
     let (resolved, source) = gather_context(cwd, profile.as_deref(), task)?;
@@ -97,7 +97,7 @@ fn handle_render(cwd: &Path, profile: Option<String>, task: Option<&str>) -> any
 }
 
 fn handle_path(cwd: &Path, all: bool, task: Option<&str>) -> anyhow::Result<()> {
-    let store_root = store::git_root(cwd)?;
+    let store_root = store::main_worktree_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
 

@@ -23,7 +23,7 @@ where
     }
 }
 
-pub fn get_git_root(cwd: &Path) -> anyhow::Result<PathBuf> {
+pub fn current_worktree_root(cwd: &Path) -> anyhow::Result<PathBuf> {
     let root = run_git(["rev-parse", "--show-toplevel"], cwd)?;
     Ok(PathBuf::from(root))
 }

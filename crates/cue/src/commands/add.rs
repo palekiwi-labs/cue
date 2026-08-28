@@ -11,7 +11,7 @@ pub fn handle(cwd: &Path, opts: AddOptions) -> Result<()> {
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
 
     // 2. Derive store owner
-    let store_root = cuelib::store::git_root(cwd)?;
+    let store_root = cuelib::store::main_worktree_root(cwd)?;
 
     // 3. Load config from git root
     let config = Config::load(&store_root)?;

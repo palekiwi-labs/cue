@@ -15,7 +15,7 @@ struct StatusFm {
 }
 
 pub fn handle(cwd: &Path, task: Option<String>, json: bool) -> Result<()> {
-    let store_root = store::git_root(cwd).context("Not in a git repository")?;
+    let store_root = store::main_worktree_root(cwd).context("Not in a git repository")?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
 

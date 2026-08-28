@@ -10,13 +10,13 @@ pub fn handle(cwd: &Path) -> Result<()> {
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
 
     // 2. Get store root (main git root)
-    let store_root = store::git_root(cwd).context("Not in a git repository")?;
+    let store_root = store::main_worktree_root(cwd).context("Not in a git repository")?;
 
     // 3. Load config from store root
     let config = Config::load(&store_root)?;
 
     // 4. Get local git root
-    let local_root = git::get_git_root(cwd)?;
+    let local_root = git::current_worktree_root(cwd)?;
 
     if local_root != store_root {
         let resolved = store::open(cwd, &config)?;

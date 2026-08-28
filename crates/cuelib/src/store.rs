@@ -1,5 +1,5 @@
 use crate::config::Config;
-use crate::git::{get_git_root, list_worktrees};
+use crate::git::{current_worktree_root, list_worktrees};
 use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
@@ -28,7 +28,7 @@ pub struct ResolvedStore {
 /// Deliberately NOT `git rev-parse --git-common-dir`: that is
 /// cwd-relative and unreliable for submodules and
 /// `--separate-git-dir` checkouts.
-pub fn git_root(start: &Path) -> Result<PathBuf> {
+pub fn main_worktree_root(start: &Path) -> Result<PathBuf> {
     let worktrees = list_worktrees(start)
         .with_context(|| format!("Failed to list git worktrees from {}", start.display()))?;
     let entry0 = worktrees.first().ok_or_else(|| {
@@ -37,7 +37,7 @@ pub fn git_root(start: &Path) -> Result<PathBuf> {
             start.display()
         )
     })?;
-    get_git_root(entry0).with_context(|| {
+    current_worktree_root(entry0).with_context(|| {
         format!(
             "Failed to resolve main worktree {} to a toplevel",
             entry0.display()
@@ -50,20 +50,20 @@ pub fn git_root(start: &Path) -> Result<PathBuf> {
 /// `root` may be any directory inside a worktree of the repository
 /// (usually the current working directory). The store is always the
 /// `<git-root>/<dir_name>` directory, where the git root is the **main
-/// worktree** (see [`git_root`]); `head_dir` stays the local checkout's
+/// worktree** (see [`main_worktree_root`]); `head_dir` stays the local checkout's
 /// `<toplevel>/<dir_name>`.
 ///
-/// The caller should load `config` from [`git_root`] (the store owner),
+/// The caller should load `config` from [`main_worktree_root`] (the store owner),
 /// not from the current worktree.
 pub fn open(root: &Path, config: &Config) -> Result<ResolvedStore> {
-    let store_dir = git_root(root)?.join(&config.dir_name);
+    let store_dir = main_worktree_root(root)?.join(&config.dir_name);
     if !store_dir.is_dir() {
         bail!(
             "no cue store at {}; run `cue init` in the main repository to create it",
             store_dir.display()
         );
     }
-    let head_dir = get_git_root(root)?.join(&config.dir_name);
+    let head_dir = current_worktree_root(root)?.join(&config.dir_name);
     Ok(ResolvedStore {
         head_dir,
         store_dir,
@@ -76,7 +76,7 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    // Helper: create a minimal valid cue store (contains master/ subdir).
+    // Helper: create a cue store with a master scope directory.
     fn make_store(path: &Path) {
         fs::create_dir_all(path.join("master")).unwrap();
     }
@@ -118,7 +118,7 @@ mod tests {
 
         let resolved = open(&main, &Config::default()).unwrap();
 
-        let root = get_git_root(&main).unwrap();
+        let root = current_worktree_root(&main).unwrap();
         assert_eq!(resolved.head_dir, root.join(".cue"));
         assert_eq!(resolved.store_dir, root.join(".cue"));
     }
@@ -133,7 +133,7 @@ mod tests {
 
         let msg = format!("{err:#}");
         assert!(msg.contains("cue init"), "unexpected error: {msg}");
-        let root = get_git_root(&main).unwrap();
+        let root = current_worktree_root(&main).unwrap();
         assert!(
             msg.contains(&root.join(".cue").display().to_string()),
             "unexpected error: {msg}"
@@ -168,8 +168,8 @@ mod tests {
         let resolved = open(&wt, &Config::default()).unwrap();
 
         // Store dir is the main worktree's .cue; head dir is the local one.
-        let main_root = get_git_root(&main).unwrap();
-        let wt_root = get_git_root(&wt).unwrap();
+        let main_root = current_worktree_root(&main).unwrap();
+        let wt_root = current_worktree_root(&wt).unwrap();
         assert_eq!(resolved.store_dir, main_root.join(".cue"));
         assert_eq!(resolved.head_dir, wt_root.join(".cue"));
     }
@@ -234,7 +234,7 @@ mod tests {
 
         let resolved = open(&sub, &Config::default()).unwrap();
 
-        let sub_root = get_git_root(&sub).unwrap();
+        let sub_root = current_worktree_root(&sub).unwrap();
         assert_eq!(resolved.store_dir, sub_root.join(".cue"));
         assert_eq!(resolved.head_dir, sub_root.join(".cue"));
     }
@@ -255,8 +255,8 @@ mod tests {
 
         let resolved = open(&wt, &Config::default()).unwrap();
 
-        let main_root = get_git_root(&main).unwrap();
-        let wt_root = get_git_root(&wt).unwrap();
+        let main_root = current_worktree_root(&main).unwrap();
+        let wt_root = current_worktree_root(&wt).unwrap();
         assert_eq!(resolved.store_dir, main_root.join(".cue"));
         assert_ne!(resolved.store_dir, wt_root.join(".cue"));
         assert_eq!(resolved.head_dir, wt_root.join(".cue"));
@@ -299,14 +299,14 @@ mod tests {
         };
         let resolved = open(&wt, &config).unwrap();
 
-        let main_root = get_git_root(&main).unwrap();
-        let wt_root = get_git_root(&wt).unwrap();
+        let main_root = current_worktree_root(&main).unwrap();
+        let wt_root = current_worktree_root(&wt).unwrap();
         assert_eq!(resolved.store_dir, main_root.join(".memory"));
         assert_eq!(resolved.head_dir, wt_root.join(".memory"));
     }
 
     #[test]
-    fn git_root_returns_main_worktree_from_linked_worktree() {
+    fn main_worktree_root_returns_main_worktree_from_linked_worktree() {
         let tmp = tempdir().unwrap();
         let main = tmp.path().join("main");
         let wt = tmp.path().join("wt");
@@ -320,8 +320,8 @@ mod tests {
         let sub = wt.join("nested");
         fs::create_dir_all(&sub).unwrap();
 
-        let main_root = get_git_root(&main).unwrap();
-        assert_eq!(git_root(&wt).unwrap(), main_root);
-        assert_eq!(git_root(&sub).unwrap(), main_root);
+        let main_root = current_worktree_root(&main).unwrap();
+        assert_eq!(main_worktree_root(&wt).unwrap(), main_root);
+        assert_eq!(main_worktree_root(&sub).unwrap(), main_root);
     }
 }
