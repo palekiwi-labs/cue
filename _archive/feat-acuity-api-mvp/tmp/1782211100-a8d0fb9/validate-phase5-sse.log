@@ -1,0 +1,21 @@
+󰲒 bash -c /home/pl/code/palekiwi-labs/cue/.cue/feat-acuity-api-mvp/bin/1782211100-a8d0fb9/validate-phase5-sse.sh
+
+acuity Phase 5 — SSE live validation
+Target: http://localhost:33223
+
+--- 1. Server health ---
+  PASS  GET /events returns 200
+
+--- 2. Live delivery — all four event types arrive on stream ---
+  PASS  session_idle arrived on stream
+  PASS  agent_turn_completed arrived on stream
+  PASS  tool_call_requested arrived on stream
+  PASS  tool_call_completed arrived on stream
+
+--- 3. Last-Event-ID resume ---
+  session seqs: 9 .. 12
+  reconnecting with Last-Event-ID: 9
+  PASS  resumed from seq 9 — received subsequent events
+  PASS  event at seq 9 not replayed (cursor respected)
+
+All SSE checks passed.

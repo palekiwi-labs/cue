@@ -1,0 +1,52 @@
+󰲒 /home/pl/code/palekiwi-labs/cue/.cue/feat-acuity-api-mvp/bin/1782211100-a8d0fb9/validate-phase5.sh
+
+acuity Phase 5 — curl validation
+Target: http://localhost:33223
+
+--- 1. Server health ---
+  PASS  GET /events returns 200
+
+--- 2. Seed events (POST /events) ---
+  PASS  POST session_idle
+  PASS  POST agent_turn_completed
+  PASS  POST tool_call_requested
+  PASS  POST tool_call_completed
+
+--- 3. GET /events (unfiltered) ---
+  {"events":[{"seq":1,"event_type":"session_idle","session_id":"curl-val-4019711"},{"seq":2,"event_type":"agent_turn_completed","session_id":"curl-val-4019711"},{"seq":3,"event_type":"tool_call_requested","session_id":"curl-val-4019711"},{"seq":4,"event_type":"tool_call_completed","session_id":"curl-val-4019711"}]}
+  PASS  events array has 4 entries (>= 4 expected)
+
+--- 4. GET /events?session_id=curl-val-4019711 ---
+  [{"seq":1,"event_type":"session_idle"},{"seq":2,"event_type":"agent_turn_completed"},{"seq":3,"event_type":"tool_call_requested"},{"seq":4,"event_type":"tool_call_completed"}]
+  PASS  session_id filter returned exactly 4 events
+
+--- 5. GET /events?event_type=session_idle&session_id=curl-val-4019711 ---
+  [{"seq":1,"event_type":"session_idle"}]
+  PASS  event_type filter returned exactly 1 event
+
+--- 6. GET /events?after=<first_seq>&session_id=curl-val-4019711 ---
+  after=1: [{"seq":2,"event_type":"agent_turn_completed"},{"seq":3,"event_type":"tool_call_requested"},{"seq":4,"event_type":"tool_call_completed"}]
+  PASS  after=1 skipped first event, returned 3
+
+--- 7. GET /events?limit=2&session_id=curl-val-4019711 ---
+  [{"seq":1,"event_type":"session_idle"},{"seq":2,"event_type":"agent_turn_completed"}]
+  PASS  limit=2 returned exactly 2 events
+
+--- 8. EventRecord field completeness ---
+  {
+  "seq": 1,
+  "received_at": "2026-06-23T14:06:30Z",
+  "event_type": "session_idle",
+  "session_id": "curl-val-4019711",
+  "turn_id": null,
+  "payload": "{\"type\":\"session_idle\",\"session_id\":\"curl-val-4019711\",\"project_dir\":\"/home/me/proj\",\"session_title\":\"curl-validation\"}"
+}
+  PASS  field 'seq' present and non-empty
+  PASS  field 'received_at' present and non-empty
+  PASS  field 'event_type' present and non-empty
+  PASS  field 'session_id' present and non-empty
+  PASS  field 'payload' present and non-empty
+  PASS  turn_id is null for session_idle (correct)
+  PASS  payload is valid JSON
+
+All checks passed.

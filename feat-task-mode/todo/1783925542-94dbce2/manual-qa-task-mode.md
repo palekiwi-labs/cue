@@ -1,5 +1,5 @@
 ---
-status: open
+status: complete
 priority: normal
 refs:
 - crates/cue/src/commands/switch.rs

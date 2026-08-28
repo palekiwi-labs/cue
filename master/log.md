@@ -437,3 +437,33 @@ Final state: 106 curator tests, full workspace green, clippy clean across all cr
 - **Open:** 4 deferred master tasks: db-sessions-table-normalization, collect-user-turn-messages, improve-session-data-loading (per-session ring-buffer eviction + startup N-session fetch), clipboard-copy-session-id (needs arboard or xclip dependency)
 - **Open:** acuity CorpusChanged event as future evolution target for acumen graph sync
 
+## [f8d1418] Decision: drop active-task injection from cue context render
+
+The idea of emitting an `&lt;active-task&gt;` block (or any task-orientation header) inside `cue context render` output has been explicitly abandoned. Agents that need orientation can call `cue status --json` separately. The context render command should remain purely artifact-focused.
+
+- **Decided:** Do NOT inject active task slug/title/status into `cue context render` output — ever.
+- **Decided:** Agents that need task orientation must call `cue status` (or `cue status --json`) independently.
+- **Decided:** The todo `master/todo/1783930716-2c3c5d8/inject-task-into-context-render.md` is closed as 'will not do'.
+- **Decided:** The only outstanding fix is making `gather_context` use `resolve_scope()` instead of `get_current_branch()`.
+
+## [e798914] release-0.2.0 umbrella created; cue-agent sequencing recorded
+
+A cross-repo coordination session (palekiwi workspace) created the release umbrella for cue's first tag and wired the cue-agent cards together.
+
+- **Found:** cue repo has never been tagged; all crates at 0.1.0; no CHANGELOG.md exists despite 12+ merged PRs
+- **Found:** v0.2.0 will be the first release tag; breaking (link/STORE removal) which a 0.x minor bump signals
+- **Decided:** release-0.2.0 task (kind: coord) + master plan created: candidates are worktree-store-and-task-env-impl, fix-add-filename-normalization, audit-cue-changes; cue-agent explicitly out (gated on this release)
+- **Decided:** cue-agent task card now references the palekiwi umbrella coord card; sequencing note recorded (after cue 0.2.0, parallel with cast 0.2.0)
+- **Open:** User to confirm candidate scope before freeze
+- **Open:** Version strategy for subcrates (all bump to 0.2.0 vs cuelib-only) unresolved until release gate
+
+## [e798914] Task filed: formalize inbox status, default-to-inbox creation
+
+Coordination session fallout: operator adopted the inbox doctrine and the task was filed on this board.
+
+- **Found:** informal status:inbox cards already exist in this store (cast-nix-flake-update, research-offline-mode, nix-host-store-substituter analogues here); formalization makes them valid with no migration
+- **Decided:** formalize-inbox-status task created: formal inbox status, default-to-inbox on task creation (CLI + harness tools), active views exclude inbox, cue.nvim triage UX
+- **Decided:** Registered as 0.2.0 candidate in release-0.2.0 plan scope questions
+- **Open:** Operator to confirm 0.2.0 in/out at scope freeze
+- **Open:** Exact cue.nvim triage UX undecided - settle during implementation
+

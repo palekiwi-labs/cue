@@ -1,0 +1,703 @@
+diff --git a/Cargo.lock b/Cargo.lock
+index 628b153..4c3cc1e 100644
+--- a/Cargo.lock
++++ b/Cargo.lock
+@@ -6,12 +6,15 @@ version = 4
+ name = "acuity"
+ version = "0.1.0"
+ dependencies = [
++ "acuity-api",
+  "acuity-schema",
+  "anyhow",
++ "async-stream",
+  "axum",
+  "chrono",
+  "dirs",
+  "figment",
++ "futures-core",
+  "http-body-util",
+  "reqwest",
+  "serde",
+@@ -28,6 +31,7 @@ dependencies = [
+ name = "acuity-api"
+ version = "0.1.0"
+ dependencies = [
++ "acuity-schema",
+  "serde",
+ ]
+ 
+@@ -221,6 +225,28 @@ dependencies = [
+  "wait-timeout",
+ ]
+ 
++[[package]]
++name = "async-stream"
++version = "0.3.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "0b5a71a6f37880a80d1d7f19efd781e4b5de42c88f0722cc13bcb6cc2cfe8476"
++dependencies = [
++ "async-stream-impl",
++ "futures-core",
++ "pin-project-lite",
++]
++
++[[package]]
++name = "async-stream-impl"
++version = "0.3.6"
++source = "registry+https://github.com/rust-lang/crates.io-index"
++checksum = "c7c24de15d275a1ecfd47a380fb4d5ec9bfe0933f309ed5e705b775596a3574d"
++dependencies = [
++ "proc-macro2",
++ "quote",
++ "syn",
++]
++
+ [[package]]
+ name = "atoi"
+ version = "2.0.0"
+diff --git a/crates/acuity-api/Cargo.toml b/crates/acuity-api/Cargo.toml
+index 262bd29..e67ade3 100644
+--- a/crates/acuity-api/Cargo.toml
++++ b/crates/acuity-api/Cargo.toml
+@@ -5,5 +5,4 @@ edition = "2024"
+ 
+ [dependencies]
+ serde = { version = "1", features = ["derive"] }
+-serde_json = "1"
+ acuity-schema = { path = "../acuity-schema" }
+diff --git a/crates/acuity-api/src/lib.rs b/crates/acuity-api/src/lib.rs
+index 850e069..e886cc2 100644
+--- a/crates/acuity-api/src/lib.rs
++++ b/crates/acuity-api/src/lib.rs
+@@ -34,10 +34,21 @@ pub struct EventRecord {
+ 
+ /// Response body for `GET /events`.
+ ///
+-/// Pagination contract: if `events.len() == limit` (the requested page size),
+-/// there may be more rows. Resume by setting `after` to the `seq` of the last
+-/// returned record. If `events.len() < limit`, this is the final page.
++/// Pagination contract: loop, calling `GET /events?after=<cursor>`, until
++/// `next_after` is `None`. After each page set `after` to `next_after` (the
++/// `seq` of the last returned record). `next_after` is `Some(seq)` when the
++/// page was full — meaning more matching rows may exist — and `None` once a
++/// short page is returned (the final page).
++///
++/// The server decides "is there more?" so the client never depends on the
++/// server's internal page-size clamp. Do NOT infer the end of the result set
++/// from `events.len() == requested limit`: the server may clamp `limit` below
++/// what the client requested.
+ #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+ pub struct EventsPage {
+     pub events: Vec<EventRecord>,
++    /// `Some(last_record.seq)` when this page is full (more rows may follow);
++    /// `None` on the final page. Use as the next `after` cursor.
++    #[serde(default)]
++    pub next_after: Option<i64>,
+ }
+diff --git a/crates/acuity/src/config.rs b/crates/acuity/src/config.rs
+index 1804709..6b16119 100644
+--- a/crates/acuity/src/config.rs
++++ b/crates/acuity/src/config.rs
+@@ -1,6 +1,6 @@
+ use figment::{
+-    providers::{Env, Format, Json, Serialized},
+     Figment,
++    providers::{Env, Format, Json, Serialized},
+ };
+ use serde::{Deserialize, Serialize};
+ 
+diff --git a/crates/acuity/src/db.rs b/crates/acuity/src/db.rs
+index 6f53998..02afb54 100644
+--- a/crates/acuity/src/db.rs
++++ b/crates/acuity/src/db.rs
+@@ -55,8 +55,7 @@ pub async fn insert_event(
+     received_at: DateTime<Utc>,
+     payload: &str,
+ ) -> sqlx::Result<i64> {
+-    let received_at_str =
+-        received_at.to_rfc3339_opts(SecondsFormat::Secs, true);
++    let received_at_str = received_at.to_rfc3339_opts(SecondsFormat::Secs, true);
+     let result = sqlx::query(
+         "INSERT INTO events (received_at, event_type, session_id, turn_id, payload)
+          VALUES (?, ?, ?, ?, ?)",
+@@ -81,13 +80,18 @@ pub async fn insert_event(
+ ///
+ /// Results are ordered by `seq` ascending so callers can use the last
+ /// returned `seq` as the next `after` cursor.
++///
++/// Returns the records plus a pagination cursor: `Some(last_record.seq)` when
++/// the page was full (`records.len() == clamped_limit`, so more matching rows
++/// may exist), or `None` on a short page (the final page). The caller decides
++/// pagination from this cursor, not from the requested `limit`.
+ pub async fn query_events_after(
+     pool: &SqlitePool,
+     after: i64,
+     limit: i64,
+     session_id: Option<&str>,
+     event_type: Option<&str>,
+-) -> sqlx::Result<Vec<acuity_api::EventRecord>> {
++) -> sqlx::Result<(Vec<acuity_api::EventRecord>, Option<i64>)> {
+     let clamped_limit = limit.clamp(1, 500);
+ 
+     let mut builder = sqlx::QueryBuilder::new(
+@@ -108,13 +112,10 @@ pub async fn query_events_after(
+     builder.push(" ORDER BY seq LIMIT ");
+     builder.push_bind(clamped_limit);
+ 
+-    let rows = builder
+-        .build()
+-        .fetch_all(pool)
+-        .await?;
++    let rows = builder.build().fetch_all(pool).await?;
+ 
+     use sqlx::Row as _;
+-    let records = rows
++    let records: Vec<acuity_api::EventRecord> = rows
+         .into_iter()
+         .map(|row| acuity_api::EventRecord {
+             seq: row.get("seq"),
+@@ -126,7 +127,16 @@ pub async fn query_events_after(
+         })
+         .collect();
+ 
+-    Ok(records)
++    // Full page -> more rows may exist; report the resume cursor. A short page
++    // (incl. empty) is the final page. If exactly `clamped_limit` rows remain,
++    // the client resumes and gets an empty page + None on the next call.
++    let next_after = if records.len() as i64 == clamped_limit {
++        records.last().map(|r| r.seq)
++    } else {
++        None
++    };
++
++    Ok((records, next_after))
+ }
+ 
+ /// Test-only: create an in-memory SQLite pool with the schema applied.
+@@ -159,8 +169,7 @@ mod tests {
+ 
+     use super::*;
+     use acuity_schema::{
+-        AgentTurnCompleted, AcuityEvent, SessionIdle, ToolCallCompleted,
+-        ToolCallRequested,
++        AcuityEvent, AgentTurnCompleted, SessionIdle, ToolCallCompleted, ToolCallRequested,
+     };
+     use serde_json::json;
+ 
+@@ -208,8 +217,7 @@ mod tests {
+         let raw = r#"{"type":"session_idle","session_id":"s1","project_dir":"/home/pl/code","session_title":"hack"}"#;
+ 
+         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
+-        let (event_type, session_id, turn_id, payload, received_at) =
+-            fetch_row(&pool, seq).await;
++        let (event_type, session_id, turn_id, payload, received_at) = fetch_row(&pool, seq).await;
+ 
+         assert_eq!(event_type, "session_idle");
+         assert_eq!(session_id, "s1");
+@@ -231,8 +239,7 @@ mod tests {
+         let raw = r#"{"type":"agent_turn_completed","session_id":"s1","turn_id":"t1","input_tokens":120,"output_tokens":340}"#;
+ 
+         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
+-        let (event_type, session_id, turn_id, _payload, _received_at) =
+-            fetch_row(&pool, seq).await;
++        let (event_type, session_id, turn_id, _payload, _received_at) = fetch_row(&pool, seq).await;
+ 
+         assert_eq!(event_type, "agent_turn_completed");
+         assert_eq!(session_id, "s1");
+@@ -252,8 +259,7 @@ mod tests {
+         let raw = r#"{"type":"tool_call_requested","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"read","args":{"path":"/x","limit":50}}"#;
+ 
+         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
+-        let (event_type, session_id, turn_id, payload, _received_at) =
+-            fetch_row(&pool, seq).await;
++        let (event_type, session_id, turn_id, payload, _received_at) = fetch_row(&pool, seq).await;
+ 
+         assert_eq!(event_type, "tool_call_requested");
+         assert_eq!(session_id, "s1");
+@@ -275,8 +281,7 @@ mod tests {
+         let raw = r#"{"type":"tool_call_completed","session_id":"s1","turn_id":"t1","tool_call_id":"c1","tool_name":"bash","is_error":true,"error_text":"command not found: fd"}"#;
+ 
+         let seq = insert_event(&pool, &ev, test_ts(), raw).await.unwrap();
+-        let (event_type, _session_id, turn_id, payload, _received_at) =
+-            fetch_row(&pool, seq).await;
++        let (event_type, _session_id, turn_id, payload, _received_at) = fetch_row(&pool, seq).await;
+ 
+         assert_eq!(event_type, "tool_call_completed");
+         assert_eq!(turn_id.as_deref(), Some("t1"));
+diff --git a/crates/acuity/src/main.rs b/crates/acuity/src/main.rs
+index 8b64a8f..611e52d 100644
+--- a/crates/acuity/src/main.rs
++++ b/crates/acuity/src/main.rs
+@@ -86,7 +86,7 @@ fn default_limit() -> i64 {
+ async fn query_events(
+     State(state): State<AppState>,
+     Query(params): Query<EventsQuery>,
+-) -> Json<acuity_api::EventsPage> {
++) -> Result<Json<acuity_api::EventsPage>, StatusCode> {
+     // Normalise: negative after is harmless but confusing; clamp to 0.
+     let after = params.after.max(0);
+ 
+@@ -99,10 +99,10 @@ async fn query_events(
+     )
+     .await
+     {
+-        Ok(events) => Json(acuity_api::EventsPage { events }),
++        Ok((events, next_after)) => Ok(Json(acuity_api::EventsPage { events, next_after })),
+         Err(err) => {
+             error!("query_events failed: {}", err);
+-            Json(acuity_api::EventsPage { events: vec![] })
++            Err(StatusCode::INTERNAL_SERVER_ERROR)
+         }
+     }
+ }
+@@ -121,26 +121,53 @@ fn parse_last_event_id(headers: &HeaderMap) -> i64 {
+         .unwrap_or(0)
+ }
+ 
++/// Rows fetched per SSE drain query.
++const SSE_PAGE_SIZE: i64 = 50;
++
++/// Maximum full pages drained per 500 ms poll cycle. Bounds catch-up so a
++/// sustained write burst cannot monopolise the task and starve the keepalive
++/// pings; backlog beyond this resumes from the last `seq` on the next cycle.
++const SSE_MAX_DRAIN_PAGES: usize = 10;
++
+ async fn sse_handler(
+     State(state): State<AppState>,
+     headers: HeaderMap,
+ ) -> Sse<impl futures_core::Stream<Item = Result<Event, std::convert::Infallible>>> {
+     let cursor = parse_last_event_id(&headers).max(0);
+ 
++    // Poll-based tailing. Correctness relies on a single writer (the ingest
++    // path in `handle_event`): with `seq INTEGER PRIMARY KEY AUTOINCREMENT`,
++    // assignment order equals commit order, so advancing the cursor past every
++    // fetched `seq` never skips a row. Concurrent writers could diverge
++    // assignment from commit order and race this poll loop -- not supported.
+     let stream = async_stream::stream! {
+         let mut seq = cursor;
+         loop {
+-            // Drain: keep fetching until a short page, then sleep.
+-            loop {
+-                match db::query_events_after(&state.db, seq, 50, None, None).await {
+-                    Ok(records) => {
+-                        let is_last_page = records.len() < 50;
++            // Drain buffered rows, but cap the iterations per cycle so a
++            // sustained burst can't keep us here forever and starve the sleep
++            // / keepalive below. A short page (or the cap) falls through to
++            // the 500 ms sleep, then we poll again from the last `seq`.
++            for _ in 0..SSE_MAX_DRAIN_PAGES {
++                match db::query_events_after(
++                    &state.db,
++                    seq,
++                    SSE_PAGE_SIZE,
++                    None,
++                    None,
++                )
++                .await
++                {
++                    Ok((records, next_after)) => {
++                        let is_last_page = next_after.is_none();
+                         for record in records {
+                             seq = record.seq;
+                             let data = match serde_json::to_string(&record) {
+                                 Ok(s) => s,
+                                 Err(err) => {
+-                                    error!("sse: failed to serialize EventRecord: {}", err);
++                                    error!(
++                                        "sse: failed to serialize EventRecord: {}",
++                                        err
++                                    );
+                                     continue;
+                                 }
+                             };
+@@ -162,9 +189,7 @@ async fn sse_handler(
+         }
+     };
+ 
+-    Sse::new(stream).keep_alive(
+-        KeepAlive::new().interval(std::time::Duration::from_secs(15)),
+-    )
++    Sse::new(stream).keep_alive(KeepAlive::new().interval(std::time::Duration::from_secs(15)))
+ }
+ 
+ #[tokio::main]
+@@ -184,9 +209,7 @@ async fn main() -> anyhow::Result<()> {
+         Some(_) => info!("Gotify notifications enabled"),
+         None => info!("Gotify token not set, notifications disabled"),
+     }
+-    if gotify_token.is_some()
+-        && cfg.gotify_url == config::Config::default().gotify_url
+-    {
++    if gotify_token.is_some() && cfg.gotify_url == config::Config::default().gotify_url {
+         tracing::warn!(
+             "ACUITY_GOTIFY_TOKEN is set but gotify_url is still the default; \
+              notifications will likely fail"
+@@ -270,9 +293,7 @@ async fn handle_event(
+     body: axum::body::Bytes,
+ ) -> StatusCode {
+     // 1. Validate schema version header (parse as u8, not string compare)
+-    let schema_header = headers
+-        .get("x-acuity-schema")
+-        .and_then(|v| v.to_str().ok());
++    let schema_header = headers.get("x-acuity-schema").and_then(|v| v.to_str().ok());
+ 
+     let version: u8 = match schema_header.and_then(|v| v.trim().parse().ok()) {
+         Some(v) => v,
+@@ -308,8 +329,7 @@ async fn handle_event(
+ 
+     // 4. Payload = raw request bytes (faithful copy, not re-serialized).
+     //    serde_json::from_slice already validated UTF-8, so unwrap is safe.
+-    let payload =
+-        String::from_utf8(body.to_vec()).expect("serde_json validated UTF-8");
++    let payload = String::from_utf8(body.to_vec()).expect("serde_json validated UTF-8");
+ 
+     // 5. Persist to SQLite — failure returns 500
+     match db::insert_event(&state.db, &event, received_at, &payload).await {
+diff --git a/crates/acuity/src/tests.rs b/crates/acuity/src/tests.rs
+index 0f66452..f05b310 100644
+--- a/crates/acuity/src/tests.rs
++++ b/crates/acuity/src/tests.rs
+@@ -123,9 +123,7 @@ async fn unknown_event_type_returns_422() {
+     let state = test_state_with_url("http://localhost:80".into()).await;
+     let app = make_app(state);
+     // Missing / unknown "type" discriminant — must 422
+-    let status =
+-        send_request(app, Some("1"), r#"{"type":"nope","session_id":"x"}"#)
+-            .await;
++    let status = send_request(app, Some("1"), r#"{"type":"nope","session_id":"x"}"#).await;
+     assert_eq!(status, axum::http::StatusCode::UNPROCESSABLE_ENTITY);
+ }
+ 
+@@ -152,11 +150,10 @@ async fn valid_event_persists_correct_event_type() {
+ 
+     send_request(app, Some("1"), SESSION_IDLE_BODY).await;
+ 
+-    let event_type: String =
+-        sqlx::query_scalar("SELECT event_type FROM events LIMIT 1")
+-            .fetch_one(&pool)
+-            .await
+-            .unwrap();
++    let event_type: String = sqlx::query_scalar("SELECT event_type FROM events LIMIT 1")
++        .fetch_one(&pool)
++        .await
++        .unwrap();
+     assert_eq!(event_type, "session_idle");
+ }
+ 
+@@ -183,8 +180,7 @@ async fn valid_session_idle_forwards_to_gotify() {
+     // The Gotify call is fire-and-forget (tokio::spawn); the JoinHandle is
+     // dropped inside handle_event and is not accessible here. Poll until
+     // wiremock records the expected request rather than using a fixed sleep.
+-    let deadline = std::time::Instant::now()
+-        + std::time::Duration::from_millis(500);
++    let deadline = std::time::Instant::now() + std::time::Duration::from_millis(500);
+     loop {
+         if mock_server.received_requests().await.map_or(0, |r| r.len()) >= 1 {
+             break;
+@@ -289,18 +285,10 @@ fn basename_relative_no_dir_component() {
+ // GET /events/stream — SSE smoke tests
+ // ---------------------------------------------------------------------------
+ 
+-async fn sse_first_data_line(state: AppState) -> String {
+-    let app = make_app(state);
+-    let request = axum::http::Request::builder()
+-        .method("GET")
+-        .uri("/events/stream")
+-        .header("Accept", "text/event-stream")
+-        .body(Body::empty())
+-        .unwrap();
+-    let response = app.oneshot(request).await.unwrap();
+-    assert_eq!(response.status(), axum::http::StatusCode::OK);
+-
+-    // Read chunks until we find a "data:" line.
++/// Read chunks from an SSE response until the first `data:` frame, returning
++/// its trimmed payload. Panics if no data frame arrives within 2 s.
++async fn first_data_frame(response: axum::http::Response<Body>) -> String {
++    use http_body_util::BodyExt as _;
+     let mut body = response.into_body();
+     let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+     loop {
+@@ -308,7 +296,6 @@ async fn sse_first_data_line(state: AppState) -> String {
+             std::time::Instant::now() < deadline,
+             "timed out waiting for SSE data frame"
+         );
+-        use http_body_util::BodyExt as _;
+         if let Some(Ok(frame)) = body.frame().await {
+             if let Ok(bytes) = frame.into_data() {
+                 let chunk = String::from_utf8_lossy(&bytes);
+@@ -324,6 +311,45 @@ async fn sse_first_data_line(state: AppState) -> String {
+     }
+ }
+ 
++/// Open an SSE stream against a fresh app built from `state`, asserting a 200
++/// response, and return the first `data:` payload.
++async fn sse_first_data_line(state: AppState) -> String {
++    let app = make_app(state);
++    let request = axum::http::Request::builder()
++        .method("GET")
++        .uri("/events/stream")
++        .header("Accept", "text/event-stream")
++        .body(Body::empty())
++        .unwrap();
++    let response = app.oneshot(request).await.unwrap();
++    assert_eq!(response.status(), axum::http::StatusCode::OK);
++    first_data_frame(response).await
++}
++
++#[tokio::test]
++async fn sse_response_has_event_stream_content_type() {
++    let state = test_state_no_gotify().await;
++    let app = make_app(state);
++    let request = axum::http::Request::builder()
++        .method("GET")
++        .uri("/events/stream")
++        .header("Accept", "text/event-stream")
++        .body(Body::empty())
++        .unwrap();
++    let response = app.oneshot(request).await.unwrap();
++    assert_eq!(response.status(), axum::http::StatusCode::OK);
++    let content_type = response
++        .headers()
++        .get("content-type")
++        .and_then(|v| v.to_str().ok())
++        .expect("Content-Type header must be present");
++    assert!(
++        content_type.starts_with("text/event-stream"),
++        "expected text/event-stream, got: {}",
++        content_type
++    );
++}
++
+ #[tokio::test]
+ async fn sse_delivers_existing_event_on_connect() {
+     let state = test_state_no_gotify().await;
+@@ -361,30 +387,12 @@ async fn sse_last_event_id_resumes_from_cursor() {
+     let response = app2.oneshot(request).await.unwrap();
+     assert_eq!(response.status(), axum::http::StatusCode::OK);
+ 
+-    let mut body = response.into_body();
+-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+-    loop {
+-        assert!(std::time::Instant::now() < deadline, "timed out");
+-        use http_body_util::BodyExt as _;
+-        if let Some(Ok(frame)) = body.frame().await {
+-            if let Ok(bytes) = frame.into_data() {
+-                let chunk = String::from_utf8_lossy(&bytes);
+-                for line in chunk.lines() {
+-                    if let Some(rest) = line.strip_prefix("data:") {
+-                        let record: acuity_api::EventRecord =
+-                            serde_json::from_str(rest.trim())
+-                                .expect("must be valid EventRecord");
+-                        // Must be the second event, not the first
+-                        assert_eq!(record.seq, 2);
+-                        assert_eq!(record.event_type, "agent_turn_completed");
+-                        return;
+-                    }
+-                }
+-            }
+-        } else {
+-            panic!("SSE stream ended unexpectedly");
+-        }
+-    }
++    let data = first_data_frame(response).await;
++    let record: acuity_api::EventRecord =
++        serde_json::from_str(&data).expect("must be valid EventRecord");
++    // Must be the second event, not the first
++    assert_eq!(record.seq, 2);
++    assert_eq!(record.event_type, "agent_turn_completed");
+ }
+ 
+ // ---------------------------------------------------------------------------
+@@ -509,3 +517,80 @@ async fn query_record_fields_correct() {
+     assert_eq!(rec.payload, SESSION_IDLE_BODY);
+     assert!(!rec.received_at.is_empty());
+ }
++
++// ---------------------------------------------------------------------------
++// GET /events — pagination cursor (`next_after`)
++//
++// The server owns the "is there more?" decision so clients never depend on
++// the server's internal page-size clamp. Loop until `next_after` is `None`.
++// ---------------------------------------------------------------------------
++
++#[tokio::test]
++async fn query_next_after_none_on_short_page() {
++    let state = test_state_no_gotify().await;
++    let app = make_app(state.clone());
++
++    // Two events; default limit (100) >> row count -> short page.
++    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
++    send_request(app.clone(), Some("1"), AGENT_TURN_BODY).await;
++
++    let app2 = make_app(state);
++    let resp = get_events(app2, "").await;
++    let page = body_json(resp).await;
++    assert_eq!(page.events.len(), 2);
++    assert_eq!(page.next_after, None);
++}
++
++#[tokio::test]
++async fn query_next_after_some_on_full_page() {
++    let state = test_state_no_gotify().await;
++    let app = make_app(state.clone());
++
++    // Three events; request limit=2 -> full page, must report a resume cursor.
++    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
++    send_request(app.clone(), Some("1"), AGENT_TURN_BODY).await;
++    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY_S2).await;
++
++    let app2 = make_app(state);
++    let resp = get_events(app2, "limit=2").await;
++    let page = body_json(resp).await;
++    assert_eq!(page.events.len(), 2);
++    // Cursor is the seq of the last returned row; resume with after=<that seq>.
++    assert_eq!(page.next_after, Some(page.events[1].seq));
++}
++
++#[tokio::test]
++async fn query_next_after_resumes_and_terminates() {
++    let state = test_state_no_gotify().await;
++    let app = make_app(state.clone());
++
++    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;
++    send_request(app.clone(), Some("1"), AGENT_TURN_BODY).await;
++    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY_S2).await;
++
++    // Page 1: limit=2 -> full page, cursor set.
++    let app2 = make_app(state.clone());
++    let page = body_json(get_events(app2, "limit=2").await).await;
++    assert_eq!(page.events.len(), 2);
++    let cursor = page.next_after.expect("full page must set cursor");
++
++    // Page 2: resume at the cursor -> exactly the remaining row, cursor None.
++    let app3 = make_app(state);
++    let next_uri = format!("limit=2&after={}", cursor);
++    let page = body_json(get_events(app3, &next_uri).await).await;
++    assert_eq!(page.events.len(), 1);
++    assert_eq!(page.next_after, None);
++}
++
++#[tokio::test]
++async fn query_db_failure_returns_500() {
++    // A DB failure must surface as 500, not a 200 OK with an empty page
++    // (which a paginating client would mistake for "final page reached").
++    let state = test_state_no_gotify().await;
++    // Close the pool so the query path fails.
++    state.db.close().await;
++
++    let app = make_app(state);
++    let resp = get_events(app, "").await;
++    assert_eq!(resp.status(), axum::http::StatusCode::INTERNAL_SERVER_ERROR);
++}
+diff --git a/crates/cue/src/add/mod.rs b/crates/cue/src/add/mod.rs
+index aa28464..85bb4ef 100644
+--- a/crates/cue/src/add/mod.rs
++++ b/crates/cue/src/add/mod.rs
+@@ -1,6 +1,6 @@
+ use crate::config::Config;
+ use crate::git;
+-use anyhow::{bail, Context, Result};
++use anyhow::{Context, Result, bail};
+ use std::fs;
+ use std::io::Cursor;
+ use std::path::{Component, Path, PathBuf};
+diff --git a/crates/cue/src/commands/project.rs b/crates/cue/src/commands/project.rs
+index 70227ae..a24527a 100644
+--- a/crates/cue/src/commands/project.rs
++++ b/crates/cue/src/commands/project.rs
+@@ -1,6 +1,6 @@
+ use crate::cli::ProjectCommands;
+ use anyhow::Result;
+-use cuelib::project::{derive_project_key, ProjectStore};
++use cuelib::project::{ProjectStore, derive_project_key};
+ use std::path::{Path, PathBuf};
+ 
+ pub fn handle(cwd: &Path, command: ProjectCommands) -> Result<()> {
+@@ -59,11 +59,7 @@ fn resolve_path(cwd: &Path, explicit: Option<&str>) -> PathBuf {
+     match explicit {
+         Some(p) => {
+             let p = PathBuf::from(p);
+-            if p.is_absolute() {
+-                p
+-            } else {
+-                cwd.join(p)
+-            }
++            if p.is_absolute() { p } else { cwd.join(p) }
+         }
+         None => cwd.to_path_buf(),
+     }
+diff --git a/crates/cue/src/list/mod.rs b/crates/cue/src/list/mod.rs
+index 6ea9a37..eff63ca 100644
+--- a/crates/cue/src/list/mod.rs
++++ b/crates/cue/src/list/mod.rs
+@@ -63,10 +63,7 @@ impl FromStr for Filter {
+ }
+ 
+ /// Walk a dot-separated path into a JSON value.
+-fn get_nested<'a>(
+-    value: &'a serde_json::Value,
+-    path: &[String],
+-) -> Option<&'a serde_json::Value> {
++fn get_nested<'a>(value: &'a serde_json::Value, path: &[String]) -> Option<&'a serde_json::Value> {
+     path.iter().try_fold(value, |v, key| v.get(key))
+ }
+ 
+@@ -291,10 +288,7 @@ pub fn to_cue_file(path: &Path, cue_path: &Path, root: &Path) -> Option<CueFile>
+                 cue_file.commit_hash = Some(hash_str.to_string());
+ 
+                 // name is relative to the ts-hash dir
+-                let prefix = cue_path
+-                    .join(&branch)
+-                    .join(&category)
+-                    .join(ts_hash_dir);
++                let prefix = cue_path.join(&branch).join(&category).join(ts_hash_dir);
+                 if let Ok(rel_name) = path.strip_prefix(&prefix) {
+                     cue_file.name = rel_name.to_string_lossy().to_string();
+                 }
+diff --git a/crates/cue/src/log/mod.rs b/crates/cue/src/log/mod.rs
+index f0cbbbf..f9f745b 100644
+--- a/crates/cue/src/log/mod.rs
++++ b/crates/cue/src/log/mod.rs
+@@ -1,6 +1,6 @@
+ use crate::config::Config;
+ use crate::git;
+-use anyhow::{bail, Context, Result};
++use anyhow::{Context, Result, bail};
+ use serde::Deserialize;
+ use std::fmt::Write as _;
+ use std::fs::{self, OpenOptions};
+diff --git a/crates/cue/tests/list.rs b/crates/cue/tests/list.rs
+index 6ed2674..2549932 100644
+--- a/crates/cue/tests/list.rs
++++ b/crates/cue/tests/list.rs
+@@ -585,7 +585,7 @@ fn test_list_json_spec() -> anyhow::Result<()> {
+     assert_eq!(item["name"], "index.md");
+     assert_eq!(item["category"], "spec");
+     assert_eq!(item["branch"], "main"); // default git branch in setup_git_repo is main
+-                                        // Root artifact: no hash or timestamp
++    // Root artifact: no hash or timestamp
+     assert!(item["hash"].is_null());
+     assert!(item["commit_hash"].is_null());
+     assert_eq!(item["commit_timestamp"], 0);
+diff --git a/crates/cuelib/src/config.rs b/crates/cuelib/src/config.rs
+index 575aef8..9ad4498 100644
+--- a/crates/cuelib/src/config.rs
++++ b/crates/cuelib/src/config.rs
+@@ -1,6 +1,6 @@
+ use figment::{
+-    providers::{Env, Format, Json, Serialized},
+     Figment,
++    providers::{Env, Format, Json, Serialized},
+ };
+ use serde::{Deserialize, Serialize};
+ use std::collections::HashMap;
+diff --git a/crates/cuelib/src/git.rs b/crates/cuelib/src/git.rs
+index a87c0fc..d9f3d24 100644
+--- a/crates/cuelib/src/git.rs
++++ b/crates/cuelib/src/git.rs
+@@ -1,4 +1,4 @@
+-use anyhow::{anyhow, Context};
++use anyhow::{Context, anyhow};
+ use std::ffi::OsStr;
+ use std::path::{Path, PathBuf};
+ use std::process::Command;

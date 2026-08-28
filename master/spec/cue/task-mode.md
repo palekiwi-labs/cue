@@ -277,13 +277,12 @@ immediately oriented without needing to query the active task themselves.
 
 ---
 
-## Deferred
+## Git worktrees
 
-**Git worktrees.** A single `.cue/HEAD` is shared across all worktrees in a
-multi-worktree setup. Two parallel agents can overwrite each other's active
-context. The full solution — per-worktree HEAD files mirroring git's own
-mechanism — is deferred. Mitigation: use `--task <slug>` explicitly in
-automated multi-worktree workflows.
+Git worktrees share the artifact store rooted at the main Git worktree while
+each worktree keeps its own local `.cue/HEAD`. Automated sessions should set
+`$CUE_TASK` or pass `--task <slug>` explicitly so their scope does not depend
+on the human-owned HEAD file.
 
 ---
 
