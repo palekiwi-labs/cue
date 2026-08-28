@@ -39,6 +39,9 @@ pub enum Commands {
     },
     /// Print the active task context
     Status {
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        #[arg(long = "task")]
+        task: Option<String>,
         /// Output structured JSON instead of human-readable text
         #[arg(long)]
         json: bool,
@@ -66,7 +69,7 @@ pub enum Commands {
         /// Save artifact at the root of the type directory, not under a <timestamp>-<hash> subdir
         #[arg(long)]
         root: bool,
-        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long = "task")]
         task: Option<String>,
         /// Overwrite existing file
@@ -76,7 +79,7 @@ pub enum Commands {
 
     /// List artifacts for a scope
     List {
-        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long = "task", conflicts_with = "all")]
         task: Option<String>,
         /// List files for all branches
@@ -127,17 +130,6 @@ pub enum Commands {
         #[command(subcommand)]
         command: ProjectCommands,
     },
-    /// Initialize a proxy .cue/ directory that redirects artifact I/O to a
-    /// shared store while keeping HEAD local
-    #[command(arg_required_else_help = true)]
-    Link {
-        /// Absolute path to the real .cue/ store to link to.
-        /// Must exist and contain a master/ subdirectory.
-        store_path: std::path::PathBuf,
-        /// Task slug to write to HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
-    },
 }
 
 #[derive(Subcommand)]
@@ -153,22 +145,39 @@ pub enum ContextCommands {
         /// Overwrite existing context.json
         #[arg(long)]
         force: bool,
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        #[arg(long = "task")]
+        task: Option<String>,
     },
     /// Print raw context.json
-    Show,
+    Show {
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        #[arg(long = "task")]
+        task: Option<String>,
+    },
     /// List available profile names
-    Profiles,
+    Profiles {
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        #[arg(long = "task")]
+        task: Option<String>,
+    },
     /// Expand and stream context to stdout
     Render {
         /// Profile name to render
         #[arg(short = 'p', long, default_value = "default")]
         profile: Option<String>,
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        #[arg(long = "task")]
+        task: Option<String>,
     },
     /// Print absolute path to context.json
     Path {
         /// Show paths for all branches
         #[arg(short = 'a', long)]
         all: bool,
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        #[arg(long = "task")]
+        task: Option<String>,
     },
 }
 
@@ -194,13 +203,13 @@ pub enum LogCommands {
         /// Read entry data from a JSON file
         #[arg(long, conflicts_with_all = &["title", "body", "found", "decided", "open"])]
         file: Option<String>,
-        /// Override active task scope for this invocation (without modifying .cue/HEAD)
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long = "task")]
         task: Option<String>,
     },
     /// List log entries
     List {
-        /// List log for a specific task scope instead of current
+        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long)]
         task: Option<String>,
     },

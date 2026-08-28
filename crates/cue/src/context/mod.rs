@@ -1,5 +1,4 @@
 use crate::config::{Config, ContextConfig, ContextProfile};
-use crate::git::get_git_root;
 use cuelib::store;
 use glob::glob;
 use serde::{Deserialize, Serialize};
@@ -30,7 +29,7 @@ pub enum ContextSource {
 /// Returns the path to the `context.json` file for `scope` within `cue_dir`.
 ///
 /// `cue_dir` is the resolved store directory (may differ from the local `.cue/`
-/// when a `STORE` redirect is in effect).
+/// in a git worktree).
 pub fn context_json_path(cue_dir: &Path, scope: &str) -> PathBuf {
     cue_dir.join(scope).join("context.json")
 }
@@ -234,14 +233,14 @@ pub fn resolve_profile_with_config(
 pub fn gather_context(
     cwd: &Path,
     profile_name: Option<&str>,
+    task: Option<&str>,
 ) -> anyhow::Result<(ResolvedContext, ContextSource)> {
     let profile_name = profile_name.unwrap_or("default");
-    let git_root = get_git_root(cwd)?;
-    let config = Config::load(&git_root)?;
-    let cue_dir = git_root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_dir)?;
+    let store_root = store::main_worktree_root(cwd)?;
+    let config = Config::load(&store_root)?;
+    let resolved = store::open(cwd, &config)?;
     let canonical_store = resolved.store_dir.canonicalize()?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
 
     // Load root context config, falling back to config default when absent.
     let context_path = context_json_path(&resolved.store_dir, &scope);
@@ -302,12 +301,11 @@ pub fn gather_context(
     ))
 }
 
-pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
-    let git_root = get_git_root(cwd)?;
-    let config = Config::load(&git_root)?;
-    let cue_dir = git_root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_dir)?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+pub fn init_context(cwd: &Path, force: bool, task: Option<&str>) -> anyhow::Result<PathBuf> {
+    let store_root = store::main_worktree_root(cwd)?;
+    let config = Config::load(&store_root)?;
+    let resolved = store::open(cwd, &config)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
     let config_path = context_json_path(&resolved.store_dir, &scope);
 
     if config_path.exists() && !force {
@@ -387,10 +385,12 @@ mod tests {
 
         let result = load_context_or_config(&absent_path, &fallback);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Context file not found"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Context file not found")
+        );
     }
 
     #[test]
@@ -444,10 +444,12 @@ mod tests {
 
         let result = resolve_profile_with_config("my-task", "default", &root_config, &store);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Profile 'default' not found in config default"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Profile 'default' not found in config default")
+        );
     }
 
     #[test]

@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use cuelib::head;
 use cuelib::store;
 use serde_json::json;
@@ -8,17 +8,10 @@ use std::fs;
 use std::path::Path;
 
 pub fn handle(cwd: &Path, target: Option<String>, json: bool) -> Result<()> {
-    let root = git::get_git_root(cwd).context("Not in a git repository")?;
-    let config = Config::load(&root)?;
-    let cue_dir = root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_dir)?;
-
-    if !resolved.head_dir.exists() {
-        bail!(
-            "{} directory does not exist. Run `cue init` first.",
-            config.dir_name
-        );
-    }
+    let store_root = store::main_worktree_root(cwd).context("Not in a git repository")?;
+    let config = Config::load(&store_root)?;
+    let resolved = store::open(cwd, &config)?;
+    let root = git::current_worktree_root(cwd)?;
 
     let branch = git::current_branch(&root);
 
@@ -65,6 +58,16 @@ pub fn handle(cwd: &Path, target: Option<String>, json: bool) -> Result<()> {
             eprintln!(
                 "warning: failed to update task association for branch '{}': {}",
                 branch, err
+            );
+        }
+    }
+
+    if let Ok(env_task) = std::env::var("CUE_TASK") {
+        let trimmed = env_task.trim();
+        if !trimmed.is_empty() {
+            eprintln!(
+                "warning: $CUE_TASK is set ('{}'); switch wrote local HEAD, but $CUE_TASK takes precedence",
+                trimmed
             );
         }
     }

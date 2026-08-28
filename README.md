@@ -68,6 +68,11 @@ observability stack (`acuity`), and a terminal kanban view (`curator`).
 The memory core (`cue`/`cuelib`) and the observability stack (`acuity`) are
 independent today; Phase 6 will wire live `acuity` data into `curator`.
 
+The artifact store lives at `<main-git-root>/.cue/`. Linked Git worktrees share
+that store, but each worktree keeps its own local `.cue/HEAD` selection. Scoped
+commands resolve their context in this order: an explicit `--task`, then
+`$CUE_TASK`, then the local `.cue/HEAD`, and finally `master`.
+
 ## Install (Nix)
 
 A Nix flake is provided. `cue` is the default package; `curator`, `acuity`,

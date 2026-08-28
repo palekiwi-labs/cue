@@ -48,6 +48,9 @@ fn test_context_missing_file_errors() -> anyhow::Result<()> {
     let env = TestEnv::new();
     helpers::setup_git_repo(env.root());
 
+    // Initialize cue
+    env.command().arg("init").assert().success();
+
     env.command()
         .arg("context")
         .arg("show")
@@ -55,5 +58,74 @@ fn test_context_missing_file_errors() -> anyhow::Result<()> {
         .failure()
         .stderr(predicate::str::contains("Context file not found"));
 
+    Ok(())
+}
+
+#[test]
+fn test_context_show_with_task_flag_and_env() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+    env.command().arg("init").assert().success();
+
+    let cue_dir = env.root().join(".cue");
+
+    // Create env-task context.json
+    let env_task_dir = cue_dir.join("env-task");
+    fs::create_dir_all(&env_task_dir)?;
+    fs::write(
+        env_task_dir.join("context.json"),
+        r#"{"default": {"artifacts": ["./spec/env-task.md"]}}"#,
+    )?;
+
+    // Create flag-task context.json
+    let flag_task_dir = cue_dir.join("flag-task");
+    fs::create_dir_all(&flag_task_dir)?;
+    fs::write(
+        flag_task_dir.join("context.json"),
+        r#"{"default": {"artifacts": ["./spec/flag-task.md"]}}"#,
+    )?;
+
+    // 1. Env scope
+    env.command()
+        .env("CUE_TASK", "env-task")
+        .arg("context")
+        .arg("show")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("env-task.md"));
+
+    // 2. Flag overrides Env
+    env.command()
+        .env("CUE_TASK", "env-task")
+        .arg("context")
+        .arg("show")
+        .arg("--task")
+        .arg("flag-task")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("flag-task.md"));
+
+    Ok(())
+}
+
+#[test]
+fn context_profiles_task_flag_overrides_env() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+    env.command().arg("init").assert().success();
+
+    let task_dir = env.root().join(".cue/flag-task");
+    fs::create_dir_all(&task_dir)?;
+    fs::write(
+        task_dir.join("context.json"),
+        r#"{"flag-profile": {"artifacts": []}}"#,
+    )?;
+
+    env.command()
+        .env("CUE_TASK", "env-task")
+        .args(["context", "profiles", "--task", "flag-task"])
+        .assert()
+        .success()
+        .stdout("flag-profile\n");
     Ok(())
 }

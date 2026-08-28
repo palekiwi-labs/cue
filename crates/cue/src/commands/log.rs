@@ -11,11 +11,11 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
     // 1. Verify git repo
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
 
-    // 2. Get git root
-    let root = git::get_git_root(cwd)?;
+    // 2. Derive store owner
+    let store_root = store::main_worktree_root(cwd)?;
 
     // 3. Load config
-    let config = Config::load(&root)?;
+    let config = Config::load(&store_root)?;
 
     match command {
         LogCommands::Add {
@@ -46,31 +46,22 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
             };
 
             let log_file_path = log::add_entry(
-                &root,
+                cwd,
                 &config,
                 LogAddOptions {
                     entry,
                     scope_name: task,
                 },
             )?;
-            let rel_path = log_file_path.strip_prefix(&root).unwrap_or(&log_file_path);
+            let rel_path = log_file_path
+                .strip_prefix(&store_root)
+                .unwrap_or(&log_file_path);
             eprintln!("✓ Logged");
             println!("{}", rel_path.display());
         }
         LogCommands::List { task } => {
-            let cue_path = root.join(&config.dir_name);
-            let resolved = store::resolve_store(cue_path)?;
-
-            let scope = if let Some(t) = task {
-                cuelib::head::validate_slug(&t)?;
-                t
-            } else {
-                cuelib::head::resolve_scope(&resolved.head_dir)?
-            };
-
-            if !resolved.head_dir.exists() {
-                return Ok(()); // Silently exit
-            }
+            let resolved = store::open(cwd, &config)?;
+            let scope = cuelib::head::resolve_scope(&resolved.head_dir, task.as_deref())?;
 
             let log_file_path = resolved.store_dir.join(&scope).join("log.md");
 

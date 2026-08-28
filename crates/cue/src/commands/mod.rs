@@ -2,7 +2,6 @@ pub mod add;
 pub mod config;
 pub mod context;
 pub mod init;
-pub mod link;
 pub mod list;
 pub mod log;
 pub mod project;

@@ -42,23 +42,10 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
         hash.push_str("-dirty");
     }
 
-    // 3. Resolve path
-    let cue_path = root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_path)?;
+    // 3. Open store
+    let resolved = store::open(root, config)?;
 
-    if !resolved.head_dir.exists() {
-        bail!(
-            "{} directory does not exist. Run `cue init` first.",
-            config.dir_name
-        );
-    }
-
-    let scope = if let Some(s) = scope_name {
-        cuelib::head::validate_slug(&s)?;
-        s
-    } else {
-        cuelib::head::resolve_scope(&resolved.head_dir)?
-    };
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, scope_name.as_deref())?;
     if scope.trim().is_empty() {
         bail!("Scope name cannot be empty.");
     }

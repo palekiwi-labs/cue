@@ -14,18 +14,17 @@ pub fn handle(cwd: &Path, opts: ListOptions) -> Result<()> {
     // 1. Verify git repo
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
 
-    // 2. Get git root
-    let root = git::get_git_root(cwd)?;
+    // 2. Derive store owner
+    let store_root = store::main_worktree_root(cwd)?;
 
-    // 3. Load config
-    let config = Config::load(&root)?;
+    // 3. Load config from git root
+    let config = Config::load(&store_root)?;
 
-    // 4. Resolve store so to_cue_file can use store_dir
-    let cue_dir = root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_dir)?;
+    // 4. Open store
+    let resolved = store::open(cwd, &config)?;
 
     // 5. Delegate to domain module
-    let filtered = list::list(&root, &config, opts)?;
+    let filtered = list::list(cwd, &config, opts)?;
 
     // 6. Output
     if !json_output {
