@@ -138,6 +138,51 @@ fn test_add_spec_default() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_add_output_resolves_from_linked_worktree() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    let worktrees_dir = env.root().join("worktrees");
+    let worktree = worktrees_dir.join("linked");
+    fs::create_dir(&worktrees_dir)?;
+    let status = std::process::Command::new("git")
+        .args([
+            "worktree",
+            "add",
+            "-b",
+            "linked",
+            worktree.to_str().unwrap(),
+        ])
+        .current_dir(env.root())
+        .status()?;
+    assert!(status.success());
+
+    let output = env
+        .command()
+        .current_dir(&worktree)
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .args(["add", "--root", "test.md", "content"])
+        .output()?;
+    assert!(output.status.success());
+
+    let printed_path = String::from_utf8(output.stdout)?.trim().to_owned();
+    assert!(
+        worktree.join(&printed_path).exists(),
+        "printed path must resolve from the invocation directory: {printed_path}"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_add_no_content_empty_file() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
