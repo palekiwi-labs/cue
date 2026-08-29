@@ -37,8 +37,7 @@ pub fn handle(cwd: &Path, opts: ListOptions) -> Result<()> {
             .filter_map(|(path, cached_fm)| {
                 let mut mf = list::to_cue_file(&path, &resolved.store_dir)?;
                 if include_frontmatter {
-                    mf.frontmatter =
-                        cached_fm.and_then(|v| if v.is_null() { None } else { Some(v) });
+                    mf.frontmatter = cached_fm.filter(|v| !v.is_null());
                 }
                 Some(mf)
             })
