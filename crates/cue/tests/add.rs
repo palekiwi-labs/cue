@@ -620,14 +620,14 @@ fn test_add_type_tmp_with_root() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_add_type_ref() -> anyhow::Result<()> {
+fn test_add_type_custom_registered() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
 
-    // Register 'ref' as a valid type in project config
+    // Register a custom type in project config
     fs::write(
         env.root().join("cue.json"),
-        r#"{"artifact_types": ["spec", "trace", "tmp", "ref"]}"#,
+        r#"{"artifact_types": ["spec", "trace", "tmp", "scratch"]}"#,
     )?;
 
     env.command()
@@ -642,17 +642,17 @@ fn test_add_type_ref() -> anyhow::Result<()> {
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("add")
         .arg("-t")
-        .arg("ref")
+        .arg("scratch")
         .arg("--root")
-        .arg("doc.md")
-        .arg("ref content")
+        .arg("notes.md")
+        .arg("scratch content")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/master/ref/doc.md\n"));
+        .stdout(predicate::str::diff(".test-mem/master/scratch/notes.md\n"));
 
-    let file_path = env.root().join(".test-mem/master/ref/doc.md");
+    let file_path = env.root().join(".test-mem/master/scratch/notes.md");
     assert!(file_path.exists());
-    assert_eq!(fs::read_to_string(file_path)?, "ref content");
+    assert_eq!(fs::read_to_string(file_path)?, "scratch content");
 
     Ok(())
 }
@@ -782,6 +782,128 @@ fn test_add_filename_normalizes_extensionless_markdown() -> anyhow::Result<()> {
     let spec_path = env.root().join(".test-mem/master/spec/overview.md");
     assert!(spec_path.exists());
     assert_eq!(fs::read_to_string(spec_path)?, "spec content");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_filename_extensionless_non_markdown_untouched() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // `bin` is not a markdown type: extensionless stays extensionless
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("bin")
+        .arg("--root")
+        .arg("payload")
+        .arg("binary-ish content")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/master/bin/payload\n"));
+
+    let file_path = env.root().join(".test-mem/master/bin/payload");
+    assert!(file_path.exists());
+    assert_eq!(fs::read_to_string(file_path)?, "binary-ish content");
+
+    // `tmp` is not a markdown type either
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("tmp")
+        .arg("--root")
+        .arg("scratch")
+        .arg("tmp content")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/master/tmp/scratch\n"));
+
+    let tmp_path = env.root().join(".test-mem/master/tmp/scratch");
+    assert!(tmp_path.exists());
+
+    Ok(())
+}
+
+#[test]
+fn test_add_filename_reserved_slug_master_still_rejected() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // Extensionless reserved slug is rejected even before normalization
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("task")
+        .arg("--root")
+        .arg("master")
+        .arg("card content")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("reserved slug"));
+
+    // Same when the caller already appended `.md`
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("task")
+        .arg("--root")
+        .arg("master.md")
+        .arg("card content")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("reserved slug"));
+
+    Ok(())
+}
+
+#[test]
+fn test_add_type_ref_rejected() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // `ref` is no longer a canonical artifact type
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("ref")
+        .arg("--root")
+        .arg("legacy.md")
+        .arg("ref content")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unknown artifact type 'ref'"));
 
     Ok(())
 }
