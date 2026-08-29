@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use cuelib::store;
 use std::fs;
 use std::io::Cursor;
@@ -58,6 +58,19 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
 
     // 5. Validate filename for path traversal
     validate_filename(&filename)?;
+
+    // 5b. Normalize markdown filenames: an extensionless filename for
+    // a markdown artifact type gets `.md` appended so every writer
+    // matches the `<type>/<name>.md` contract enforced by the readers.
+    // Filenames with any extension (e.g. images, traces, scripts) and
+    // non-markdown types pass through untouched.
+    let filename = if Path::new(&filename).extension().is_none()
+        && cuelib::artifact::MARKDOWN_TYPES.contains(&cue_type.as_str())
+    {
+        format!("{filename}.md")
+    } else {
+        filename
+    };
 
     // 6a. Reject reserved slugs for task cards.
     if cue_type == "task" {

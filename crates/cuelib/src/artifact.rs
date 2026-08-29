@@ -12,6 +12,11 @@ pub const CANONICAL_TYPES: &[&str] = &[
     "bin", "doc", "note", "plan", "ref", "spec", "task", "tmp", "todo", "trace",
 ];
 
+/// Artifact types whose payload is a markdown document (frontmatter
+/// plus markdown body). Written with a `.md` extension and surfaced
+/// by the board/listing readers.
+pub const MARKDOWN_TYPES: &[&str] = &["doc", "note", "plan", "spec", "task", "todo"];
+
 /// Default artifact types that are gitignored and not listed.
 pub const DEFAULT_IGNORED_TYPES: &[&str] = &["ref", "tmp"];
 

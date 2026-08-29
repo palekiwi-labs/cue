@@ -734,6 +734,59 @@ fn test_add_type_doc() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_add_filename_normalizes_extensionless_markdown() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // Extensionless task filename gets `.md` appended
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("task")
+        .arg("--root")
+        .arg("auth-login")
+        .arg("card content")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(
+            ".test-mem/master/task/auth-login.md\n",
+        ));
+
+    let file_path = env.root().join(".test-mem/master/task/auth-login.md");
+    assert!(file_path.exists());
+    assert_eq!(fs::read_to_string(file_path)?, "card content");
+
+    // Extensionless spec filename gets `.md` appended too
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("spec")
+        .arg("--root")
+        .arg("overview")
+        .arg("spec content")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/master/spec/overview.md\n"));
+
+    let spec_path = env.root().join(".test-mem/master/spec/overview.md");
+    assert!(spec_path.exists());
+    assert_eq!(fs::read_to_string(spec_path)?, "spec content");
+
+    Ok(())
+}
+
+#[test]
 fn test_add_force_overwrite() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
