@@ -18,7 +18,22 @@
         # Wire fenix toolchain into rustPlatform explicitly rather than
         # injecting it via PATH. This ensures the fenix cargo/rustc are used
         # by all buildRustPackage hooks, not just shadowed on PATH.
-        rustToolchain = fenix.packages.${system}.stable.toolchain;
+        #
+        # Pinned via rust-toolchain.toml rather than tracking fenix's
+        # floating `stable`, so the compiler does not drift with the fenix
+        # input. The file is byte-identical to cast's, which makes both
+        # repos resolve to the same toolchain derivation and share one Rust
+        # build in the Nix store.
+        #
+        # NOTE: this sha256 covers the fetched toolchain components, not the
+        # file itself. Renovate can bump `channel` in rust-toolchain.toml but
+        # cannot update this hash, so a toolchain bump must be accompanied by
+        # a manual hash refresh: set a fake hash, run `nix build`, and copy
+        # the value from the `got:` line.
+        rustToolchain = fenix.packages.${system}.fromToolchainFile {
+          file = ./rust-toolchain.toml;
+          sha256 = "sha256-P30Tm3O7vQAE725YtDCDHGjNrSsfZO4us11UwJGZSJo=";
+        };
         rustPlatform = pkgs.makeRustPlatform {
           cargo = rustToolchain;
           rustc = rustToolchain;
@@ -184,9 +199,12 @@
         devShells.default = pkgs.mkShell {
           name = "cue";
           buildInputs = [
+            # rust-analyzer comes from rustToolchain's components, so it is
+            # built against the pinned rustc. Do not add pkgs.rust-analyzer
+            # alongside it: two rust-analyzers on PATH built against
+            # different compilers is a debugging footgun.
             rustToolchain
             pkgs.git
-            pkgs.rust-analyzer
             pkgs.cargo-expand
             pkgs.cargo-watch
             pkgs.cargo-edit
