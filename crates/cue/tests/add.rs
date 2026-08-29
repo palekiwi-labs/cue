@@ -310,20 +310,21 @@ fn test_add_nested_by_default_for_any_type() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    // spec type: default saves nested under ts-hash
+    // An extensionless spec defaults to a normalized filename nested
+    // under ts-hash.
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("add")
         .arg("--type")
         .arg("spec")
-        .arg("snapshot.md")
+        .arg("snapshot")
         .arg("nested spec")
         .assert()
         .success()
         .stdout(predicate::str::starts_with(".test-mem/master/spec/"));
 
-    // Must be nested, not at spec/snapshot.md
+    // Must be nested, not at spec/snapshot.md.
     let flat_path = env.root().join(".test-mem/master/spec/snapshot.md");
     assert!(!flat_path.exists(), "File should NOT be at flat path");
 
@@ -848,7 +849,8 @@ fn test_add_filename_reserved_slug_master_still_rejected() -> anyhow::Result<()>
         .assert()
         .success();
 
-    // Extensionless reserved slug is rejected even before normalization
+    // Extensionless reserved slug remains rejected after normalization;
+    // `file_stem` sees through the appended `.md`.
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
@@ -958,6 +960,48 @@ fn test_add_force_overwrite() -> anyhow::Result<()> {
         .success();
 
     let file_path = env.root().join(".test-mem/master/spec/test.txt");
+    assert_eq!(fs::read_to_string(file_path)?, "v2");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_normalized_filename_collision() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .args(["add", "--type", "task", "--root", "foo", "v1"])
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .args(["add", "--type", "task", "--root", "foo.md", "v2"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("File exists").and(predicate::str::contains("Use --force")),
+        );
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .args(["add", "--type", "task", "--root", "--force", "foo.md", "v2"])
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/master/task/foo.md");
     assert_eq!(fs::read_to_string(file_path)?, "v2");
 
     Ok(())
@@ -1466,6 +1510,54 @@ fn test_add_rejects_path_traversal() -> anyhow::Result<()> {
         .assert()
         .failure()
         .stderr(predicate::str::contains("'..' is not allowed"));
+
+    Ok(())
+}
+
+#[test]
+fn test_add_rejects_degenerate_filenames() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // Empty, dot-only, and dir-like (trailing separator) names must
+    // fail validation loudly. Normalization must never turn them into
+    // ghost artifacts (`.md`, `..md`, `dir/.md`) that the board
+    // reader cannot surface; `master/` additionally must not bypass
+    // the reserved-slug guard via a `master/.md` path.
+    for name in ["", ".", "dir/", "master/"] {
+        env.command()
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .arg("add")
+            .arg("-t")
+            .arg("task")
+            .arg("--root")
+            .arg(name)
+            .arg("card content")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("Invalid filename"));
+    }
+
+    // The failed adds must not leave any files or directories behind
+    let task_dir = env.root().join(".test-mem/master/task");
+    if task_dir.exists() {
+        let leftovers: Vec<String> = fs::read_dir(&task_dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "degenerate adds must not create files, found: {leftovers:?}"
+        );
+    }
 
     Ok(())
 }

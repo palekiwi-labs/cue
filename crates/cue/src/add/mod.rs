@@ -60,10 +60,10 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
     validate_filename(&filename)?;
 
     // 5b. Normalize markdown filenames: an extensionless filename for
-    // a markdown artifact type gets `.md` appended so every writer
-    // matches the `<type>/<name>.md` contract enforced by the readers.
-    // Filenames with any extension (e.g. images, traces, scripts) and
-    // non-markdown types pass through untouched.
+    // a markdown artifact type gets `.md` appended so the common slug
+    // case satisfies the contract expected by the board reader
+    // (`read_artifacts`). Filenames with any extension and non-markdown
+    // types pass through untouched.
     let filename = if Path::new(&filename).extension().is_none()
         && cuelib::artifact::MARKDOWN_TYPES.contains(&cue_type.as_str())
     {
@@ -183,18 +183,31 @@ pub fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Validate a caller-supplied artifact filename.
+///
+/// Allows only `Normal` path components: subdirectory grouping like
+/// `auth-redesign/index.md` is permitted. Rejects empty input,
+/// `.`/`..` components, absolute paths, and trailing separators
+/// (dir-like inputs such as `dir/`, whose `.md`-normalized form
+/// would create board-invisible ghost files like `dir/.md`).
 pub fn validate_filename(filename: &str) -> Result<()> {
+    if filename.is_empty() {
+        bail!("Invalid filename '{filename}': must not be empty");
+    }
+    if filename.chars().last().is_some_and(std::path::is_separator) {
+        bail!("Invalid filename '{filename}': trailing path separators are not allowed");
+    }
     for component in Path::new(filename).components() {
         match component {
-            Component::Normal(_) | Component::CurDir => {}
+            Component::Normal(_) => {}
+            Component::CurDir => {
+                bail!("Invalid filename '{filename}': '.' is not allowed")
+            }
             Component::ParentDir => {
-                bail!("Invalid filename '{}': '..' is not allowed", filename)
+                bail!("Invalid filename '{filename}': '..' is not allowed")
             }
             Component::RootDir | Component::Prefix(_) => {
-                bail!(
-                    "Invalid filename '{}': absolute paths are not allowed",
-                    filename
-                )
+                bail!("Invalid filename '{filename}': absolute paths are not allowed")
             }
         }
     }

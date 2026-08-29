@@ -13,8 +13,8 @@ pub const CANONICAL_TYPES: &[&str] = &[
 ];
 
 /// Artifact types whose payload is a markdown document (frontmatter
-/// plus markdown body). Written with a `.md` extension and surfaced
-/// by the board/listing readers.
+/// plus markdown body). Extensionless filenames get `.md` appended so
+/// `read_artifacts` can surface them to the curator board.
 pub const MARKDOWN_TYPES: &[&str] = &["doc", "note", "plan", "spec", "task", "todo"];
 
 /// Default artifact types that are gitignored and not listed.
@@ -314,7 +314,13 @@ mod tests {
             );
         }
         assert!(!MARKDOWN_TYPES.contains(&"ref"));
-        assert!(!MARKDOWN_TYPES.contains(&"bin"));
+
+        let non_markdown_types: Vec<_> = CANONICAL_TYPES
+            .iter()
+            .copied()
+            .filter(|cue_type| !MARKDOWN_TYPES.contains(cue_type))
+            .collect();
+        assert_eq!(non_markdown_types, ["bin", "tmp", "trace"]);
     }
 
     #[test]
