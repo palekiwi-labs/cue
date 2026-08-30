@@ -15,29 +15,25 @@
       let
         pkgs = nixpkgs.legacyPackages.${system};
 
-        # Wire fenix toolchain into rustPlatform explicitly rather than
-        # injecting it via PATH. This ensures the fenix cargo/rustc are used
-        # by all buildRustPackage hooks, not just shadowed on PATH.
-        rustToolchain = fenix.packages.${system}.stable.toolchain;
+        # NOTE: this sha256 covers the fetched toolchain components, not the
+        # file itself. Renovate can bump `channel` in rust-toolchain.toml but
+        # cannot update this hash, so a toolchain bump must be accompanied by
+        # a manual hash refresh: set a fake hash, run `nix build`, and copy
+        # the value from the `got:` line.
+        rustToolchain = fenix.packages.${system}.fromToolchainFile {
+          file = ./rust-toolchain.toml;
+          sha256 = "sha256-P30Tm3O7vQAE725YtDCDHGjNrSsfZO4us11UwJGZSJo=";
+        };
         rustPlatform = pkgs.makeRustPlatform {
           cargo = rustToolchain;
           rustc = rustToolchain;
         };
 
-        # Attributes shared across all per-binary derivations.
-        # NOTE: if a derivation needs to extend nativeBuildInputs, use:
-        #   nativeBuildInputs = common.nativeBuildInputs ++ [ extra ];
-        # Never override the list outright — that silently drops pkgs.git.
         common = {
           version = "0.1.0";
           src = pkgs.lib.cleanSource ./.;
           cargoLock.lockFile = ./Cargo.lock;
-          # pkgs.git is retained: some dep build scripts shell out to git
-          # during `nix build` sandbox execution.
           nativeBuildInputs = [ pkgs.git ];
-          # Tests run via the workspace-tests check below; skip per-package
-          # check phases to keep `nix build` fast and avoid running acuity's
-          # async sqlite test suite inside the sandbox.
           doCheck = false;
           meta = with pkgs.lib; {
             license = licenses.mit;
@@ -56,7 +52,6 @@
       {
         # --- packages ---------------------------------------------------
 
-        # `cue` is the default: the file-based memory CLI for workstations.
         packages.default = self.packages.${system}.cue;
 
         packages.cue = rustPlatform.buildRustPackage (common // {
@@ -69,7 +64,6 @@
           };
         });
 
-        # `curator` is the TUI companion for the cue memory system.
         packages.curator = rustPlatform.buildRustPackage (common // {
           pname = "curator";
           cargoBuildFlags = [ "-p" "curator" ];
@@ -79,16 +73,9 @@
           };
         });
 
-        # `acuity` is the observability ingestion server — deployed
-        # separately from cue/curator (typically on a server, not a
-        # workstation). Only this derivation needs libsqlite3; the others
-        # have no sqlite dependency and must not carry it in their closure.
         packages.acuity = rustPlatform.buildRustPackage (common // {
           pname = "acuity";
           cargoBuildFlags = [ "-p" "acuity" ];
-          # sqlx sqlite feature links libsqlite3 dynamically. Not bundled:
-          # acuity is deployed via the NixOS module which pins the store
-          # path, so there is no "missing system lib" failure mode.
           buildInputs = [ pkgs.sqlite ];
           meta = common.meta // {
             description =
@@ -113,7 +100,6 @@
         #   nix run <cue-flake>#acuity-schema-codegen -- src/
         packages.acuity-schema-codegen = acuity-schema-codegen;
 
-        # `git-pr-sync` synchronizes PR metadata to local Git config.
         packages.git-pr-sync = pkgs.stdenv.mkDerivation {
           pname = "git-pr-sync";
           version = common.version;
@@ -132,8 +118,6 @@
           };
         };
 
-        # `git-scripts` provides git-pr-sync and reader utilities
-        # (get-pr-base, get-pr-number).
         packages.git-scripts = pkgs.stdenv.mkDerivation {
           pname = "git-scripts";
           version = common.version;
@@ -161,8 +145,6 @@
 
         # Full workspace test suite via nextest. Run with:
         #   nix flake check
-        # This covers all crates including cuelib, which would otherwise
-        # fall through the cracks with per-crate -p scoping.
         checks.workspace-tests = rustPlatform.buildRustPackage (common // {
           pname = "cue-workspace-tests";
           # Tests need sqlite for the acuity in-crate test suite.
@@ -186,7 +168,6 @@
           buildInputs = [
             rustToolchain
             pkgs.git
-            pkgs.rust-analyzer
             pkgs.cargo-expand
             pkgs.cargo-watch
             pkgs.cargo-edit
