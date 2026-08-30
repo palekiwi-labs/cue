@@ -59,18 +59,25 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
     // 5. Validate filename for path traversal
     validate_filename(&filename)?;
 
-    // 5b. Normalize markdown filenames: an extensionless filename for
-    // a markdown artifact type gets `.md` appended so the common slug
-    // case satisfies the contract expected by the board reader
-    // (`read_artifacts`). Filenames with any extension and non-markdown
-    // types pass through untouched.
-    let filename = if Path::new(&filename).extension().is_none()
-        && cuelib::artifact::MARKDOWN_TYPES.contains(&cue_type.as_str())
-    {
-        format!("{filename}.md")
-    } else {
-        filename
-    };
+    // 5b. Normalize markdown filenames: a slug-like filename for a
+    // markdown artifact type gets `.md` appended so it satisfies the
+    // contract expected by the board reader (`read_artifacts`). A
+    // filename is slug-like when it has no extension, or when its
+    // extension does not look like a real one (`looks_like_extension`)
+    // — `Path::extension` splits at the last dot, so versioned slugs
+    // such as `v0.2.0-notes` would otherwise masquerade as extensioned
+    // files and stay board-invisible. Genuine payload extensions
+    // (`.txt`, `.png`, `.md`) and non-markdown types pass through.
+    let has_real_extension = Path::new(&filename)
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(looks_like_extension);
+    let filename =
+        if !has_real_extension && cuelib::artifact::MARKDOWN_TYPES.contains(&cue_type.as_str()) {
+            format!("{filename}.md")
+        } else {
+            filename
+        };
 
     // 6a. Reject reserved slugs for task cards.
     if cue_type == "task" {
@@ -183,13 +190,35 @@ pub fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
+/// Maximum length of a dot segment still considered a file extension.
+const MAX_EXTENSION_LEN: usize = 8;
+
+/// Returns `true` if `ext` looks like a real file extension rather
+/// than the tail of a dotted slug.
+///
+/// `Path::extension` splits at the last dot, so it happily reports
+/// `0-notes` for `v0.2.0-notes` and `2` for `v1.2`. Those are slugs,
+/// not filenames, and must still be normalized to `.md`. A dot
+/// segment counts as an extension only when it starts with an ASCII
+/// letter, is entirely ASCII alphanumeric, and is short.
+///
+/// Known residual: a slug whose tail happens to look like an
+/// extension (`spec.v2`) passes through unnormalized.
+fn looks_like_extension(ext: &str) -> bool {
+    !ext.is_empty()
+        && ext.len() <= MAX_EXTENSION_LEN
+        && ext.starts_with(|c: char| c.is_ascii_alphabetic())
+        && ext.chars().all(|c| c.is_ascii_alphanumeric())
+}
+
 /// Validate a caller-supplied artifact filename.
 ///
 /// Allows only `Normal` path components: subdirectory grouping like
 /// `auth-redesign/index.md` is permitted. Rejects empty input,
-/// `.`/`..` components, absolute paths, and trailing separators
+/// `.`/`..` components, absolute paths, trailing separators
 /// (dir-like inputs such as `dir/`, whose `.md`-normalized form
-/// would create board-invisible ghost files like `dir/.md`).
+/// would create board-invisible ghost files like `dir/.md`), and
+/// trailing dots (`foo.`, which would normalize to `foo..md`).
 pub fn validate_filename(filename: &str) -> Result<()> {
     if filename.is_empty() {
         bail!("Invalid filename '{filename}': must not be empty");
@@ -210,6 +239,11 @@ pub fn validate_filename(filename: &str) -> Result<()> {
                 bail!("Invalid filename '{filename}': absolute paths are not allowed")
             }
         }
+    }
+    // Checked after the component scan so `.` and `..` keep their own
+    // dedicated messages.
+    if filename.ends_with('.') {
+        bail!("Invalid filename '{filename}': trailing dots are not allowed");
     }
     Ok(())
 }
@@ -259,5 +293,54 @@ pub fn resolve_clipboard(filename: &str) -> anyhow::Result<Vec<u8>> {
         // Assume text for any other extension
         let text = ctx.get_text().context("Clipboard does not contain text.")?;
         Ok(text.into_bytes())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn real_extensions_are_recognized() {
+        for ext in [
+            "md", "MD", "txt", "log", "sh", "png", "jpeg", "yaml", "rs", "json",
+        ] {
+            assert!(
+                looks_like_extension(ext),
+                "'{ext}' should count as a file extension"
+            );
+        }
+    }
+
+    #[test]
+    fn dotted_slug_tails_are_not_extensions() {
+        // Tails produced by `Path::extension` on versioned or dated
+        // slugs: digit-leading, hyphenated, empty, or implausibly long.
+        for ext in [
+            "",
+            "0-notes",
+            "2",
+            "30-standup",
+            "0",
+            "v2-draft",
+            "verylongextension",
+        ] {
+            assert!(
+                !looks_like_extension(ext),
+                "'{ext}' should not count as a file extension"
+            );
+        }
+    }
+
+    #[test]
+    fn extension_of_versioned_slug_is_rejected() {
+        // Guards the exact reported case end to end at the predicate
+        // level: `v0.2.0-notes` must be treated as extensionless.
+        let ext = Path::new("v0.2.0-notes")
+            .extension()
+            .and_then(|e| e.to_str())
+            .expect("Path::extension reports a tail for dotted slugs");
+        assert_eq!(ext, "0-notes");
+        assert!(!looks_like_extension(ext));
     }
 }

@@ -838,6 +838,92 @@ fn test_add_filename_extensionless_non_markdown_untouched() -> anyhow::Result<()
 }
 
 #[test]
+fn test_add_filename_normalizes_dotted_slug_markdown() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // `Path::extension` splits at the LAST dot, so a versioned slug
+    // reports a bogus extension (`v0.2.0-notes` -> `0-notes`). Those
+    // are slugs, not filenames: they must still get `.md`, otherwise
+    // they stay invisible to the board reader.
+    for (name, cue_type, expected) in [
+        ("v0.2.0-notes", "doc", "v0.2.0-notes.md"),
+        ("v1.2", "spec", "v1.2.md"),
+        ("2026-08-30-standup", "note", "2026-08-30-standup.md"),
+        ("release-1.0", "plan", "release-1.0.md"),
+    ] {
+        env.command()
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .arg("add")
+            .arg("-t")
+            .arg(cue_type)
+            .arg("--root")
+            .arg(name)
+            .arg("dotted content")
+            .assert()
+            .success()
+            .stdout(predicate::str::diff(format!(
+                ".test-mem/master/{cue_type}/{expected}\n"
+            )));
+
+        let file_path = env
+            .root()
+            .join(format!(".test-mem/master/{cue_type}/{expected}"));
+        assert!(
+            file_path.exists(),
+            "dotted slug '{name}' should normalize to '{expected}'"
+        );
+    }
+
+    // Complement: real extensions on markdown types still pass
+    // through untouched. A dot segment counts as an extension only
+    // when it looks like one (letter-led, alphanumeric, short).
+    for (name, cue_type) in [
+        ("notes.txt", "doc"),
+        ("diagram.png", "note"),
+        ("index.md", "spec"),
+    ] {
+        env.command()
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .arg("add")
+            .arg("-t")
+            .arg(cue_type)
+            .arg("--root")
+            .arg(name)
+            .arg("payload")
+            .assert()
+            .success()
+            .stdout(predicate::str::diff(format!(
+                ".test-mem/master/{cue_type}/{name}\n"
+            )));
+
+        assert!(
+            env.root()
+                .join(format!(".test-mem/master/{cue_type}/{name}"))
+                .exists(),
+            "'{name}' carries a real extension and must pass through"
+        );
+        assert!(
+            !env.root()
+                .join(format!(".test-mem/master/{cue_type}/{name}.md"))
+                .exists(),
+            "'{name}' must not gain a second extension"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn test_add_filename_reserved_slug_master_still_rejected() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
@@ -1526,12 +1612,12 @@ fn test_add_rejects_degenerate_filenames() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    // Empty, dot-only, and dir-like (trailing separator) names must
-    // fail validation loudly. Normalization must never turn them into
-    // ghost artifacts (`.md`, `..md`, `dir/.md`) that the board
-    // reader cannot surface; `master/` additionally must not bypass
-    // the reserved-slug guard via a `master/.md` path.
-    for name in ["", ".", "dir/", "master/"] {
+    // Empty, dot-only, dir-like (trailing separator) and trailing-dot
+    // names must fail validation loudly. Normalization must never turn
+    // them into ghost artifacts (`.md`, `..md`, `dir/.md`, `foo..md`)
+    // that the board reader cannot surface; `master/` additionally
+    // must not bypass the reserved-slug guard via a `master/.md` path.
+    for name in ["", ".", "dir/", "master/", "trailing."] {
         env.command()
             .env("CUE_BRANCH_NAME", "test-mem")
             .env("CUE_DIR_NAME", ".test-mem")
@@ -1545,6 +1631,22 @@ fn test_add_rejects_degenerate_filenames() -> anyhow::Result<()> {
             .failure()
             .stderr(predicate::str::contains("Invalid filename"));
     }
+
+    // Trailing dots get their own message: `Path::extension` reports
+    // `Some("")` for them, so they are neither extensionless nor
+    // meaningfully extensioned.
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("task")
+        .arg("--root")
+        .arg("trailing.")
+        .arg("card content")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("trailing dots are not allowed"));
 
     // The failed adds must not leave any files or directories behind
     let task_dir = env.root().join(".test-mem/master/task");
