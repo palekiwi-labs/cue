@@ -310,20 +310,21 @@ fn test_add_nested_by_default_for_any_type() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    // spec type: default saves nested under ts-hash
+    // An extensionless spec defaults to a normalized filename nested
+    // under ts-hash.
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("add")
         .arg("--type")
         .arg("spec")
-        .arg("snapshot.md")
+        .arg("snapshot")
         .arg("nested spec")
         .assert()
         .success()
         .stdout(predicate::str::starts_with(".test-mem/master/spec/"));
 
-    // Must be nested, not at spec/snapshot.md
+    // Must be nested, not at spec/snapshot.md.
     let flat_path = env.root().join(".test-mem/master/spec/snapshot.md");
     assert!(!flat_path.exists(), "File should NOT be at flat path");
 
@@ -620,14 +621,14 @@ fn test_add_type_tmp_with_root() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_add_type_ref() -> anyhow::Result<()> {
+fn test_add_type_custom_registered() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
 
-    // Register 'ref' as a valid type in project config
+    // Register a custom type in project config
     fs::write(
         env.root().join("cue.json"),
-        r#"{"artifact_types": ["spec", "trace", "tmp", "ref"]}"#,
+        r#"{"artifact_types": ["spec", "trace", "tmp", "scratch"]}"#,
     )?;
 
     env.command()
@@ -642,17 +643,17 @@ fn test_add_type_ref() -> anyhow::Result<()> {
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("add")
         .arg("-t")
-        .arg("ref")
+        .arg("scratch")
         .arg("--root")
-        .arg("doc.md")
-        .arg("ref content")
+        .arg("notes.md")
+        .arg("scratch content")
         .assert()
         .success()
-        .stdout(predicate::str::diff(".test-mem/master/ref/doc.md\n"));
+        .stdout(predicate::str::diff(".test-mem/master/scratch/notes.md\n"));
 
-    let file_path = env.root().join(".test-mem/master/ref/doc.md");
+    let file_path = env.root().join(".test-mem/master/scratch/notes.md");
     assert!(file_path.exists());
-    assert_eq!(fs::read_to_string(file_path)?, "ref content");
+    assert_eq!(fs::read_to_string(file_path)?, "scratch content");
 
     Ok(())
 }
@@ -734,6 +735,268 @@ fn test_add_type_doc() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_add_filename_normalizes_extensionless_markdown() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // Extensionless task filename gets `.md` appended
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("task")
+        .arg("--root")
+        .arg("auth-login")
+        .arg("card content")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(
+            ".test-mem/master/task/auth-login.md\n",
+        ));
+
+    let file_path = env.root().join(".test-mem/master/task/auth-login.md");
+    assert!(file_path.exists());
+    assert_eq!(fs::read_to_string(file_path)?, "card content");
+
+    // Extensionless spec filename gets `.md` appended too
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("spec")
+        .arg("--root")
+        .arg("overview")
+        .arg("spec content")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/master/spec/overview.md\n"));
+
+    let spec_path = env.root().join(".test-mem/master/spec/overview.md");
+    assert!(spec_path.exists());
+    assert_eq!(fs::read_to_string(spec_path)?, "spec content");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_filename_extensionless_non_markdown_untouched() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // `bin` is not a markdown type: extensionless stays extensionless
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("bin")
+        .arg("--root")
+        .arg("payload")
+        .arg("binary-ish content")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/master/bin/payload\n"));
+
+    let file_path = env.root().join(".test-mem/master/bin/payload");
+    assert!(file_path.exists());
+    assert_eq!(fs::read_to_string(file_path)?, "binary-ish content");
+
+    // `tmp` is not a markdown type either
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("tmp")
+        .arg("--root")
+        .arg("scratch")
+        .arg("tmp content")
+        .assert()
+        .success()
+        .stdout(predicate::str::diff(".test-mem/master/tmp/scratch\n"));
+
+    let tmp_path = env.root().join(".test-mem/master/tmp/scratch");
+    assert!(tmp_path.exists());
+
+    Ok(())
+}
+
+#[test]
+fn test_add_filename_normalizes_dotted_slug_markdown() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // `Path::extension` splits at the LAST dot, so a versioned slug
+    // reports a bogus extension (`v0.2.0-notes` -> `0-notes`). Those
+    // are slugs, not filenames: they must still get `.md`, otherwise
+    // they stay invisible to the board reader.
+    for (name, cue_type, expected) in [
+        ("v0.2.0-notes", "doc", "v0.2.0-notes.md"),
+        ("v1.2", "spec", "v1.2.md"),
+        ("2026-08-30-standup", "note", "2026-08-30-standup.md"),
+        ("release-1.0", "plan", "release-1.0.md"),
+    ] {
+        env.command()
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .arg("add")
+            .arg("-t")
+            .arg(cue_type)
+            .arg("--root")
+            .arg(name)
+            .arg("dotted content")
+            .assert()
+            .success()
+            .stdout(predicate::str::diff(format!(
+                ".test-mem/master/{cue_type}/{expected}\n"
+            )));
+
+        let file_path = env
+            .root()
+            .join(format!(".test-mem/master/{cue_type}/{expected}"));
+        assert!(
+            file_path.exists(),
+            "dotted slug '{name}' should normalize to '{expected}'"
+        );
+    }
+
+    // Complement: real extensions on markdown types still pass
+    // through untouched. A dot segment counts as an extension only
+    // when it looks like one (letter-led, alphanumeric, short).
+    for (name, cue_type) in [
+        ("notes.txt", "doc"),
+        ("diagram.png", "note"),
+        ("index.md", "spec"),
+    ] {
+        env.command()
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .arg("add")
+            .arg("-t")
+            .arg(cue_type)
+            .arg("--root")
+            .arg(name)
+            .arg("payload")
+            .assert()
+            .success()
+            .stdout(predicate::str::diff(format!(
+                ".test-mem/master/{cue_type}/{name}\n"
+            )));
+
+        assert!(
+            env.root()
+                .join(format!(".test-mem/master/{cue_type}/{name}"))
+                .exists(),
+            "'{name}' carries a real extension and must pass through"
+        );
+        assert!(
+            !env.root()
+                .join(format!(".test-mem/master/{cue_type}/{name}.md"))
+                .exists(),
+            "'{name}' must not gain a second extension"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn test_add_filename_reserved_slug_master_still_rejected() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // Extensionless reserved slug remains rejected after normalization;
+    // `file_stem` sees through the appended `.md`.
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("task")
+        .arg("--root")
+        .arg("master")
+        .arg("card content")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("reserved slug"));
+
+    // Same when the caller already appended `.md`
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("task")
+        .arg("--root")
+        .arg("master.md")
+        .arg("card content")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("reserved slug"));
+
+    Ok(())
+}
+
+#[test]
+fn test_add_type_ref_rejected() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // `ref` is no longer a canonical artifact type
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("ref")
+        .arg("--root")
+        .arg("legacy.md")
+        .arg("ref content")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Unknown artifact type 'ref'"));
+
+    Ok(())
+}
+
+#[test]
 fn test_add_force_overwrite() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
@@ -783,6 +1046,48 @@ fn test_add_force_overwrite() -> anyhow::Result<()> {
         .success();
 
     let file_path = env.root().join(".test-mem/master/spec/test.txt");
+    assert_eq!(fs::read_to_string(file_path)?, "v2");
+
+    Ok(())
+}
+
+#[test]
+fn test_add_normalized_filename_collision() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .args(["add", "--type", "task", "--root", "foo", "v1"])
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .args(["add", "--type", "task", "--root", "foo.md", "v2"])
+        .assert()
+        .failure()
+        .stderr(
+            predicate::str::contains("File exists").and(predicate::str::contains("Use --force")),
+        );
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .args(["add", "--type", "task", "--root", "--force", "foo.md", "v2"])
+        .assert()
+        .success();
+
+    let file_path = env.root().join(".test-mem/master/task/foo.md");
     assert_eq!(fs::read_to_string(file_path)?, "v2");
 
     Ok(())
@@ -1291,6 +1596,80 @@ fn test_add_rejects_path_traversal() -> anyhow::Result<()> {
         .assert()
         .failure()
         .stderr(predicate::str::contains("'..' is not allowed"));
+
+    Ok(())
+}
+
+#[test]
+fn test_add_rejects_degenerate_filenames() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    // Empty, whitespace, dot-only, dir-like (trailing separator),
+    // double-dot prefix, and trailing-dot names must fail validation
+    // loudly. Normalization must never turn them into ghost artifacts
+    // (`.md`, `..md`, `dir/.md`, `foo..md`) that the board reader cannot
+    // surface; `master/` additionally must not bypass the reserved-slug
+    // guard via a `master/.md` path.
+    for name in [
+        "",
+        " ",
+        ".",
+        "dir/",
+        "master/",
+        "..foo",
+        "nested/..bar",
+        "trailing.",
+    ] {
+        env.command()
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .arg("add")
+            .arg("-t")
+            .arg("task")
+            .arg("--root")
+            .arg(name)
+            .arg("card content")
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("Invalid filename"));
+    }
+
+    // Trailing dots get their own message: `Path::extension` reports
+    // `Some("")` for them, so they are neither extensionless nor
+    // meaningfully extensioned.
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("-t")
+        .arg("task")
+        .arg("--root")
+        .arg("trailing.")
+        .arg("card content")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("trailing dots are not allowed"));
+
+    // The failed adds must not leave any files or directories behind
+    let task_dir = env.root().join(".test-mem/master/task");
+    if task_dir.exists() {
+        let leftovers: Vec<String> = fs::read_dir(&task_dir)?
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .collect();
+        assert!(
+            leftovers.is_empty(),
+            "degenerate adds must not create files, found: {leftovers:?}"
+        );
+    }
 
     Ok(())
 }

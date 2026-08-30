@@ -9,10 +9,19 @@ const FRONTMATTER_MAX_LINES: usize = 64;
 
 /// Canonical artifact types supported by cue out of the box.
 pub const CANONICAL_TYPES: &[&str] = &[
-    "bin", "doc", "note", "plan", "ref", "spec", "task", "tmp", "todo", "trace",
+    "bin", "doc", "note", "plan", "spec", "task", "tmp", "todo", "trace",
 ];
 
+/// Artifact types whose payload is a markdown document (frontmatter
+/// plus markdown body). Extensionless filenames get `.md` appended so
+/// `read_artifacts` can surface them to the curator board.
+pub const MARKDOWN_TYPES: &[&str] = &["doc", "note", "plan", "spec", "task", "todo"];
+
 /// Default artifact types that are gitignored and not listed.
+///
+/// `ref` is kept here as a tombstone: the type was dropped from
+/// `CANONICAL_TYPES`, but legacy `ref/` directories in existing
+/// stores must stay hidden from `cue list` and gitignored by init.
 pub const DEFAULT_IGNORED_TYPES: &[&str] = &["ref", "tmp"];
 
 /// Canonical status values for todo artifacts, in kanban column order.
@@ -292,7 +301,26 @@ mod tests {
         assert!(CANONICAL_TYPES.contains(&"bin"));
         assert!(CANONICAL_TYPES.contains(&"task"));
         assert!(CANONICAL_TYPES.contains(&"note"));
-        assert_eq!(CANONICAL_TYPES.len(), 10);
+        assert!(!CANONICAL_TYPES.contains(&"ref"));
+        assert_eq!(CANONICAL_TYPES.len(), 9);
+    }
+
+    #[test]
+    fn markdown_types_are_canonical_and_exclude_ref() {
+        for cue_type in MARKDOWN_TYPES {
+            assert!(
+                CANONICAL_TYPES.contains(cue_type),
+                "markdown type '{cue_type}' must be canonical"
+            );
+        }
+        assert!(!MARKDOWN_TYPES.contains(&"ref"));
+
+        let non_markdown_types: Vec<_> = CANONICAL_TYPES
+            .iter()
+            .copied()
+            .filter(|cue_type| !MARKDOWN_TYPES.contains(cue_type))
+            .collect();
+        assert_eq!(non_markdown_types, ["bin", "tmp", "trace"]);
     }
 
     #[test]
