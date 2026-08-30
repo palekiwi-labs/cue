@@ -1,7 +1,7 @@
 use crate::artifact::{CANONICAL_TYPES, DEFAULT_IGNORED_TYPES};
 use figment::{
-    providers::{Env, Format, Json, Serialized},
     Figment,
+    providers::{Env, Format, Json, Serialized},
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
@@ -80,7 +80,9 @@ mod tests {
         // target out of the box. Configuring a subset is done via cue.json.
         assert_eq!(
             config.artifact_types,
-            vec!["bin", "doc", "note", "plan", "ref", "spec", "task", "tmp", "todo", "trace",]
+            vec![
+                "bin", "doc", "note", "plan", "spec", "task", "tmp", "todo", "trace"
+            ]
         );
     }
 
@@ -88,8 +90,10 @@ mod tests {
     fn test_default_ignored_types() {
         let config = Config::default();
         // Defaults mirror the canonical ignored types
-        // (artifact.rs::DEFAULT_IGNORED_TYPES): tmp and ref are excluded from
-        // `cue list` and gitignored by the cue worktree init out of the box.
+        // (artifact.rs::DEFAULT_IGNORED_TYPES): tmp is excluded from
+        // `cue list` and gitignored by the cue worktree init out of the
+        // box; ref remains ignored as a tombstone for legacy stores
+        // even though the type was dropped from CANONICAL_TYPES.
         assert_eq!(config.ignored_types, vec!["ref", "tmp"]);
     }
 
