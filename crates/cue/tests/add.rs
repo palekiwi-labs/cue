@@ -1612,12 +1612,22 @@ fn test_add_rejects_degenerate_filenames() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    // Empty, dot-only, dir-like (trailing separator) and trailing-dot
-    // names must fail validation loudly. Normalization must never turn
-    // them into ghost artifacts (`.md`, `..md`, `dir/.md`, `foo..md`)
-    // that the board reader cannot surface; `master/` additionally
-    // must not bypass the reserved-slug guard via a `master/.md` path.
-    for name in ["", ".", "dir/", "master/", "trailing."] {
+    // Empty, whitespace, dot-only, dir-like (trailing separator),
+    // double-dot prefix, and trailing-dot names must fail validation
+    // loudly. Normalization must never turn them into ghost artifacts
+    // (`.md`, `..md`, `dir/.md`, `foo..md`) that the board reader cannot
+    // surface; `master/` additionally must not bypass the reserved-slug
+    // guard via a `master/.md` path.
+    for name in [
+        "",
+        " ",
+        ".",
+        "dir/",
+        "master/",
+        "..foo",
+        "nested/..bar",
+        "trailing.",
+    ] {
         env.command()
             .env("CUE_BRANCH_NAME", "test-mem")
             .env("CUE_DIR_NAME", ".test-mem")

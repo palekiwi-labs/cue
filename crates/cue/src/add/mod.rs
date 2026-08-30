@@ -214,34 +214,43 @@ fn looks_like_extension(ext: &str) -> bool {
 /// Validate a caller-supplied artifact filename.
 ///
 /// Allows only `Normal` path components: subdirectory grouping like
-/// `auth-redesign/index.md` is permitted. Rejects empty input,
-/// `.`/`..` components, absolute paths, trailing separators
-/// (dir-like inputs such as `dir/`, whose `.md`-normalized form
-/// would create board-invisible ghost files like `dir/.md`), and
-/// trailing dots (`foo.`, which would normalize to `foo..md`).
+/// `auth-redesign/index.md` is permitted. Rejects empty or whitespace-only
+/// input, `.`/`..` components, leading `..` component prefixes, absolute
+/// paths, trailing separators (dir-like inputs such as `dir/`, whose
+/// `.md`-normalized form would create board-invisible ghost files like
+/// `dir/.md`), and trailing dots (`foo.`, which would normalize to `foo..md`).
 pub fn validate_filename(filename: &str) -> Result<()> {
-    if filename.is_empty() {
+    if filename.trim().is_empty() {
         bail!("Invalid filename '{filename}': must not be empty");
-    }
-    if filename.chars().last().is_some_and(std::path::is_separator) {
-        bail!("Invalid filename '{filename}': trailing path separators are not allowed");
     }
     for component in Path::new(filename).components() {
         match component {
-            Component::Normal(_) => {}
+            Component::Normal(c) => {
+                if c.to_str().is_some_and(|s| s.trim().is_empty()) {
+                    bail!("Invalid filename '{filename}': must not be empty");
+                }
+                if c.to_str().is_some_and(|s| s.starts_with("..")) {
+                    bail!("Invalid filename '{filename}': '..' is not allowed");
+                }
+            }
             Component::CurDir => {
-                bail!("Invalid filename '{filename}': '.' is not allowed")
+                bail!("Invalid filename '{filename}': '.' is not allowed");
             }
             Component::ParentDir => {
-                bail!("Invalid filename '{filename}': '..' is not allowed")
+                bail!("Invalid filename '{filename}': '..' is not allowed");
             }
             Component::RootDir | Component::Prefix(_) => {
-                bail!("Invalid filename '{filename}': absolute paths are not allowed")
+                bail!("Invalid filename '{filename}': absolute paths are not allowed");
             }
         }
     }
-    // Checked after the component scan so `.` and `..` keep their own
-    // dedicated messages.
+    // Suffix checks run after the component scan so that root dirs (`/`),
+    // current dirs (`.`, `./`), and parent dirs (`..`, `../`) retain their
+    // dedicated error messages rather than being masked by trailing separator
+    // or trailing dot checks.
+    if filename.chars().last().is_some_and(std::path::is_separator) {
+        bail!("Invalid filename '{filename}': trailing path separators are not allowed");
+    }
     if filename.ends_with('.') {
         bail!("Invalid filename '{filename}': trailing dots are not allowed");
     }
@@ -342,5 +351,104 @@ mod tests {
             .expect("Path::extension reports a tail for dotted slugs");
         assert_eq!(ext, "0-notes");
         assert!(!looks_like_extension(ext));
+    }
+
+    #[test]
+    fn validate_filename_accepts_valid_inputs() {
+        for valid in [
+            "card",
+            "card.md",
+            "auth-login",
+            "auth-login.md",
+            "v0.2.0-notes",
+            "nested/card",
+            "nested/card.md",
+            "deeply/nested/dir/artifact.txt",
+            ".hidden",
+            ".hidden.md",
+            "name with spaces",
+            "name with spaces.md",
+        ] {
+            assert!(
+                validate_filename(valid).is_ok(),
+                "'{valid}' should be valid"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_filename_rejects_empty_and_whitespace() {
+        for input in ["", " ", "   ", "\t", "\n", "dir/ ", " /file.md"] {
+            let err = validate_filename(input).unwrap_err().to_string();
+            assert!(
+                err.contains("must not be empty"),
+                "input '{input}' should fail with empty message, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_filename_rejects_curdir_dot() {
+        for input in [".", "./", "./foo"] {
+            let err = validate_filename(input).unwrap_err().to_string();
+            assert!(
+                err.contains("'.' is not allowed"),
+                "input '{input}' should fail with '.' message, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_filename_rejects_parentdir_and_double_dot_prefix() {
+        for input in [
+            "..",
+            "../",
+            "../foo",
+            "foo/..",
+            "foo/../bar",
+            "..foo",
+            "dir/..foo",
+            "...",
+            "....bar",
+        ] {
+            let err = validate_filename(input).unwrap_err().to_string();
+            assert!(
+                err.contains("'..' is not allowed"),
+                "input '{input}' should fail with '..' message, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_filename_rejects_absolute_paths() {
+        for input in ["/", "///", "/abs", "/etc/passwd", "/dir/"] {
+            let err = validate_filename(input).unwrap_err().to_string();
+            assert!(
+                err.contains("absolute paths are not allowed"),
+                "input '{input}' should fail with absolute path message, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_filename_rejects_trailing_separators() {
+        for input in ["dir/", "dir//", "nested/dir/", "a/b/c/"] {
+            let err = validate_filename(input).unwrap_err().to_string();
+            assert!(
+                err.contains("trailing path separators are not allowed"),
+                "input '{input}' should fail with trailing separator message, got: {err}"
+            );
+        }
+    }
+
+    #[test]
+    fn validate_filename_rejects_trailing_dots() {
+        for input in ["trailing.", "foo.", "nested/dir."] {
+            let err = validate_filename(input).unwrap_err().to_string();
+            assert!(
+                err.contains("trailing dots are not allowed"),
+                "input '{input}' should fail with trailing dot message, got: {err}"
+            );
+        }
     }
 }
