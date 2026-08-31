@@ -40,8 +40,35 @@ fn test_log_add_links_to_trace_artifact() -> anyhow::Result<()> {
         .success();
 
     let content = fs::read_to_string(env.root().join(".test-mem/master/log.md"))?;
-    assert!(content.contains("[error.log](trace/error.log)"));
+    assert!(content.contains("[trace](trace/error.log)"));
     assert!(!content.contains("stack trace content"));
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("trace")
+        .arg("--root")
+        .arg("trace report (1).log")
+        .arg("report contents")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("log")
+        .arg("add")
+        .arg("--title")
+        .arg("Linked report")
+        .arg("--trace")
+        .arg(".test-mem/master/trace/trace report (1).log")
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(env.root().join(".test-mem/master/log.md"))?;
+    assert!(content.contains("[trace](trace/trace%20report%20%281%29.log)"));
 
     Ok(())
 }
@@ -229,7 +256,7 @@ fn test_log_add_from_file() -> anyhow::Result<()> {
     let content = fs::read_to_string(&log_path)?;
 
     assert!(content.contains("JSON Title"));
-    assert!(content.contains("[json.log](trace/json.log)"));
+    assert!(content.contains("[trace](trace/json.log)"));
     assert!(!content.contains("JSON trace contents"));
     assert!(content.contains("- **Open:** Question 1"));
     assert!(content.contains("- **Open:** Question 2"));

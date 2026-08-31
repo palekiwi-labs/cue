@@ -188,7 +188,7 @@ pub enum LogCommands {
         /// Entry title (required unless --file is used)
         #[arg(long)]
         title: Option<String>,
-        /// Reference to a trace artifact
+        /// Repository-relative or absolute reference to a trace artifact
         #[arg(long)]
         trace: Option<String>,
         /// Findings (can be repeated)

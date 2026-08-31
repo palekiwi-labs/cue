@@ -46,6 +46,7 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
     }
 
     // 3. Open store
+    let repository_root = store::main_worktree_root(root)?;
     let resolved = store::open(root, config)?;
 
     let scope = cuelib::head::resolve_scope(&resolved.head_dir, scope_name.as_deref())?;
@@ -54,7 +55,12 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
     }
 
     if let Some(trace) = &entry.trace {
-        entry.trace = Some(resolve_trace_reference(trace, &resolved.store_dir, &scope)?);
+        entry.trace = Some(resolve_trace_reference(
+            trace,
+            &repository_root,
+            &resolved.store_dir,
+            &scope,
+        )?);
     }
 
     let log_file_path = resolved.store_dir.join(&scope).join("log.md");
@@ -92,12 +98,7 @@ fn build_log_markdown(entry: &LogEntry, hash: &str, is_new: bool) -> String {
     writeln!(&mut md, "## [{}] {}", hash, entry.title.trim()).unwrap();
 
     if let Some(trace) = &entry.trace {
-        let path = Path::new(trace);
-        let label = path
-            .file_name()
-            .unwrap_or(path.as_os_str())
-            .to_string_lossy();
-        writeln!(&mut md, "\n[{}]({})", label, path.display()).unwrap();
+        writeln!(&mut md, "\n[trace]({})", encode_markdown_path(trace)).unwrap();
     }
 
     let push_bullets = |label: &str, items: &[String], md: &mut String| {
@@ -128,15 +129,17 @@ fn build_log_markdown(entry: &LogEntry, hash: &str, is_new: bool) -> String {
     md
 }
 
-fn resolve_trace_reference(trace: &str, store_dir: &Path, scope: &str) -> Result<String> {
+fn resolve_trace_reference(
+    trace: &str,
+    repository_root: &Path,
+    store_dir: &Path,
+    scope: &str,
+) -> Result<String> {
     let trace = trace.trim();
     if trace.is_empty() {
         bail!("Trace reference cannot be empty.");
     }
 
-    let repository_root = store_dir
-        .parent()
-        .context("Failed to resolve repository root from cue store")?;
     let reference = Path::new(trace);
     let candidate = if reference.is_absolute() {
         reference.to_path_buf()
@@ -167,5 +170,27 @@ fn resolve_trace_reference(trace: &str, store_dir: &Path, scope: &str) -> Result
         anyhow::anyhow!("Trace reference must target a trace artifact in scope '{scope}': {trace}")
     })?;
 
-    Ok(Path::new("trace").join(relative).display().to_string())
+    let mut normalized = String::from("trace");
+    for component in relative.components() {
+        let component = component
+            .as_os_str()
+            .to_str()
+            .context("Trace artifact path must be valid UTF-8")?;
+        normalized.push('/');
+        normalized.push_str(component);
+    }
+
+    Ok(normalized)
+}
+
+fn encode_markdown_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'/' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            write!(&mut encoded, "%{byte:02X}").unwrap();
+        }
+    }
+    encoded
 }
