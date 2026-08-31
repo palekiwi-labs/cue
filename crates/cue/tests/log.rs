@@ -47,6 +47,86 @@ fn test_log_add_links_to_trace_artifact() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_log_add_rejects_invalid_trace_references() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    let assert_invalid = |reference: &str, message: &str| {
+        env.command()
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .arg("log")
+            .arg("add")
+            .arg("--title")
+            .arg("Invalid trace")
+            .arg("--trace")
+            .arg(reference)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(message));
+    };
+
+    assert_invalid(
+        ".test-mem/master/trace/missing.log",
+        "Trace reference does not exist",
+    );
+
+    fs::create_dir_all(env.root().join(".test-mem/master/trace"))?;
+    assert_invalid(
+        ".test-mem/master/trace",
+        "Trace reference must target a file",
+    );
+
+    let spec_path = env.root().join(".test-mem/master/spec/index.md");
+    fs::create_dir_all(spec_path.parent().expect("spec path has parent"))?;
+    fs::write(&spec_path, "spec")?;
+    assert_invalid(
+        ".test-mem/master/spec/index.md",
+        "must target a trace artifact in scope 'master'",
+    );
+
+    let other_trace = env.root().join(".test-mem/other/trace/error.log");
+    fs::create_dir_all(other_trace.parent().expect("trace path has parent"))?;
+    fs::write(&other_trace, "other trace")?;
+    assert_invalid(
+        ".test-mem/other/trace/error.log",
+        "must target a trace artifact in scope 'master'",
+    );
+
+    let outside = env.root().join("outside.log");
+    fs::write(&outside, "outside")?;
+    assert_invalid(
+        ".test-mem/master/trace/../../../outside.log",
+        "resolves outside the cue store",
+    );
+    assert_invalid(
+        outside.to_str().expect("temporary path is UTF-8"),
+        "resolves outside the cue store",
+    );
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            &outside,
+            env.root().join(".test-mem/master/trace/escaped.log"),
+        )?;
+        assert_invalid(
+            ".test-mem/master/trace/escaped.log",
+            "resolves outside the cue store",
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn test_log_add_basic() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
