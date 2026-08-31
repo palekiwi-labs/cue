@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use cuelib::store;
 use serde::Deserialize;
 use std::fmt::Write as _;
@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 #[derive(Deserialize, Default)]
 pub struct LogEntry {
     pub title: String,
-    pub body: Option<String>,
+    pub trace: Option<String>,
     #[serde(default)]
     pub found: Vec<String>,
     #[serde(default)]
@@ -26,7 +26,10 @@ pub struct LogAddOptions {
 }
 
 pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<PathBuf> {
-    let LogAddOptions { entry, scope_name } = opts;
+    let LogAddOptions {
+        mut entry,
+        scope_name,
+    } = opts;
 
     // 1. Validate
     if entry.title.trim().is_empty() {
@@ -48,6 +51,10 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
     let scope = cuelib::head::resolve_scope(&resolved.head_dir, scope_name.as_deref())?;
     if scope.trim().is_empty() {
         bail!("Scope name cannot be empty.");
+    }
+
+    if let Some(trace) = &entry.trace {
+        entry.trace = Some(resolve_trace_reference(trace, &resolved.store_dir, &scope)?);
     }
 
     let log_file_path = resolved.store_dir.join(&scope).join("log.md");
@@ -84,11 +91,13 @@ fn build_log_markdown(entry: &LogEntry, hash: &str, is_new: bool) -> String {
 
     writeln!(&mut md, "## [{}] {}", hash, entry.title.trim()).unwrap();
 
-    if let Some(b) = &entry.body {
-        let b = b.trim();
-        if !b.is_empty() {
-            writeln!(&mut md, "\n{}", b).unwrap();
-        }
+    if let Some(trace) = &entry.trace {
+        let path = Path::new(trace);
+        let label = path
+            .file_name()
+            .unwrap_or(path.as_os_str())
+            .to_string_lossy();
+        writeln!(&mut md, "\n[{}]({})", label, path.display()).unwrap();
     }
 
     let push_bullets = |label: &str, items: &[String], md: &mut String| {
@@ -117,4 +126,46 @@ fn build_log_markdown(entry: &LogEntry, hash: &str, is_new: bool) -> String {
     writeln!(&mut md).unwrap();
 
     md
+}
+
+fn resolve_trace_reference(trace: &str, store_dir: &Path, scope: &str) -> Result<String> {
+    let trace = trace.trim();
+    if trace.is_empty() {
+        bail!("Trace reference cannot be empty.");
+    }
+
+    let repository_root = store_dir
+        .parent()
+        .context("Failed to resolve repository root from cue store")?;
+    let reference = Path::new(trace);
+    let candidate = if reference.is_absolute() {
+        reference.to_path_buf()
+    } else {
+        repository_root.join(reference)
+    };
+    let target = fs::canonicalize(&candidate)
+        .with_context(|| format!("Trace reference does not exist: {trace}"))?;
+    if !target.is_file() {
+        bail!("Trace reference must target a file: {trace}");
+    }
+
+    let canonical_store = fs::canonicalize(store_dir).with_context(|| {
+        format!(
+            "Failed to resolve cue store directory {}",
+            store_dir.display()
+        )
+    })?;
+    if !target.starts_with(&canonical_store) {
+        bail!("Trace reference resolves outside the cue store: {trace}");
+    }
+
+    let trace_root = canonical_store.join(scope).join("trace");
+    let canonical_trace_root = fs::canonicalize(&trace_root).with_context(|| {
+        format!("Trace reference must target a trace artifact in scope '{scope}': {trace}")
+    })?;
+    let relative = target.strip_prefix(&canonical_trace_root).map_err(|_| {
+        anyhow::anyhow!("Trace reference must target a trace artifact in scope '{scope}': {trace}")
+    })?;
+
+    Ok(Path::new("trace").join(relative).display().to_string())
 }

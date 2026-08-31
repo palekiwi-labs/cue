@@ -4,6 +4,49 @@ use predicates::prelude::*;
 use std::fs;
 
 #[test]
+fn test_log_add_links_to_trace_artifact() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("trace")
+        .arg("--root")
+        .arg("error.log")
+        .arg("stack trace content")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("log")
+        .arg("add")
+        .arg("--title")
+        .arg("Investigated failure")
+        .arg("--trace")
+        .arg(".test-mem/master/trace/error.log")
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(env.root().join(".test-mem/master/log.md"))?;
+    assert!(content.contains("[error.log](trace/error.log)"));
+    assert!(!content.contains("stack trace content"));
+
+    Ok(())
+}
+
+#[test]
 fn test_log_add_basic() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
@@ -44,8 +87,6 @@ fn test_log_add_basic() -> anyhow::Result<()> {
         .arg("add")
         .arg("--title")
         .arg("Dirty Entry")
-        .arg("--body")
-        .arg("Some body text")
         .arg("--found")
         .arg("Found something")
         .arg("--decided")
@@ -55,7 +96,6 @@ fn test_log_add_basic() -> anyhow::Result<()> {
 
     let content = fs::read_to_string(&log_path)?;
     assert!(content.contains("-dirty] Dirty Entry"));
-    assert!(content.contains("Some body text"));
     assert!(content.contains("- **Found:** Found something"));
     assert!(content.contains("- **Decided:** Decided something"));
 
@@ -75,9 +115,21 @@ fn test_log_add_from_file() -> anyhow::Result<()> {
         .assert()
         .success();
 
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("trace")
+        .arg("--root")
+        .arg("json.log")
+        .arg("JSON trace contents")
+        .assert()
+        .success();
+
     let json_content = r#"{
         "title": "JSON Title",
-        "body": "JSON Body",
+        "trace": ".test-mem/master/trace/json.log",
         "open": ["Question 1", "Question 2"]
     }"#;
     let json_path = env.root().join("log.json");
@@ -97,7 +149,8 @@ fn test_log_add_from_file() -> anyhow::Result<()> {
     let content = fs::read_to_string(&log_path)?;
 
     assert!(content.contains("JSON Title"));
-    assert!(content.contains("JSON Body"));
+    assert!(content.contains("[json.log](trace/json.log)"));
+    assert!(!content.contains("JSON trace contents"));
     assert!(content.contains("- **Open:** Question 1"));
     assert!(content.contains("- **Open:** Question 2"));
 
@@ -134,11 +187,23 @@ fn test_log_add_validation() -> anyhow::Result<()> {
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("log")
         .arg("add")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("The --title argument is required"));
+
+    // Removed body argument
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("log")
+        .arg("add")
+        .arg("--title")
+        .arg("Some title")
         .arg("--body")
         .arg("Some body")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("The --title argument is required"));
+        .stderr(predicate::str::contains("unexpected argument '--body'"));
 
     // Empty task override
     env.command()

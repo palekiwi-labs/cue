@@ -188,9 +188,9 @@ pub enum LogCommands {
         /// Entry title (required unless --file is used)
         #[arg(long)]
         title: Option<String>,
-        /// Entry body text
+        /// Reference to a trace artifact
         #[arg(long)]
-        body: Option<String>,
+        trace: Option<String>,
         /// Findings (can be repeated)
         #[arg(long)]
         found: Vec<String>,
@@ -201,7 +201,7 @@ pub enum LogCommands {
         #[arg(long)]
         open: Vec<String>,
         /// Read entry data from a JSON file
-        #[arg(long, conflicts_with_all = &["title", "body", "found", "decided", "open"])]
+        #[arg(long, conflicts_with_all = &["title", "trace", "found", "decided", "open"])]
         file: Option<String>,
         /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long = "task")]
