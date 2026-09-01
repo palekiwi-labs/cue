@@ -20,7 +20,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
     match command {
         LogCommands::Add {
             title,
-            body,
+            trace,
             found,
             decided,
             open,
@@ -38,7 +38,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
                     title.context("The --title argument is required when not using --file")?;
                 LogEntry {
                     title,
-                    body,
+                    trace,
                     found,
                     decided,
                     open,

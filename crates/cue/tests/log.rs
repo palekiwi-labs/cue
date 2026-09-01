@@ -4,6 +4,156 @@ use predicates::prelude::*;
 use std::fs;
 
 #[test]
+fn test_log_add_links_to_trace_artifact() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("trace")
+        .arg("--root")
+        .arg("error.log")
+        .arg("stack trace content")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("log")
+        .arg("add")
+        .arg("--title")
+        .arg("Investigated failure")
+        .arg("--trace")
+        .arg(".test-mem/master/trace/error.log")
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(env.root().join(".test-mem/master/log.md"))?;
+    assert!(content.contains("[trace](trace/error.log)"));
+    assert!(!content.contains("stack trace content"));
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("trace")
+        .arg("--root")
+        .arg("trace report (1).log")
+        .arg("report contents")
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("log")
+        .arg("add")
+        .arg("--title")
+        .arg("Linked report")
+        .arg("--trace")
+        .arg(".test-mem/master/trace/trace report (1).log")
+        .assert()
+        .success();
+
+    let content = fs::read_to_string(env.root().join(".test-mem/master/log.md"))?;
+    assert!(content.contains("[trace](trace/trace%20report%20%281%29.log)"));
+
+    Ok(())
+}
+
+#[test]
+fn test_log_add_rejects_invalid_trace_references() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("init")
+        .assert()
+        .success();
+
+    let assert_invalid = |reference: &str, message: &str| {
+        env.command()
+            .env("CUE_BRANCH_NAME", "test-mem")
+            .env("CUE_DIR_NAME", ".test-mem")
+            .arg("log")
+            .arg("add")
+            .arg("--title")
+            .arg("Invalid trace")
+            .arg("--trace")
+            .arg(reference)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(message));
+    };
+
+    assert_invalid(
+        ".test-mem/master/trace/missing.log",
+        "Trace reference does not exist",
+    );
+
+    fs::create_dir_all(env.root().join(".test-mem/master/trace"))?;
+    assert_invalid(
+        ".test-mem/master/trace",
+        "Trace reference must target a file",
+    );
+
+    let spec_path = env.root().join(".test-mem/master/spec/index.md");
+    fs::create_dir_all(spec_path.parent().expect("spec path has parent"))?;
+    fs::write(&spec_path, "spec")?;
+    assert_invalid(
+        ".test-mem/master/spec/index.md",
+        "must target a trace artifact in scope 'master'",
+    );
+
+    let other_trace = env.root().join(".test-mem/other/trace/error.log");
+    fs::create_dir_all(other_trace.parent().expect("trace path has parent"))?;
+    fs::write(&other_trace, "other trace")?;
+    assert_invalid(
+        ".test-mem/other/trace/error.log",
+        "must target a trace artifact in scope 'master'",
+    );
+
+    let outside = env.root().join("outside.log");
+    fs::write(&outside, "outside")?;
+    assert_invalid(
+        ".test-mem/master/trace/../../../outside.log",
+        "resolves outside the cue store",
+    );
+    assert_invalid(
+        outside.to_str().expect("temporary path is UTF-8"),
+        "resolves outside the cue store",
+    );
+
+    #[cfg(unix)]
+    {
+        std::os::unix::fs::symlink(
+            &outside,
+            env.root().join(".test-mem/master/trace/escaped.log"),
+        )?;
+        assert_invalid(
+            ".test-mem/master/trace/escaped.log",
+            "resolves outside the cue store",
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
 fn test_log_add_basic() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
@@ -44,8 +194,6 @@ fn test_log_add_basic() -> anyhow::Result<()> {
         .arg("add")
         .arg("--title")
         .arg("Dirty Entry")
-        .arg("--body")
-        .arg("Some body text")
         .arg("--found")
         .arg("Found something")
         .arg("--decided")
@@ -55,7 +203,6 @@ fn test_log_add_basic() -> anyhow::Result<()> {
 
     let content = fs::read_to_string(&log_path)?;
     assert!(content.contains("-dirty] Dirty Entry"));
-    assert!(content.contains("Some body text"));
     assert!(content.contains("- **Found:** Found something"));
     assert!(content.contains("- **Decided:** Decided something"));
 
@@ -75,9 +222,21 @@ fn test_log_add_from_file() -> anyhow::Result<()> {
         .assert()
         .success();
 
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("add")
+        .arg("--type")
+        .arg("trace")
+        .arg("--root")
+        .arg("json.log")
+        .arg("JSON trace contents")
+        .assert()
+        .success();
+
     let json_content = r#"{
         "title": "JSON Title",
-        "body": "JSON Body",
+        "trace": ".test-mem/master/trace/json.log",
         "open": ["Question 1", "Question 2"]
     }"#;
     let json_path = env.root().join("log.json");
@@ -97,7 +256,8 @@ fn test_log_add_from_file() -> anyhow::Result<()> {
     let content = fs::read_to_string(&log_path)?;
 
     assert!(content.contains("JSON Title"));
-    assert!(content.contains("JSON Body"));
+    assert!(content.contains("[trace](trace/json.log)"));
+    assert!(!content.contains("JSON trace contents"));
     assert!(content.contains("- **Open:** Question 1"));
     assert!(content.contains("- **Open:** Question 2"));
 
@@ -134,11 +294,23 @@ fn test_log_add_validation() -> anyhow::Result<()> {
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("log")
         .arg("add")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("The --title argument is required"));
+
+    // Removed body argument
+    env.command()
+        .env("CUE_BRANCH_NAME", "test-mem")
+        .env("CUE_DIR_NAME", ".test-mem")
+        .arg("log")
+        .arg("add")
+        .arg("--title")
+        .arg("Some title")
         .arg("--body")
         .arg("Some body")
         .assert()
         .failure()
-        .stderr(predicate::str::contains("The --title argument is required"));
+        .stderr(predicate::str::contains("unexpected argument '--body'"));
 
     // Empty task override
     env.command()
