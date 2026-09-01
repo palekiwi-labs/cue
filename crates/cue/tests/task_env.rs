@@ -154,7 +154,7 @@ fn task_env_rejects_paths() -> anyhow::Result<()> {
 }
 
 #[test]
-fn linked_worktree_writes_print_store_relative_paths() -> anyhow::Result<()> {
+fn linked_worktree_writes_print_resolvable_paths() -> anyhow::Result<()> {
     let env = TestEnv::new();
     helpers::setup_git_repo(env.root());
     env.command().arg("init").assert().success();
@@ -166,19 +166,29 @@ fn linked_worktree_writes_print_store_relative_paths() -> anyhow::Result<()> {
         .output()?;
     assert!(output.status.success());
 
-    env.command()
+    let add_output = env
+        .command()
         .current_dir(&worktree)
         .args(["add", "--type", "note", "--root", "note.md", "content"])
-        .assert()
-        .success()
-        .stdout(".cue/master/note/note.md\n");
+        .output()?;
+    assert!(add_output.status.success());
+    let add_path = String::from_utf8(add_output.stdout)?.trim().to_owned();
+    assert!(
+        worktree.join(&add_path).exists(),
+        "printed add path must resolve from the invocation directory: {add_path}"
+    );
 
-    env.command()
+    let log_output = env
+        .command()
         .current_dir(&worktree)
         .args(["log", "add", "--title", "linked"])
-        .assert()
-        .success()
-        .stdout(".cue/master/log.md\n");
+        .output()?;
+    assert!(log_output.status.success());
+    let log_path = String::from_utf8(log_output.stdout)?.trim().to_owned();
+    assert!(
+        worktree.join(&log_path).exists(),
+        "printed log path must resolve from the invocation directory: {log_path}"
+    );
 
     Ok(())
 }
