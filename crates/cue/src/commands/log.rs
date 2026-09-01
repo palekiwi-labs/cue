@@ -53,9 +53,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
                     scope_name: task,
                 },
             )?;
-            let rel_path = log_file_path
-                .strip_prefix(&store_root)
-                .unwrap_or(&log_file_path);
+            let rel_path = log_file_path.strip_prefix(cwd).unwrap_or(&log_file_path);
             eprintln!("✓ Logged");
             println!("{}", rel_path.display());
         }
