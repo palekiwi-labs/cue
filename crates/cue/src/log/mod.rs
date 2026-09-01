@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use cuelib::store;
 use serde::Deserialize;
 use std::fmt::Write as _;
