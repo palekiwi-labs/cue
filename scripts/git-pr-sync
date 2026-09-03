@@ -5,6 +5,9 @@
 #   branch.<name>.base  - Target base branch name (e.g., master, main)
 #   branch.<name>.pr    - Pull request number (e.g., 123)
 #   branch.<name>.ahead - "true" if origin/<base> has commits not merged into HEAD
+#   branch.<name>.behindDefault - commit count separating HEAD from
+#                         origin/<default>; set only when behind, absent when
+#                         current or when the histories are unrelated
 #
 # Exit code is always 0 to ensure post-checkout/post-merge hook safety.
 
@@ -24,6 +27,41 @@ fi
 branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 if [ -z "$branch" ]; then
   exit 0
+fi
+
+# --- Default-branch drift (pure git; runs even when gh is unavailable) ---
+# Resolve the default branch from the remote-tracking HEAD, self-healing
+# once via set-head (network) when missing. No hardcoded name fallback:
+# an unresolvable default yields no signal rather than a wrong one.
+default_branch=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+default_branch=${default_branch#origin/}
+if [ -z "$default_branch" ]; then
+  git remote set-head origin --auto >/dev/null 2>&1 || true
+  default_branch=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
+  default_branch=${default_branch#origin/}
+fi
+
+if [ -n "$default_branch" ]; then
+  origin_default="origin/$default_branch"
+  if git fetch origin "$default_branch" --quiet 2>/dev/null; then
+    if [ -n "$(git merge-base HEAD "$origin_default" 2>/dev/null)" ]; then
+      behind=$(git rev-list --count HEAD.."$origin_default" 2>/dev/null || echo 0)
+      if [ "$behind" -gt 0 ] 2>/dev/null; then
+        git config "branch.${branch}.behindDefault" "$behind"
+        printf "\033[33mBranch is %s commit(s) behind default branch '%s'\033[0m\n" "$behind" "$default_branch" >&2
+      else
+        git config --unset "branch.${branch}.behindDefault" 2>/dev/null || true
+      fi
+    else
+      # Unrelated histories (e.g. orphan branches) are not "behind".
+      git config --unset "branch.${branch}.behindDefault" 2>/dev/null || true
+    fi
+  fi
+  # Fetch failure (offline): keep the cached key, stale-but-present.
+elif git remote get-url origin >/dev/null 2>&1; then
+  # origin exists but its HEAD is unresolvable: clear rather than guess.
+  git config --unset "branch.${branch}.behindDefault" 2>/dev/null || true
+  printf "\033[33mCould not resolve default branch (origin/HEAD unset); no drift signal\033[0m\n" >&2
 fi
 
 # Check for gh and jq; exit 0 safely if not installed.
@@ -48,8 +86,11 @@ if [ "$gh_status" -eq 0 ] && [ -n "$json_out" ] && [ "$json_out" != "null" ]; th
     git config "branch.${branch}.base" "$base_branch"
     git config "branch.${branch}.pr" "$pr_number"
 
-    # Best-effort fetch of the upstream base branch
-    git fetch origin "$base_branch" --quiet 2>/dev/null || true
+    # Best-effort fetch of the upstream base branch; the default branch
+    # was already fetched by the drift phase above, so skip duplicates.
+    if [ "$base_branch" != "$default_branch" ]; then
+      git fetch origin "$base_branch" --quiet 2>/dev/null || true
+    fi
 
     # Check if origin/<base_branch> is ahead of our merge base
     origin_ref="origin/$base_branch"
