@@ -56,9 +56,9 @@ chmod +x "$MOCK_BIN/gh"
 # Verify config values
 [ "$(git config "branch.feature/test-branch.base")" = "master" ] || { echo "FAIL: base not set to master"; exit 1; }
 [ "$(git config "branch.feature/test-branch.pr")" = "42" ] || { echo "FAIL: pr not set to 42"; exit 1; }
-# origin/master is not ahead yet (ahead should be unset)
-if git config "branch.feature/test-branch.ahead" 2>/dev/null; then
-  echo "FAIL: ahead should not be set"
+# origin/master is not ahead yet (behindBase should be unset)
+if git config "branch.feature/test-branch.behindBase" 2>/dev/null; then
+  echo "FAIL: behindBase should not be set"
   exit 1
 fi
 
@@ -87,7 +87,7 @@ git push origin master
 cd "$REPO_DIR"
 "$SYNC_BIN"
 
-[ "$(git config "branch.feature/test-branch.ahead")" = "true" ] || { echo "FAIL: ahead should be true"; exit 1; }
+[ "$(git config "branch.feature/test-branch.behindBase")" = "1" ] || { echo "FAIL: behindBase should be 1"; exit 1; }
 
 echo "PASS: Test 2 (Base Ahead Detection)"
 
@@ -119,7 +119,7 @@ EOF
 # Config must still be preserved!
 [ "$(git config "branch.feature/test-branch.base")" = "master" ] || { echo "FAIL: auth failure cleared base"; exit 1; }
 [ "$(git config "branch.feature/test-branch.pr")" = "42" ] || { echo "FAIL: auth failure cleared pr"; exit 1; }
-[ "$(git config "branch.feature/test-branch.ahead")" = "true" ] || { echo "FAIL: auth failure cleared ahead"; exit 1; }
+[ "$(git config "branch.feature/test-branch.behindBase")" = "2" ] || { echo "FAIL: auth failure cleared behindBase"; exit 1; }
 
 # Simulate network timeout
 cat << 'EOF' > "$MOCK_BIN/gh"
@@ -155,12 +155,20 @@ if git config "branch.feature/test-branch.pr" 2>/dev/null; then
   echo "FAIL: pr should be cleared"
   exit 1
 fi
-if git config "branch.feature/test-branch.ahead" 2>/dev/null; then
-  echo "FAIL: ahead should be cleared"
+if git config "branch.feature/test-branch.behindBase" 2>/dev/null; then
+  echo "FAIL: behindBase should be cleared"
   exit 1
 fi
 # behindDefault is managed by the drift phase and must survive the clear
 [ "$(git config "branch.feature/test-branch.behindDefault")" = "2" ] || { echo "FAIL: behindDefault should survive no-PR clear"; exit 1; }
+
+# Legacy key from the previous contract must be purged on every run
+git config "branch.feature/test-branch.ahead" "true"
+"$SYNC_BIN"
+if git config "branch.feature/test-branch.ahead" 2>/dev/null; then
+  echo "FAIL: legacy ahead key should be purged"
+  exit 1
+fi
 
 # get-pr-number should exit 1
 if "$NUM_BIN" 2>/dev/null; then

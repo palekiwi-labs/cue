@@ -4,10 +4,11 @@
 # Storage contract:
 #   branch.<name>.base  - Target base branch name (e.g., master, main)
 #   branch.<name>.pr    - Pull request number (e.g., 123)
-#   branch.<name>.ahead - "true" if origin/<base> has commits not merged into HEAD
-#   branch.<name>.behindDefault - commit count separating HEAD from
-#                         origin/<default>; set only when behind, absent when
+#   branch.<name>.behindBase - commit count separating HEAD from
+#                         origin/<base>; set only when behind, absent when
 #                         current or when the histories are unrelated
+#   branch.<name>.behindDefault - same, relative to origin/<default>
+#   (branch.<name>.ahead from the previous contract is purged on run)
 #
 # Exit code is always 0 to ensure post-checkout/post-merge hook safety.
 
@@ -28,6 +29,32 @@ branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 if [ -z "$branch" ]; then
   exit 0
 fi
+
+# Purge the legacy boolean from the previous storage contract.
+git config --unset "branch.${branch}.ahead" 2>/dev/null || true
+
+# Refresh branch.<name>.behindBase against origin/<base> (pure git).
+# Fetches <base> unless it is the default branch (already fetched below);
+# on fetch failure keeps the cached count, stale-but-present.
+refresh_behind_base() {
+  base=$1
+  origin_ref="origin/$base"
+  if [ "$base" != "$default_branch" ]; then
+    git fetch origin "$base" --quiet 2>/dev/null || return 0
+  fi
+  if [ -z "$(git merge-base HEAD "$origin_ref" 2>/dev/null)" ]; then
+    # Unrelated histories are not "behind".
+    git config --unset "branch.${branch}.behindBase" 2>/dev/null || true
+    return 0
+  fi
+  behind_base=$(git rev-list --count HEAD.."$origin_ref" 2>/dev/null || echo 0)
+  if [ "$behind_base" -gt 0 ] 2>/dev/null; then
+    git config "branch.${branch}.behindBase" "$behind_base"
+    printf "\033[33mHEAD is %s commit(s) behind base branch '%s'\033[0m\n" "$behind_base" "$base" >&2
+  else
+    git config --unset "branch.${branch}.behindBase" 2>/dev/null || true
+  fi
+}
 
 # --- Default-branch drift (pure git; runs even when gh is unavailable) ---
 # Resolve the default branch from the remote-tracking HEAD, self-healing
@@ -86,27 +113,8 @@ if [ "$gh_status" -eq 0 ] && [ -n "$json_out" ] && [ "$json_out" != "null" ]; th
     git config "branch.${branch}.base" "$base_branch"
     git config "branch.${branch}.pr" "$pr_number"
 
-    # Best-effort fetch of the upstream base branch; the default branch
-    # was already fetched by the drift phase above, so skip duplicates.
-    if [ "$base_branch" != "$default_branch" ]; then
-      git fetch origin "$base_branch" --quiet 2>/dev/null || true
-    fi
-
-    # Check if origin/<base_branch> is ahead of our merge base
-    origin_ref="origin/$base_branch"
-    if git rev-parse --verify "$origin_ref" >/dev/null 2>&1; then
-      merge_base=$(git merge-base HEAD "$origin_ref" 2>/dev/null || true)
-      origin_rev=$(git rev-parse "$origin_ref" 2>/dev/null || true)
-
-      if [ -n "$origin_rev" ] && [ -n "$merge_base" ] && [ "$origin_rev" != "$merge_base" ]; then
-        git config "branch.${branch}.ahead" "true"
-        printf "\033[33mBase branch '%s' has new commits\033[0m\n" "$base_branch" >&2
-      else
-        git config --unset "branch.${branch}.ahead" 2>/dev/null || true
-      fi
-    else
-      git config --unset "branch.${branch}.ahead" 2>/dev/null || true
-    fi
+    # Refresh behindBase against the fresh base from the PR.
+    refresh_behind_base "$base_branch"
 
     printf "\033[32mUpdated PR info: #%s (base: %s)\033[0m\n" "$pr_number" "$base_branch" >&2
   fi
@@ -116,12 +124,16 @@ else
     # Case 2: Authenticated & Definitely No PR
     git config --unset "branch.${branch}.base" 2>/dev/null || true
     git config --unset "branch.${branch}.pr" 2>/dev/null || true
-    git config --unset "branch.${branch}.ahead" 2>/dev/null || true
+    git config --unset "branch.${branch}.behindBase" 2>/dev/null || true
     printf "\033[32mCleared PR info (not on a PR branch)\033[0m\n" >&2
   else
     # Case 3 & 4: Auth Missing / Token Expired / Network Offline / Rate-Limit
-    # Preserve existing cached configuration keys.
-    :
+    # Preserve cached pr/base keys, but refresh behindBase against the
+    # cached base with pure git so the count stays fresh without gh.
+    cached_base=$(git config "branch.${branch}.base" 2>/dev/null || true)
+    if [ -n "$cached_base" ]; then
+      refresh_behind_base "$cached_base"
+    fi
   fi
 fi
 
