@@ -8,7 +8,6 @@
 #                         origin/<base>; set only when behind, absent when
 #                         current or when the histories are unrelated
 #   branch.<name>.behindDefault - same, relative to origin/<default>
-#   (branch.<name>.ahead from the previous contract is purged on run)
 #
 # Exit code is always 0 to ensure post-checkout/post-merge hook safety.
 
@@ -30,7 +29,7 @@ if [ -z "$branch" ]; then
   exit 0
 fi
 
-# Purge the legacy boolean from the previous storage contract.
+# Purge the deprecated 'ahead' boolean.
 git config --unset "branch.${branch}.ahead" 2>/dev/null || true
 
 # Refresh branch.<name>.behindBase against origin/<base> (pure git).

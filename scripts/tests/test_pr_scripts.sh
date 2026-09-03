@@ -162,11 +162,11 @@ fi
 # behindDefault is managed by the drift phase and must survive the clear
 [ "$(git config "branch.feature/test-branch.behindDefault")" = "2" ] || { echo "FAIL: behindDefault should survive no-PR clear"; exit 1; }
 
-# Legacy key from the previous contract must be purged on every run
+# The deprecated 'ahead' key is purged on every run
 git config "branch.feature/test-branch.ahead" "true"
 "$SYNC_BIN"
 if git config "branch.feature/test-branch.ahead" 2>/dev/null; then
-  echo "FAIL: legacy ahead key should be purged"
+  echo "FAIL: deprecated ahead key should be purged"
   exit 1
 fi
 
