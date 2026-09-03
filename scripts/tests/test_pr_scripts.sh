@@ -44,7 +44,8 @@ git commit -am "feature commit"
 cat << 'EOF' > "$MOCK_BIN/gh"
 #!/usr/bin/env bash
 if [ "$1" = "pr" ] && [ "$2" = "view" ]; then
-  echo '{"number": 42, "baseRefName": "master"}'
+  echo "42"
+  echo "master"
   exit 0
 fi
 exit 1
@@ -87,16 +88,16 @@ git push origin master
 cd "$REPO_DIR"
 "$SYNC_BIN"
 
-[ "$(git config "branch.feature/test-branch.behindBase")" = "1" ] || { echo "FAIL: behindBase should be 1"; exit 1; }
+[ "$(git config "branch.feature/test-branch.behindBase")" = "true" ] || { echo "FAIL: behindBase should be true"; exit 1; }
 
 echo "PASS: Test 2 (Base Ahead Detection)"
 
 # --------------------------------------------------------------------------
-# Test 2b: Default-Branch Drift (behindDefault count stored)
+# Test 2b: Default-Branch Drift (behindDefault set)
 # --------------------------------------------------------------------------
-[ "$(git config "branch.feature/test-branch.behindDefault")" = "1" ] || { echo "FAIL: behindDefault should be 1"; exit 1; }
+[ "$(git config "branch.feature/test-branch.behindDefault")" = "true" ] || { echo "FAIL: behindDefault should be true"; exit 1; }
 
-echo "PASS: Test 2b (Default-Branch Drift Count)"
+echo "PASS: Test 2b (Default-Branch Drift)"
 
 # --------------------------------------------------------------------------
 # Test 3: Case 3 & 4 - Auth Missing or Network Offline (Preserve Cache)
@@ -119,7 +120,7 @@ EOF
 # Config must still be preserved!
 [ "$(git config "branch.feature/test-branch.base")" = "master" ] || { echo "FAIL: auth failure cleared base"; exit 1; }
 [ "$(git config "branch.feature/test-branch.pr")" = "42" ] || { echo "FAIL: auth failure cleared pr"; exit 1; }
-[ "$(git config "branch.feature/test-branch.behindBase")" = "2" ] || { echo "FAIL: auth failure cleared behindBase"; exit 1; }
+[ "$(git config "branch.feature/test-branch.behindBase")" = "true" ] || { echo "FAIL: auth failure cleared behindBase"; exit 1; }
 
 # Simulate network timeout
 cat << 'EOF' > "$MOCK_BIN/gh"
@@ -132,7 +133,7 @@ EOF
 # Config must still be preserved!
 [ "$(git config "branch.feature/test-branch.base")" = "master" ] || { echo "FAIL: network failure cleared base"; exit 1; }
 [ "$(git config "branch.feature/test-branch.pr")" = "42" ] || { echo "FAIL: network failure cleared pr"; exit 1; }
-[ "$(git config "branch.feature/test-branch.behindDefault")" = "2" ] || { echo "FAIL: behindDefault should refresh to 2 while gh is offline"; exit 1; }
+[ "$(git config "branch.feature/test-branch.behindDefault")" = "true" ] || { echo "FAIL: behindDefault should be true while gh is offline"; exit 1; }
 
 echo "PASS: Test 3 (Preserve on Auth / Network Failure)"
 
@@ -160,7 +161,7 @@ if git config "branch.feature/test-branch.behindBase" 2>/dev/null; then
   exit 1
 fi
 # behindDefault is managed by the drift phase and must survive the clear
-[ "$(git config "branch.feature/test-branch.behindDefault")" = "2" ] || { echo "FAIL: behindDefault should survive no-PR clear"; exit 1; }
+[ "$(git config "branch.feature/test-branch.behindDefault")" = "true" ] || { echo "FAIL: behindDefault should survive no-PR clear"; exit 1; }
 
 # get-pr-number should exit 1
 if "$NUM_BIN" 2>/dev/null; then
@@ -231,5 +232,50 @@ set -e
 [ "$status" -eq 0 ] || { echo "FAIL: git-pr-sync did not exit 0 on crash"; exit 1; }
 
 echo "PASS: Test 6 (Hook Safety)"
+
+# --------------------------------------------------------------------------
+# Test 7: Quiet Flag (-q / --quiet)
+# --------------------------------------------------------------------------
+# Make origin/master advance so there is drift to report
+cd "$CLONE_DIR"
+echo "upstream change 3" >> upstream.txt
+git commit -am "third upstream commit on master" >/dev/null
+git push origin master >/dev/null 2>&1
+
+cd "$REPO_DIR"
+out_normal=$("$SYNC_BIN" 2>&1 || true)
+[ -n "$out_normal" ] || { echo "FAIL: normal run should produce output on drift"; exit 1; }
+
+out_quiet=$("$SYNC_BIN" -q 2>&1 || true)
+[ -z "$out_quiet" ] || { echo "FAIL: -q should suppress all output, got: $out_quiet"; exit 1; }
+
+out_quiet_long=$("$SYNC_BIN" --quiet 2>&1 || true)
+[ -z "$out_quiet_long" ] || { echo "FAIL: --quiet should suppress all output, got: $out_quiet_long"; exit 1; }
+
+echo "PASS: Test 7 (Quiet Mode)"
+
+# --------------------------------------------------------------------------
+# Test 8: Missing gh Command Refreshes Cached Drift
+# --------------------------------------------------------------------------
+# Re-establish cached base
+git config "branch.feature/test-branch.base" "master"
+git config "branch.feature/test-branch.pr" "42"
+git config --unset "branch.feature/test-branch.behindBase" 2>/dev/null || true
+git config --unset "branch.feature/test-branch.behindDefault" 2>/dev/null || true
+
+# Remove gh from PATH
+rm -f "$MOCK_BIN/gh"
+SAVED_PATH="$PATH"
+export PATH="${PATH//"$MOCK_BIN:"/}"
+
+"$SYNC_BIN" -q
+
+[ "$(git config "branch.feature/test-branch.behindBase")" = "true" ] || { echo "FAIL: missing gh should still refresh cached behindBase"; exit 1; }
+[ "$(git config "branch.feature/test-branch.behindDefault")" = "true" ] || { echo "FAIL: missing gh should still refresh behindDefault"; exit 1; }
+[ "$(git config "branch.feature/test-branch.base")" = "master" ] || { echo "FAIL: base branch should still be master"; exit 1; }
+
+export PATH="$SAVED_PATH"
+
+echo "PASS: Test 8 (Missing gh Tool Refreshes Cached Drift)"
 
 echo "ALL TESTS PASSED SUCCESSFULLY!"

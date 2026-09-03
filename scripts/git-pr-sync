@@ -2,60 +2,82 @@
 # Synchronize GitHub PR metadata into native Git config (branch.<name>.*).
 #
 # Storage contract:
-#   branch.<name>.base  - Target base branch name (e.g., master, main)
-#   branch.<name>.pr    - Pull request number (e.g., 123)
-#   branch.<name>.behindBase - commit count separating HEAD from
-#                         origin/<base>; set only when behind, absent when
-#                         current or when the histories are unrelated
-#   branch.<name>.behindDefault - same, relative to origin/<default>
+#   branch.<name>.base          - Target base branch name (e.g., master, main)
+#   branch.<name>.pr            - Pull request number (e.g., 123)
+#   branch.<name>.behindBase    - "true" if origin/<base> requires integration,
+#                                 absent when current or histories are unrelated
+#   branch.<name>.behindDefault - "true" if origin/<default> requires integration,
+#                                 absent when current or histories are unrelated
 #
 # Exit code is always 0 to ensure post-checkout/post-merge hook safety.
 
 set -u
 
-# Ensure required commands are available; silently exit 0 if missing.
+quiet=false
+case "${1:-}" in
+  -q|--quiet)
+    quiet=true
+    ;;
+esac
+
 if ! command -v git >/dev/null 2>&1; then
   exit 0
 fi
 
-# Ensure we are inside a Git working tree.
 if ! git rev-parse --is-inside-work-tree >/dev/null 2>&1; then
   exit 0
 fi
 
-# Resolve current branch name. Exit 0 if detached HEAD.
 branch=$(git symbolic-ref --quiet --short HEAD 2>/dev/null || true)
 if [ -z "$branch" ]; then
   exit 0
 fi
 
-# Refresh branch.<name>.behindBase against origin/<base> (pure git).
-# Fetches <base> unless it is the default branch (already fetched below);
-# on fetch failure keeps the cached count, stale-but-present.
-refresh_behind_base() {
-  base=$1
-  origin_ref="origin/$base"
-  if [ "$base" != "$default_branch" ]; then
-    git fetch origin "$base" --quiet 2>/dev/null || return 0
-  fi
-  if [ -z "$(git merge-base HEAD "$origin_ref" 2>/dev/null)" ]; then
-    # Unrelated histories are not "behind".
-    git config --unset "branch.${branch}.behindBase" 2>/dev/null || true
+sync_behind_status() {
+  local config_key=$1
+  local upstream_ref=$2
+  local label=$3
+
+  # Unrelated histories (e.g. orphan branches) are not "behind".
+  if ! git merge-base HEAD "$upstream_ref" >/dev/null 2>&1; then
+    git config --unset "$config_key" 2>/dev/null || true
     return 0
   fi
-  behind_base=$(git rev-list --count HEAD.."$origin_ref" 2>/dev/null || echo 0)
-  if [ "$behind_base" -gt 0 ] 2>/dev/null; then
-    git config "branch.${branch}.behindBase" "$behind_base"
-    printf "\033[33mHEAD is %s commit(s) behind base branch '%s'\033[0m\n" "$behind_base" "$base" >&2
+
+  if git merge-base --is-ancestor "$upstream_ref" HEAD 2>/dev/null; then
+    git config --unset "$config_key" 2>/dev/null || true
   else
-    git config --unset "branch.${branch}.behindBase" 2>/dev/null || true
+    git config "$config_key" "true"
+    "$quiet" || printf "\033[33mHEAD is behind %s\033[0m\n" "$label" >&2
   fi
 }
 
-# --- Default-branch drift (pure git; runs even when gh is unavailable) ---
-# Resolve the default branch from the remote-tracking HEAD, self-healing
-# once via set-head (network) when missing. No hardcoded name fallback:
-# an unresolvable default yields no signal rather than a wrong one.
+refresh_behind_base() {
+  local base=$1
+  local default_branch=$2
+  local origin_ref="origin/$base"
+
+  if [ "$base" != "$default_branch" ]; then
+    git fetch origin "$base" --quiet 2>/dev/null || return 0
+  fi
+
+  sync_behind_status \
+    "branch.${branch}.behindBase" \
+    "$origin_ref" \
+    "base branch '$base'"
+}
+
+refresh_cached_behind_base() {
+  local default_branch=$1
+  local cached_base
+
+  cached_base=$(git config "branch.${branch}.base" 2>/dev/null || true)
+  if [ -n "$cached_base" ]; then
+    refresh_behind_base "$cached_base" "$default_branch"
+  fi
+}
+
+# Resolve default branch (pure git, fast & offline).
 default_branch=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null || true)
 default_branch=${default_branch#origin/}
 if [ -z "$default_branch" ]; then
@@ -67,71 +89,49 @@ fi
 if [ -n "$default_branch" ]; then
   origin_default="origin/$default_branch"
   if git fetch origin "$default_branch" --quiet 2>/dev/null; then
-    if [ -n "$(git merge-base HEAD "$origin_default" 2>/dev/null)" ]; then
-      behind=$(git rev-list --count HEAD.."$origin_default" 2>/dev/null || echo 0)
-      if [ "$behind" -gt 0 ] 2>/dev/null; then
-        git config "branch.${branch}.behindDefault" "$behind"
-        printf "\033[33mBranch is %s commit(s) behind default branch '%s'\033[0m\n" "$behind" "$default_branch" >&2
-      else
-        git config --unset "branch.${branch}.behindDefault" 2>/dev/null || true
-      fi
-    else
-      # Unrelated histories (e.g. orphan branches) are not "behind".
-      git config --unset "branch.${branch}.behindDefault" 2>/dev/null || true
-    fi
+    sync_behind_status \
+      "branch.${branch}.behindDefault" \
+      "$origin_default" \
+      "default branch '$default_branch'"
   fi
-  # Fetch failure (offline): keep the cached key, stale-but-present.
 elif git remote get-url origin >/dev/null 2>&1; then
-  # origin exists but its HEAD is unresolvable: clear rather than guess.
   git config --unset "branch.${branch}.behindDefault" 2>/dev/null || true
-  printf "\033[33mCould not resolve default branch (origin/HEAD unset); no drift signal\033[0m\n" >&2
+  "$quiet" || printf "\033[33mCould not resolve default branch (origin/HEAD unset); no drift signal\033[0m\n" >&2
 fi
 
-# Check for gh and jq; exit 0 safely if not installed.
-if ! command -v gh >/dev/null 2>&1 || ! command -v jq >/dev/null 2>&1; then
+if ! command -v gh >/dev/null 2>&1; then
+  refresh_cached_behind_base "$default_branch"
   exit 0
 fi
 
-# Query GitHub CLI for PR metadata.
 err_file=$(mktemp)
 trap 'rm -f "$err_file"' EXIT
 
-json_out=$(gh pr view --json number,baseRefName 2>"$err_file")
+pr_data=$(gh pr view --json number,baseRefName --jq '.number, .baseRefName' 2>"$err_file")
 gh_status=$?
-err_text=$(cat "$err_file" 2>/dev/null || true)
+err_text=$(<"$err_file")
 
-if [ "$gh_status" -eq 0 ] && [ -n "$json_out" ] && [ "$json_out" != "null" ]; then
-  # Case 1: Authenticated & PR Found
-  pr_number=$(printf '%s\n' "$json_out" | jq -r '.number // empty' 2>/dev/null || true)
-  base_branch=$(printf '%s\n' "$json_out" | jq -r '.baseRefName // empty' 2>/dev/null || true)
+if [ "$gh_status" -eq 0 ] && [ -n "$pr_data" ]; then
+  mapfile -t pr_fields <<<"$pr_data"
+  pr_number=${pr_fields[0]:-}
+  base_branch=${pr_fields[1]:-}
 
   if [ -n "$pr_number" ] && [ -n "$base_branch" ]; then
     git config "branch.${branch}.base" "$base_branch"
     git config "branch.${branch}.pr" "$pr_number"
 
-    # Refresh behindBase against the fresh base from the PR.
-    refresh_behind_base "$base_branch"
-
-    printf "\033[32mUpdated PR info: #%s (base: %s)\033[0m\n" "$pr_number" "$base_branch" >&2
+    refresh_behind_base "$base_branch" "$default_branch"
+    "$quiet" || printf "\033[32mUpdated PR info: #%s (base: %s)\033[0m\n" "$pr_number" "$base_branch" >&2
   fi
 else
-  # Inspect error to distinguish definitely no PR vs auth/network failures
   if printf '%s\n' "$err_text" | grep -qiE "no (open )?pull requests? found|could not resolve to a PullRequest"; then
-    # Case 2: Authenticated & Definitely No PR
     git config --unset "branch.${branch}.base" 2>/dev/null || true
     git config --unset "branch.${branch}.pr" 2>/dev/null || true
     git config --unset "branch.${branch}.behindBase" 2>/dev/null || true
-    printf "\033[32mCleared PR info (not on a PR branch)\033[0m\n" >&2
+    "$quiet" || printf "\033[32mCleared PR info (not on a PR branch)\033[0m\n" >&2
   else
-    # Case 3 & 4: Auth Missing / Token Expired / Network Offline / Rate-Limit
-    # Preserve cached pr/base keys, but refresh behindBase against the
-    # cached base with pure git so the count stays fresh without gh.
-    cached_base=$(git config "branch.${branch}.base" 2>/dev/null || true)
-    if [ -n "$cached_base" ]; then
-      refresh_behind_base "$cached_base"
-    fi
+    refresh_cached_behind_base "$default_branch"
   fi
 fi
 
-# Case 5: Hook Safety
 exit 0
