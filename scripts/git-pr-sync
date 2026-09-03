@@ -29,9 +29,6 @@ if [ -z "$branch" ]; then
   exit 0
 fi
 
-# Purge the deprecated 'ahead' boolean.
-git config --unset "branch.${branch}.ahead" 2>/dev/null || true
-
 # Refresh branch.<name>.behindBase against origin/<base> (pure git).
 # Fetches <base> unless it is the default branch (already fetched below);
 # on fetch failure keeps the cached count, stale-but-present.

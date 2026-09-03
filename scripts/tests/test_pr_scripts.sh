@@ -162,14 +162,6 @@ fi
 # behindDefault is managed by the drift phase and must survive the clear
 [ "$(git config "branch.feature/test-branch.behindDefault")" = "2" ] || { echo "FAIL: behindDefault should survive no-PR clear"; exit 1; }
 
-# The deprecated 'ahead' key is purged on every run
-git config "branch.feature/test-branch.ahead" "true"
-"$SYNC_BIN"
-if git config "branch.feature/test-branch.ahead" 2>/dev/null; then
-  echo "FAIL: deprecated ahead key should be purged"
-  exit 1
-fi
-
 # get-pr-number should exit 1
 if "$NUM_BIN" 2>/dev/null; then
   echo "FAIL: get-pr-number should exit 1 when not configured"
