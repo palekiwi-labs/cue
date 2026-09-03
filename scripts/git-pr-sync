@@ -48,7 +48,9 @@ sync_behind_status() {
     git config --unset "$config_key" 2>/dev/null || true
   else
     git config "$config_key" "true"
-    "$quiet" || printf "\033[33mHEAD is behind %s\033[0m\n" "$label" >&2
+    if ! "$quiet" && [ -n "$label" ]; then
+      printf "\033[33mHEAD is behind %s\033[0m\n" "$label" >&2
+    fi
   fi
 }
 
@@ -61,10 +63,15 @@ refresh_behind_base() {
     git fetch origin "$base" --quiet 2>/dev/null || return 0
   fi
 
+  local label=""
+  if [ "$base" != "$default_branch" ]; then
+    label="base branch '$base'"
+  fi
+
   sync_behind_status \
     "branch.${branch}.behindBase" \
     "$origin_ref" \
-    "base branch '$base'"
+    "$label"
 }
 
 refresh_cached_behind_base() {
