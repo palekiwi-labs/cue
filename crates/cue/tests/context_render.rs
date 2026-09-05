@@ -109,6 +109,129 @@ fn test_context_render_uses_head_scope() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[test]
+fn test_context_render_uses_task_kind_profile_when_profile_is_omitted() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    let cue_dir = env.root().join(".cue");
+    let task_dir = cue_dir.join("my-task");
+    let spec_dir = task_dir.join("spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(spec_dir.join("build.md"), "build profile content")?;
+    fs::write(spec_dir.join("default.md"), "default profile content")?;
+    fs::write(
+        task_dir.join("context.json"),
+        r#"{
+        "default": {
+            "artifacts": ["./spec/default.md"]
+        },
+        "build": {
+            "artifacts": ["./spec/build.md"]
+        }
+    }"#,
+    )?;
+
+    let task_cards = cue_dir.join("master").join("task");
+    fs::create_dir_all(&task_cards)?;
+    fs::write(
+        task_cards.join("my-task.md"),
+        "---\ntitle: My task\nkind: build\n---\n",
+    )?;
+    fs::write(cue_dir.join("HEAD"), "my-task")?;
+
+    env.command()
+        .arg("context")
+        .arg("render")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("build profile content"))
+        .stdout(predicate::str::contains("default profile content").not());
+
+    Ok(())
+}
+
+#[test]
+fn test_context_render_explicit_profile_overrides_task_kind() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    let cue_dir = env.root().join(".cue");
+    let task_dir = cue_dir.join("my-task");
+    let spec_dir = task_dir.join("spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(spec_dir.join("build.md"), "build profile content")?;
+    fs::write(spec_dir.join("review.md"), "review profile content")?;
+    fs::write(
+        task_dir.join("context.json"),
+        r#"{
+        "build": {
+            "artifacts": ["./spec/build.md"]
+        },
+        "review": {
+            "artifacts": ["./spec/review.md"]
+        }
+    }"#,
+    )?;
+
+    let task_cards = cue_dir.join("master").join("task");
+    fs::create_dir_all(&task_cards)?;
+    fs::write(
+        task_cards.join("my-task.md"),
+        "---\ntitle: My task\nkind: build\n---\n",
+    )?;
+    fs::write(cue_dir.join("HEAD"), "my-task")?;
+
+    env.command()
+        .arg("context")
+        .arg("render")
+        .arg("--profile")
+        .arg("review")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("review profile content"))
+        .stdout(predicate::str::contains("build profile content").not());
+
+    Ok(())
+}
+
+#[test]
+fn test_context_render_falls_back_when_task_kind_profile_is_missing() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    let cue_dir = env.root().join(".cue");
+    let task_dir = cue_dir.join("my-task");
+    let spec_dir = task_dir.join("spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(spec_dir.join("default.md"), "default profile content")?;
+    fs::write(
+        task_dir.join("context.json"),
+        r#"{
+        "default": {
+            "artifacts": ["./spec/default.md"]
+        }
+    }"#,
+    )?;
+
+    let task_cards = cue_dir.join("master").join("task");
+    fs::create_dir_all(&task_cards)?;
+    fs::write(
+        task_cards.join("my-task.md"),
+        "---\ntitle: My task\nkind: build\n---\n",
+    )?;
+    fs::write(cue_dir.join("HEAD"), "my-task")?;
+
+    env.command()
+        .arg("context")
+        .arg("render")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("default profile content"));
+
+    Ok(())
+}
+
 // -- config-default fallback tests -------------------------------------------
 
 /// render produces output when context.json is absent but config.context
@@ -137,6 +260,51 @@ fn test_context_render_uses_config_default_when_no_context_json() -> anyhow::Res
         .success()
         .stderr(predicate::str::contains("no context.json"))
         .stdout(predicate::str::contains("hello from config default"));
+
+    Ok(())
+}
+
+#[test]
+fn test_context_render_uses_task_kind_profile_from_config_default() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    let cue_dir = env.root().join(".cue");
+    let task_dir = cue_dir.join("my-task");
+    let spec_dir = task_dir.join("spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(spec_dir.join("build.md"), "build profile content")?;
+    fs::write(spec_dir.join("default.md"), "default profile content")?;
+
+    let task_cards = cue_dir.join("master").join("task");
+    fs::create_dir_all(&task_cards)?;
+    fs::write(
+        task_cards.join("my-task.md"),
+        "---\ntitle: My task\nkind: build\n---\n",
+    )?;
+    fs::write(cue_dir.join("HEAD"), "my-task")?;
+    fs::write(
+        env.root().join("cue.json"),
+        r#"{
+        "context": {
+            "default": {
+                "artifacts": ["./spec/default.md"]
+            },
+            "build": {
+                "artifacts": ["./spec/build.md"]
+            }
+        }
+    }"#,
+    )?;
+
+    env.command()
+        .arg("context")
+        .arg("render")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("no context.json"))
+        .stdout(predicate::str::contains("build profile content"))
+        .stdout(predicate::str::contains("default profile content").not());
 
     Ok(())
 }

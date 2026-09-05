@@ -164,7 +164,7 @@ pub enum ContextCommands {
     /// Expand and stream context to stdout
     Render {
         /// Profile name to render
-        #[arg(short = 'p', long, default_value = "default")]
+        #[arg(short = 'p', long)]
         profile: Option<String>,
         /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long = "task")]

@@ -1,4 +1,5 @@
 use crate::config::{Config, ContextConfig, ContextProfile};
+use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::store;
 use glob::glob;
 use serde::{Deserialize, Serialize};
@@ -17,6 +18,11 @@ pub struct ResolvedContext {
     pub instructions: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct TaskFrontmatter {
+    kind: Option<String>,
+}
+
 /// Indicates where a resolved `ContextConfig` was loaded from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextSource {
@@ -32,6 +38,20 @@ pub enum ContextSource {
 /// in a git worktree).
 pub fn context_json_path(cue_dir: &Path, scope: &str) -> PathBuf {
     cue_dir.join(scope).join("context.json")
+}
+
+fn task_kind(store_dir: &Path, scope: &str) -> Option<String> {
+    if scope == "master" {
+        return None;
+    }
+
+    let task_path = store_dir
+        .join("master")
+        .join("task")
+        .join(format!("{scope}.md"));
+    extract_frontmatter_yaml(&task_path)
+        .and_then(|yaml| serde_yaml::from_str::<TaskFrontmatter>(&yaml).ok())
+        .and_then(|frontmatter| frontmatter.kind)
 }
 
 pub fn load_context_config(path: &Path) -> anyhow::Result<ContextConfig> {
@@ -235,7 +255,6 @@ pub fn gather_context(
     profile_name: Option<&str>,
     task: Option<&str>,
 ) -> anyhow::Result<(ResolvedContext, ContextSource)> {
-    let profile_name = profile_name.unwrap_or("default");
     let store_root = store::main_worktree_root(cwd)?;
     let config = Config::load(&store_root)?;
     let resolved = store::open(cwd, &config)?;
@@ -246,8 +265,15 @@ pub fn gather_context(
     let context_path = context_json_path(&resolved.store_dir, &scope);
     let (root_config, context_source) = load_context_or_config(&context_path, &config.context)?;
 
+    let profile_name = profile_name
+        .map(str::to_owned)
+        .or_else(|| {
+            task_kind(&resolved.store_dir, &scope).filter(|kind| root_config.contains_key(kind))
+        })
+        .unwrap_or_else(|| "default".to_string());
+
     let paths =
-        resolve_profile_with_config(&scope, profile_name, &root_config, &resolved.store_dir)?;
+        resolve_profile_with_config(&scope, &profile_name, &root_config, &resolved.store_dir)?;
 
     let mut artifacts = Vec::new();
     for path in paths {
@@ -282,7 +308,7 @@ pub fn gather_context(
         });
     }
 
-    let profile_obj = root_config.get(profile_name).ok_or_else(|| {
+    let profile_obj = root_config.get(&profile_name).ok_or_else(|| {
         let source = match context_source {
             ContextSource::File => context_path.display().to_string(),
             ContextSource::ConfigDefault => "config default".to_string(),
@@ -385,12 +411,10 @@ mod tests {
 
         let result = load_context_or_config(&absent_path, &fallback);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Context file not found")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Context file not found"));
     }
 
     #[test]
@@ -444,12 +468,10 @@ mod tests {
 
         let result = resolve_profile_with_config("my-task", "default", &root_config, &store);
         assert!(result.is_err());
-        assert!(
-            result
-                .unwrap_err()
-                .to_string()
-                .contains("Profile 'default' not found in config default")
-        );
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Profile 'default' not found in config default"));
     }
 
     #[test]
