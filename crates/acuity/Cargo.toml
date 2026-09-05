@@ -6,7 +6,8 @@ rust-version = "1.98"
 
 [dependencies]
 sqlx = { version = "0.9", default-features = false, features = [
-    "runtime-tokio-rustls",
+    "runtime-tokio",
+    "tls-rustls-ring",
     "sqlite",
 ] }
 chrono = { version = "0.4", default-features = false, features = [
