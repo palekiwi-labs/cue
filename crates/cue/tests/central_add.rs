@@ -138,3 +138,41 @@ fn add_uses_context_from_branch_config() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn environment_context_overrides_branch_config() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    for context in ["release", "hotfix"] {
+        env.command()
+            .args(["context", "create", context])
+            .assert()
+            .success();
+    }
+
+    let config = std::process::Command::new("git")
+        .args(["config", "branch.main.cue-task", "release"])
+        .current_dir(env.root())
+        .output()?;
+    assert!(config.status.success());
+
+    env.command()
+        .env("CUE_TASK", "hotfix")
+        .args(["add", "ship", "Ship the hotfix", "--type", "task"])
+        .assert()
+        .success();
+
+    assert!(
+        env.cue_home()
+            .join("acme/widgets/hotfix/task/ship.md")
+            .is_file()
+    );
+    assert!(
+        !env.cue_home()
+            .join("acme/widgets/release/task/ship.md")
+            .exists()
+    );
+
+    Ok(())
+}
