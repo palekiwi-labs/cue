@@ -172,6 +172,21 @@ fn add_central_markdown(
     if cue_type == "task" && !frontmatter.iter().any(|(key, _)| key == "status") {
         frontmatter.push(("status".into(), "inbox".into()));
     }
+    // A trace is an artifact *about* a revision, so it is the only markdown
+    // type carrying revision correlation. Both fields are stamped from the
+    // current repository, but an explicit value wins: a coordination context
+    // records evidence about a revision of some other repository.
+    if cue_type == "trace" {
+        if !frontmatter.iter().any(|(key, _)| key == "repo_id") {
+            let scope = store::repository_scope(root)?;
+            frontmatter.push(("repo_id".into(), scope.to_string_lossy().into_owned()));
+        }
+        if !frontmatter.iter().any(|(key, _)| key == "commit_hash") {
+            let hash = git::get_short_head_hash(root)
+                .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
+            frontmatter.push(("commit_hash".into(), hash));
+        }
+    }
     if !frontmatter.iter().any(|(key, _)| key == "created_at") {
         let created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
         frontmatter.push(("created_at".into(), created_at.to_string()));

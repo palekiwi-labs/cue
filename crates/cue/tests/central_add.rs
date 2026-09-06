@@ -2,6 +2,28 @@ mod helpers;
 
 use predicates::prelude::*;
 use serde_yaml::Value;
+use std::path::Path;
+
+/// Parse the YAML frontmatter block of a markdown artifact.
+fn read_frontmatter(path: &Path) -> anyhow::Result<Value> {
+    let content = std::fs::read_to_string(path)?;
+    let frontmatter = content
+        .strip_prefix("---\n")
+        .and_then(|content| content.split_once("---\n"))
+        .map(|(frontmatter, _)| frontmatter)
+        .expect("markdown artifact should contain YAML frontmatter");
+    Ok(serde_yaml::from_str(frontmatter)?)
+}
+
+/// The short hash of the fixture repository's current revision.
+fn head_hash(repo: &Path) -> anyhow::Result<String> {
+    let output = std::process::Command::new("git")
+        .args(["rev-parse", "--short", "HEAD"])
+        .current_dir(repo)
+        .output()?;
+    assert!(output.status.success());
+    Ok(String::from_utf8(output.stdout)?.trim().to_string())
+}
 
 #[test]
 fn add_creates_a_task_inside_an_explicit_context() -> anyhow::Result<()> {
@@ -274,6 +296,119 @@ fn add_creates_each_named_markdown_artifact_type() -> anyhow::Result<()> {
         let metadata: Value = serde_yaml::from_str(frontmatter)?;
         assert!(metadata["created_at"].as_u64().is_some());
     }
+
+    Ok(())
+}
+
+#[test]
+fn add_stamps_trace_revision_metadata() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "smoke-run",
+            "Observed output",
+            "--type",
+            "trace",
+            "--task",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    let path = env
+        .cue_home()
+        .join("acme/widgets/release/trace/smoke-run.md");
+    let metadata = read_frontmatter(&path)?;
+
+    assert_eq!(metadata["repo_id"], "acme/widgets");
+    assert_eq!(metadata["commit_hash"], head_hash(env.root())?);
+
+    Ok(())
+}
+
+#[test]
+fn add_keeps_revision_metadata_off_other_markdown_types() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    for cue_type in ["task", "spec", "plan", "note"] {
+        env.command()
+            .args([
+                "add",
+                cue_type,
+                "Artifact body",
+                "--type",
+                cue_type,
+                "--task",
+                "release",
+            ])
+            .assert()
+            .success();
+
+        let path = env
+            .cue_home()
+            .join("acme/widgets/release")
+            .join(cue_type)
+            .join(format!("{cue_type}.md"));
+        let metadata = read_frontmatter(&path)?;
+
+        assert!(metadata.get("repo_id").is_none(), "{cue_type} got repo_id");
+        assert!(
+            metadata.get("commit_hash").is_none(),
+            "{cue_type} got commit_hash"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn add_honors_explicit_trace_revision_metadata() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "upstream-run",
+            "Observed output",
+            "--type",
+            "trace",
+            "--task",
+            "release",
+            "--frontmatter",
+            "repo_id=upstream/library",
+            "--frontmatter",
+            "commit_hash=0badcafe",
+        ])
+        .assert()
+        .success();
+
+    let path = env
+        .cue_home()
+        .join("acme/widgets/release/trace/upstream-run.md");
+    let metadata = read_frontmatter(&path)?;
+
+    assert_eq!(metadata["repo_id"], "upstream/library");
+    assert_eq!(metadata["commit_hash"], "0badcafe");
 
     Ok(())
 }
