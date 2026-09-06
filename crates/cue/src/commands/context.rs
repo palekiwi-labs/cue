@@ -18,6 +18,19 @@ struct NewContextMetadata<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     description: Option<&'a str>,
     created_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refs: Option<&'a [String]>,
+}
+
+struct NewContextOptions<'a> {
+    title: Option<&'a str>,
+    kind: &'static str,
+    mode: Option<&'static str>,
+    description: Option<&'a str>,
+    parent: Option<&'a str>,
+    refs: &'a [String],
 }
 
 pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
@@ -28,14 +41,19 @@ pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
             kind,
             mode,
             description,
-        } => handle_create(
-            cwd,
-            &name,
-            title.as_deref(),
-            kind.as_str(),
-            mode.map(|mode| mode.as_str()),
-            description.as_deref(),
-        ),
+            parent,
+            refs,
+        } => {
+            let options = NewContextOptions {
+                title: title.as_deref(),
+                kind: kind.as_str(),
+                mode: mode.map(|mode| mode.as_str()),
+                description: description.as_deref(),
+                parent: parent.as_deref(),
+                refs: &refs,
+            };
+            handle_create(cwd, &name, options)
+        }
         ContextCommands::Init { force, task } => handle_init(cwd, force, task.as_deref()),
         ContextCommands::Show { task } => handle_show(cwd, task.as_deref()),
         ContextCommands::Profiles { task } => handle_profiles(cwd, task.as_deref()),
@@ -44,14 +62,7 @@ pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
     }
 }
 
-fn handle_create(
-    cwd: &Path,
-    name: &str,
-    title: Option<&str>,
-    kind: &'static str,
-    mode: Option<&'static str>,
-    description: Option<&str>,
-) -> anyhow::Result<()> {
+fn handle_create(cwd: &Path, name: &str, options: NewContextOptions<'_>) -> anyhow::Result<()> {
     cuelib::head::validate_slug(name)?;
 
     let repository_scope = store::repository_scope(cwd)?;
@@ -70,11 +81,13 @@ fn handle_create(
     }
 
     let metadata = NewContextMetadata {
-        title,
-        kind,
-        mode,
-        description,
+        title: options.title,
+        kind: options.kind,
+        mode: options.mode,
+        description: options.description,
         created_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+        parent: options.parent,
+        refs: (!options.refs.is_empty()).then_some(options.refs),
     };
     let frontmatter = serde_yaml::to_string(&metadata)?;
     std::fs::create_dir(&context_dir)?;

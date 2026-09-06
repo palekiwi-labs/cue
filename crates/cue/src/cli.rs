@@ -156,6 +156,12 @@ pub enum ContextCommands {
         /// One-line listing description
         #[arg(long)]
         description: Option<String>,
+        /// Canonical address of the parent context
+        #[arg(long)]
+        parent: Option<String>,
+        /// Canonical address of a related context or artifact
+        #[arg(long = "ref")]
+        refs: Vec<String>,
     },
     /// Create context.json, auto-populated from existing spec/ files
     Init {
