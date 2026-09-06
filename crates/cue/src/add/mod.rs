@@ -42,6 +42,16 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
             scope_name.as_deref(),
         );
     }
+    if cue_type == "bin" {
+        return add_central_bin(
+            root,
+            &filename,
+            &content,
+            frontmatter,
+            force,
+            scope_name.as_deref(),
+        );
+    }
 
     // 1. Open store
     let resolved = store::open(root, config)?;
@@ -136,24 +146,12 @@ fn add_central_markdown(
     force: bool,
     context: Option<&str>,
 ) -> Result<PathBuf> {
-    let context = cuelib::head::resolve_active_context(root, context)?
-        .context("No context selected; pass --task <context>")?;
     validate_filename(filename)?;
 
     if Path::new(filename).components().count() != 1 {
         bail!("Artifact names must not contain path separators: '{filename}'");
     }
-    let repository_dir = store::root()?.join(store::repository_scope(root)?);
-    if !repository_dir.is_dir() {
-        bail!(
-            "no cue store at {}; run `cue init` to create it",
-            repository_dir.display()
-        );
-    }
-    let context_dir = repository_dir.join(&context);
-    if !context_dir.join("context.md").is_file() {
-        bail!("Context does not exist: {context}");
-    }
+    let context_dir = central_context_dir(root, context)?;
 
     if cue_type == "task" && !frontmatter.iter().any(|(key, _)| key == "status") {
         frontmatter.push(("status".into(), "inbox".into()));
@@ -169,6 +167,83 @@ fn add_central_markdown(
         filename.to_string()
     };
     let file_path = context_dir.join(cue_type).join(filename);
+    write_new_file(&file_path, force, || {
+        let mut final_content = build_frontmatter_bytes(&frontmatter)?;
+        final_content.extend_from_slice(content);
+        Ok(final_content)
+    })?;
+
+    Ok(file_path)
+}
+
+fn add_central_bin(
+    root: &Path,
+    filename: &str,
+    content: &[u8],
+    metadata: Vec<(String, String)>,
+    force: bool,
+    context: Option<&str>,
+) -> Result<PathBuf> {
+    validate_filename(filename)?;
+    if Path::new(filename).components().count() != 1 {
+        bail!("Artifact names must not contain path separators: '{filename}'");
+    }
+    let context_dir = central_context_dir(root, context)?;
+    let filename = if Path::new(filename).extension().is_none() {
+        format!("{filename}.json")
+    } else {
+        filename.to_string()
+    };
+    let file_path = context_dir.join("bin").join(filename);
+
+    write_new_file(&file_path, force, || {
+        let value: serde_json::Value =
+            serde_json::from_slice(content).context("Bin content must be valid JSON")?;
+        let serde_json::Value::Object(mut object) = value else {
+            bail!("Bin content must be a JSON object");
+        };
+        for (key, raw_value) in metadata {
+            let value = serde_json::to_value(coerce_scalar(&raw_value))?;
+            match object.get_mut(&key) {
+                Some(serde_json::Value::Array(values)) => values.push(value),
+                Some(existing) => {
+                    let first = std::mem::take(existing);
+                    *existing = serde_json::Value::Array(vec![first, value]);
+                }
+                None => {
+                    object.insert(key, value);
+                }
+            }
+        }
+        let mut bytes = serde_json::to_vec_pretty(&object)?;
+        bytes.push(b'\n');
+        Ok(bytes)
+    })?;
+
+    Ok(file_path)
+}
+
+fn central_context_dir(root: &Path, context: Option<&str>) -> Result<PathBuf> {
+    let context = cuelib::head::resolve_active_context(root, context)?
+        .context("No context selected; pass --task <context>")?;
+    let repository_dir = store::root()?.join(store::repository_scope(root)?);
+    if !repository_dir.is_dir() {
+        bail!(
+            "no cue store at {}; run `cue init` to create it",
+            repository_dir.display()
+        );
+    }
+    let context_dir = repository_dir.join(&context);
+    if !context_dir.join("context.md").is_file() {
+        bail!("Context does not exist: {context}");
+    }
+    Ok(context_dir)
+}
+
+fn write_new_file<F>(file_path: &Path, force: bool, content: F) -> Result<()>
+where
+    F: FnOnce() -> Result<Vec<u8>>,
+{
     if file_path.exists() && !force {
         bail!(
             "File exists: {}. Use --force to overwrite.",
@@ -176,13 +251,10 @@ fn add_central_markdown(
         );
     }
 
-    let mut final_content = build_frontmatter_bytes(&frontmatter)?;
-    final_content.extend_from_slice(content);
     fs::create_dir_all(file_path.parent().expect("artifact path has a parent"))?;
-    fs::write(&file_path, final_content)
+    fs::write(file_path, content()?)
         .with_context(|| format!("Failed to write to {}", file_path.display()))?;
-
-    Ok(file_path)
+    Ok(())
 }
 
 /// Coerce a raw frontmatter string into a YAML scalar value.

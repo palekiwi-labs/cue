@@ -277,3 +277,39 @@ fn add_creates_each_named_markdown_artifact_type() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn add_creates_json_bin_with_top_level_metadata() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "analysis",
+            r#"{"findings":["ready"]}"#,
+            "--type",
+            "bin",
+            "--task",
+            "release",
+            "--frontmatter",
+            "analyzer=smoke-test",
+        ])
+        .assert()
+        .success();
+
+    let path = env
+        .cue_home()
+        .join("acme/widgets/release/bin/analysis.json");
+    let content: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+
+    assert_eq!(content["findings"][0], "ready");
+    assert_eq!(content["analyzer"], "smoke-test");
+
+    Ok(())
+}
