@@ -313,3 +313,42 @@ fn add_creates_json_bin_with_top_level_metadata() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn add_creates_a_named_tmp_group_for_the_current_revision() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "reports/check.txt",
+            "check output",
+            "--type",
+            "tmp",
+            "--task",
+            "release",
+            "--group",
+            "qa",
+        ])
+        .assert()
+        .success();
+
+    let tmp_dir = env.cue_home().join("acme/widgets/release/tmp");
+    let groups = std::fs::read_dir(&tmp_dir)?.collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(groups.len(), 1);
+    let group_name = groups[0].file_name();
+    let group_name = group_name.to_string_lossy();
+    assert!(group_name.ends_with("-qa"));
+    assert_eq!(
+        std::fs::read_to_string(groups[0].path().join("reports/check.txt"))?,
+        "check output"
+    );
+
+    Ok(())
+}

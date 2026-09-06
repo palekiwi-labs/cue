@@ -72,6 +72,9 @@ pub enum Commands {
         /// Set task scope; overrides $CUE_TASK and .cue/HEAD
         #[arg(long = "task")]
         task: Option<String>,
+        /// Group name for tmp artifacts
+        #[arg(long, value_name = "NAME")]
+        group: Option<String>,
         /// Overwrite existing file
         #[arg(long)]
         force: bool,

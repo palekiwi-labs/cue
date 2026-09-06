@@ -15,6 +15,7 @@ pub struct AddOptions {
     pub save_at_root: bool,
     pub force: bool,
     pub scope_name: Option<String>,
+    pub group: Option<String>,
 }
 
 pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
@@ -26,6 +27,7 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         save_at_root,
         force,
         scope_name,
+        group,
     } = opts;
 
     if matches!(
@@ -51,6 +53,20 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
             force,
             scope_name.as_deref(),
         );
+    }
+    if cue_type == "tmp" {
+        return add_central_tmp(
+            root,
+            &filename,
+            &content,
+            frontmatter,
+            force,
+            scope_name.as_deref(),
+            group.as_deref(),
+        );
+    }
+    if group.is_some() {
+        bail!("--group is only valid for tmp artifacts");
     }
 
     // 1. Open store
@@ -219,6 +235,50 @@ fn add_central_bin(
         bytes.push(b'\n');
         Ok(bytes)
     })?;
+
+    Ok(file_path)
+}
+
+fn add_central_tmp(
+    root: &Path,
+    filename: &str,
+    content: &[u8],
+    metadata: Vec<(String, String)>,
+    force: bool,
+    context: Option<&str>,
+    group: Option<&str>,
+) -> Result<PathBuf> {
+    if !metadata.is_empty() {
+        bail!("tmp artifacts do not support metadata");
+    }
+    let group = group.context("tmp artifacts require --group <name>")?;
+    cuelib::head::validate_slug(group).context("Invalid tmp group name")?;
+    validate_filename(filename)?;
+
+    let context_dir = central_context_dir(root, context)?;
+    let commit_hash = git::get_short_head_hash(root)
+        .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
+    let tmp_dir = context_dir.join("tmp");
+    let suffix = format!("-{commit_hash}-{group}");
+    let existing_group = if tmp_dir.is_dir() {
+        fs::read_dir(&tmp_dir)?
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().is_dir())
+            .filter(|entry| entry.file_name().to_string_lossy().ends_with(&suffix))
+            .max_by_key(|entry| entry.file_name())
+            .map(|entry| entry.path())
+    } else {
+        None
+    };
+    let group_dir = match existing_group {
+        Some(path) => path,
+        None => {
+            let created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+            tmp_dir.join(format!("{created_at}{suffix}"))
+        }
+    };
+    let file_path = group_dir.join(filename);
+    write_new_file(&file_path, force, || Ok(content.to_vec()))?;
 
     Ok(file_path)
 }

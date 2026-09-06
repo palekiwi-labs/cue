@@ -42,6 +42,7 @@ fn main() -> anyhow::Result<()> {
             root,
             force,
             task,
+            group,
         } => {
             let resolved_content: Vec<u8> = if clipboard {
                 resolve_clipboard(&filename)?
@@ -70,6 +71,7 @@ fn main() -> anyhow::Result<()> {
                     save_at_root: root,
                     force,
                     scope_name: task,
+                    group,
                 },
             )?;
         }
