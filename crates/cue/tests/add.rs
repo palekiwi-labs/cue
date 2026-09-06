@@ -746,27 +746,7 @@ fn test_add_filename_normalizes_extensionless_markdown() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    // Extensionless task filename gets `.md` appended
-    env.command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("add")
-        .arg("-t")
-        .arg("task")
-        .arg("--root")
-        .arg("auth-login")
-        .arg("card content")
-        .assert()
-        .success()
-        .stdout(predicate::str::diff(
-            ".test-mem/master/task/auth-login.md\n",
-        ));
-
-    let file_path = env.root().join(".test-mem/master/task/auth-login.md");
-    assert!(file_path.exists());
-    assert_eq!(fs::read_to_string(file_path)?, "card content");
-
-    // Extensionless spec filename gets `.md` appended too
+    // Extensionless spec filename gets `.md` appended.
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
@@ -924,50 +904,6 @@ fn test_add_filename_normalizes_dotted_slug_markdown() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_add_filename_reserved_slug_master_still_rejected() -> anyhow::Result<()> {
-    let env = helpers::TestEnv::new();
-    helpers::setup_git_repo(env.root());
-
-    env.command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init")
-        .assert()
-        .success();
-
-    // Extensionless reserved slug remains rejected after normalization;
-    // `file_stem` sees through the appended `.md`.
-    env.command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("add")
-        .arg("-t")
-        .arg("task")
-        .arg("--root")
-        .arg("master")
-        .arg("card content")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("reserved slug"));
-
-    // Same when the caller already appended `.md`
-    env.command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("add")
-        .arg("-t")
-        .arg("task")
-        .arg("--root")
-        .arg("master.md")
-        .arg("card content")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("reserved slug"));
-
-    Ok(())
-}
-
-#[test]
 fn test_add_type_ref_rejected() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
@@ -1066,14 +1002,14 @@ fn test_add_normalized_filename_collision() -> anyhow::Result<()> {
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .args(["add", "--type", "task", "--root", "foo", "v1"])
+        .args(["add", "--type", "spec", "--root", "foo", "v1"])
         .assert()
         .success();
 
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .args(["add", "--type", "task", "--root", "foo.md", "v2"])
+        .args(["add", "--type", "spec", "--root", "foo.md", "v2"])
         .assert()
         .failure()
         .stderr(
@@ -1083,11 +1019,11 @@ fn test_add_normalized_filename_collision() -> anyhow::Result<()> {
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
         .env("CUE_DIR_NAME", ".test-mem")
-        .args(["add", "--type", "task", "--root", "--force", "foo.md", "v2"])
+        .args(["add", "--type", "spec", "--root", "--force", "foo.md", "v2"])
         .assert()
         .success();
 
-    let file_path = env.root().join(".test-mem/master/task/foo.md");
+    let file_path = env.root().join(".test-mem/master/spec/foo.md");
     assert_eq!(fs::read_to_string(file_path)?, "v2");
 
     Ok(())
@@ -1508,36 +1444,7 @@ fn test_add_frontmatter_invalid_format_rejected() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_add_task_rejects_reserved_master_slug() -> anyhow::Result<()> {
-    let env = helpers::TestEnv::new();
-    helpers::setup_git_repo(env.root());
-
-    env.command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init")
-        .assert()
-        .success();
-
-    // `master.md` must be rejected for task type.
-    env.command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("add")
-        .arg("--type")
-        .arg("task")
-        .arg("master.md")
-        .arg("body")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("'master' is a reserved slug"));
-
-    Ok(())
-}
-
-#[test]
-fn test_add_task_allows_master_slug_for_other_types() -> anyhow::Result<()> {
-    // The `master` restriction is task-only; other types must not be affected.
+fn test_add_allows_master_filename_for_non_task_types() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
 
@@ -1633,7 +1540,7 @@ fn test_add_rejects_degenerate_filenames() -> anyhow::Result<()> {
             .env("CUE_DIR_NAME", ".test-mem")
             .arg("add")
             .arg("-t")
-            .arg("task")
+            .arg("spec")
             .arg("--root")
             .arg(name)
             .arg("card content")
@@ -1650,7 +1557,7 @@ fn test_add_rejects_degenerate_filenames() -> anyhow::Result<()> {
         .env("CUE_DIR_NAME", ".test-mem")
         .arg("add")
         .arg("-t")
-        .arg("task")
+        .arg("spec")
         .arg("--root")
         .arg("trailing.")
         .arg("card content")

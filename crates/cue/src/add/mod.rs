@@ -5,6 +5,7 @@ use cuelib::store;
 use std::fs;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct AddOptions {
     pub filename: String,
@@ -26,6 +27,17 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         force,
         scope_name,
     } = opts;
+
+    if cue_type == "task" {
+        return add_central_task(
+            root,
+            &filename,
+            &content,
+            frontmatter,
+            force,
+            scope_name.as_deref(),
+        );
+    }
 
     // 1. Open store
     let resolved = store::open(root, config)?;
@@ -79,17 +91,6 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
             filename
         };
 
-    // 6a. Reject reserved slugs for task cards.
-    if cue_type == "task" {
-        let stem = Path::new(&filename)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        if stem == "master" {
-            bail!("'master' is a reserved slug and cannot be used as a task filename.");
-        }
-    }
-
     let file_path = dest_dir.join(&filename);
 
     // 7. Check if exists
@@ -116,6 +117,67 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
     };
 
     // 10. Write file
+    fs::write(&file_path, final_content)
+        .with_context(|| format!("Failed to write to {}", file_path.display()))?;
+
+    Ok(file_path)
+}
+
+fn add_central_task(
+    root: &Path,
+    filename: &str,
+    content: &[u8],
+    mut frontmatter: Vec<(String, String)>,
+    force: bool,
+    context: Option<&str>,
+) -> Result<PathBuf> {
+    let context = context.context("No context selected; pass --task <context>")?;
+    cuelib::head::validate_slug(context)?;
+    validate_filename(filename)?;
+
+    if Path::new(filename).components().count() != 1 {
+        bail!("Task names must not contain path separators: '{filename}'");
+    }
+    if frontmatter.iter().any(|(key, _)| key == "kind") {
+        bail!("Tasks do not support kind metadata");
+    }
+
+    let repository_dir = store::root()?.join(store::repository_scope(root)?);
+    if !repository_dir.is_dir() {
+        bail!(
+            "no cue store at {}; run `cue init` to create it",
+            repository_dir.display()
+        );
+    }
+    let context_dir = repository_dir.join(context);
+    if !context_dir.join("context.md").is_file() {
+        bail!("Context does not exist: {context}");
+    }
+
+    if !frontmatter.iter().any(|(key, _)| key == "status") {
+        frontmatter.push(("status".into(), "inbox".into()));
+    }
+    if !frontmatter.iter().any(|(key, _)| key == "created_at") {
+        let created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        frontmatter.push(("created_at".into(), created_at.to_string()));
+    }
+
+    let filename = if Path::new(filename).extension().is_none() {
+        format!("{filename}.md")
+    } else {
+        filename.to_string()
+    };
+    let file_path = context_dir.join("task").join(filename);
+    if file_path.exists() && !force {
+        bail!(
+            "File exists: {}. Use --force to overwrite.",
+            file_path.display()
+        );
+    }
+
+    let mut final_content = build_frontmatter_bytes(&frontmatter)?;
+    final_content.extend_from_slice(content);
+    fs::create_dir_all(file_path.parent().expect("task path has a parent"))?;
     fs::write(&file_path, final_content)
         .with_context(|| format!("Failed to write to {}", file_path.display()))?;
 
