@@ -115,9 +115,6 @@ fn main() -> anyhow::Result<()> {
         Commands::Project { command } => {
             commands::project::handle(&cwd, command)?;
         }
-        Commands::Review { command } => {
-            commands::review::handle(&cwd, command)?;
-        }
     }
 
     Ok(())

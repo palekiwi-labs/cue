@@ -1,7 +1,6 @@
 [workspace]
 members = [
     "crates/cue",
-    "crates/cue-review",
     "crates/cuelib",
     "crates/acuity-schema",
     "crates/acuity-api",

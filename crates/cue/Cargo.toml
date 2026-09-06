@@ -7,7 +7,6 @@ rust-version = "1.98"
 [dependencies]
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive"] }
-cue-review = { path = "../cue-review" }
 cuelib = { path = "../cuelib" }
 figment = { version = "0.10.19", features = ["json", "env"] }
 serde = { version = "1.0.228", features = ["derive"] }
