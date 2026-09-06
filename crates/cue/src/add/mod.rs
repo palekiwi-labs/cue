@@ -138,10 +138,6 @@ fn add_central_task(
     if Path::new(filename).components().count() != 1 {
         bail!("Task names must not contain path separators: '{filename}'");
     }
-    if frontmatter.iter().any(|(key, _)| key == "kind") {
-        bail!("Tasks do not support kind metadata");
-    }
-
     let repository_dir = store::root()?.join(store::repository_scope(root)?);
     if !repository_dir.is_dir() {
         bail!(
