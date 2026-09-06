@@ -140,6 +140,11 @@ pub enum ConfigCommands {
 
 #[derive(Subcommand)]
 pub enum ContextCommands {
+    /// Create a context in the repository's central store
+    Create {
+        /// Immutable context slug
+        name: String,
+    },
     /// Create context.json, auto-populated from existing spec/ files
     Init {
         /// Overwrite existing context.json

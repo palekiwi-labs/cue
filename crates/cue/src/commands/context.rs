@@ -4,16 +4,55 @@ use crate::context::{
     ContextSource, context_json_path, gather_context, init_context, load_context_or_config,
 };
 use cuelib::store;
+use serde::Serialize;
 use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
+
+#[derive(Serialize)]
+struct NewContextMetadata {
+    kind: &'static str,
+    created_at: u64,
+}
 
 pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
     match command {
+        ContextCommands::Create { name } => handle_create(cwd, &name),
         ContextCommands::Init { force, task } => handle_init(cwd, force, task.as_deref()),
         ContextCommands::Show { task } => handle_show(cwd, task.as_deref()),
         ContextCommands::Profiles { task } => handle_profiles(cwd, task.as_deref()),
         ContextCommands::Render { profile, task } => handle_render(cwd, profile, task.as_deref()),
         ContextCommands::Path { all, task } => handle_path(cwd, all, task.as_deref()),
     }
+}
+
+fn handle_create(cwd: &Path, name: &str) -> anyhow::Result<()> {
+    cuelib::head::validate_slug(name)?;
+
+    let repository_scope = store::repository_scope(cwd)?;
+    let repository_dir = store::root()?.join(&repository_scope);
+    if !repository_dir.is_dir() {
+        anyhow::bail!(
+            "no cue store at {}; run `cue init` to create it",
+            repository_dir.display()
+        );
+    }
+
+    let context_dir = repository_dir.join(name);
+    let context_path = context_dir.join("context.md");
+    if context_path.exists() {
+        anyhow::bail!("Context already exists: {name}");
+    }
+
+    let metadata = NewContextMetadata {
+        kind: "work",
+        created_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+    };
+    let frontmatter = serde_yaml::to_string(&metadata)?;
+    std::fs::create_dir(&context_dir)?;
+    std::fs::write(context_path, format!("---\n{frontmatter}---\n"))?;
+
+    println!("Created {}/{}", repository_scope.display(), name);
+    Ok(())
 }
 
 fn handle_init(cwd: &Path, force: bool, task: Option<&str>) -> anyhow::Result<()> {
