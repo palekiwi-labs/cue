@@ -138,6 +138,9 @@ fn add_central_task(
     let context = context
         .map(str::to_string)
         .or(env_context)
+        .or_else(|| {
+            git::current_branch(root).and_then(|branch| git::get_branch_task(root, &branch))
+        })
         .context("No context selected; pass --task <context>")?;
     cuelib::head::validate_slug(&context)?;
     validate_filename(filename)?;
