@@ -147,6 +147,9 @@ pub enum ContextCommands {
         /// What ends this context
         #[arg(long, value_enum, default_value = "work")]
         kind: ContextKind,
+        /// Advisory session mode
+        #[arg(long, value_enum)]
+        mode: Option<ContextMode>,
     },
     /// Create context.json, auto-populated from existing spec/ files
     Init {
@@ -202,6 +205,27 @@ impl ContextKind {
             Self::Work => "work",
             Self::Coord => "coord",
             Self::Reference => "reference",
+        }
+    }
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum ContextMode {
+    Research,
+    Design,
+    Build,
+    Review,
+    Learn,
+}
+
+impl ContextMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Research => "research",
+            Self::Design => "design",
+            Self::Build => "build",
+            Self::Review => "review",
+            Self::Learn => "learn",
         }
     }
 }

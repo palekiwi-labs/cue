@@ -11,12 +11,16 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[derive(Serialize)]
 struct NewContextMetadata {
     kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mode: Option<&'static str>,
     created_at: u64,
 }
 
 pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
     match command {
-        ContextCommands::Create { name, kind } => handle_create(cwd, &name, kind.as_str()),
+        ContextCommands::Create { name, kind, mode } => {
+            handle_create(cwd, &name, kind.as_str(), mode.map(|mode| mode.as_str()))
+        }
         ContextCommands::Init { force, task } => handle_init(cwd, force, task.as_deref()),
         ContextCommands::Show { task } => handle_show(cwd, task.as_deref()),
         ContextCommands::Profiles { task } => handle_profiles(cwd, task.as_deref()),
@@ -25,7 +29,12 @@ pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
     }
 }
 
-fn handle_create(cwd: &Path, name: &str, kind: &'static str) -> anyhow::Result<()> {
+fn handle_create(
+    cwd: &Path,
+    name: &str,
+    kind: &'static str,
+    mode: Option<&'static str>,
+) -> anyhow::Result<()> {
     cuelib::head::validate_slug(name)?;
 
     let repository_scope = store::repository_scope(cwd)?;
@@ -45,6 +54,7 @@ fn handle_create(cwd: &Path, name: &str, kind: &'static str) -> anyhow::Result<(
 
     let metadata = NewContextMetadata {
         kind,
+        mode,
         created_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
     };
     let frontmatter = serde_yaml::to_string(&metadata)?;

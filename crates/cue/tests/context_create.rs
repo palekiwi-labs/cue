@@ -58,3 +58,23 @@ fn context_create_accepts_a_context_kind() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn context_create_accepts_an_advisory_mode() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .args(["context", "create", "implementation", "--mode", "build"])
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(
+        env.cue_home()
+            .join("acme/widgets/implementation/context.md"),
+    )?;
+    assert!(content.contains("mode: build\n"));
+
+    Ok(())
+}
