@@ -131,18 +131,8 @@ fn add_central_task(
     force: bool,
     context: Option<&str>,
 ) -> Result<PathBuf> {
-    let env_context = std::env::var("CUE_TASK")
-        .ok()
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-    let context = context
-        .map(str::to_string)
-        .or(env_context)
-        .or_else(|| {
-            git::current_branch(root).and_then(|branch| git::get_branch_task(root, &branch))
-        })
+    let context = cuelib::head::resolve_active_context(root, context)?
         .context("No context selected; pass --task <context>")?;
-    cuelib::head::validate_slug(&context)?;
     validate_filename(filename)?;
 
     if Path::new(filename).components().count() != 1 {

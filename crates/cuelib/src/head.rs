@@ -3,6 +3,8 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Component, Path};
 
+use crate::git;
+
 /// Provenance of the resolved active scope.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
@@ -119,6 +121,36 @@ pub fn resolve_scope(cue_dir: &Path, flag: Option<&str>) -> Result<ResolvedScope
         slug: "master".to_string(),
         provenance: ScopeProvenance::Default,
     })
+}
+
+/// Resolve the active context for the central store model.
+///
+/// Precedence is an explicit context, `$CUE_TASK`, then the current branch's
+/// `branch.<name>.cue-task` Git configuration. Detached HEAD and absent values
+/// leave the context unset. This resolver deliberately does not read
+/// `.cue/HEAD` or provide a default context.
+pub fn resolve_active_context(root: &Path, explicit: Option<&str>) -> Result<Option<String>> {
+    if let Some(context) = explicit {
+        validate_slug(context)?;
+        return Ok(Some(context.to_string()));
+    }
+
+    if let Ok(value) = std::env::var("CUE_TASK") {
+        let context = value.trim();
+        if !context.is_empty() {
+            validate_slug(context)?;
+            return Ok(Some(context.to_string()));
+        }
+    }
+
+    let Some(branch) = git::current_branch(root) else {
+        return Ok(None);
+    };
+    let Some(context) = git::get_branch_task(root, &branch) else {
+        return Ok(None);
+    };
+    validate_slug(&context)?;
+    Ok(Some(context))
 }
 
 /// Validate that a task slug is a single, safe path segment.

@@ -1,5 +1,6 @@
 mod helpers;
 
+use predicates::prelude::*;
 use serde_yaml::Value;
 
 #[test]
@@ -175,4 +176,19 @@ fn environment_context_overrides_branch_config() -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+#[test]
+fn add_rejects_write_without_active_context() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .args(["add", "publish", "Publish the release", "--type", "task"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "No context selected; pass --task <context>",
+        ));
 }
