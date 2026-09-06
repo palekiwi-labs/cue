@@ -16,7 +16,7 @@ struct NewContextMetadata {
 
 pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
     match command {
-        ContextCommands::Create { name } => handle_create(cwd, &name),
+        ContextCommands::Create { name, kind } => handle_create(cwd, &name, kind.as_str()),
         ContextCommands::Init { force, task } => handle_init(cwd, force, task.as_deref()),
         ContextCommands::Show { task } => handle_show(cwd, task.as_deref()),
         ContextCommands::Profiles { task } => handle_profiles(cwd, task.as_deref()),
@@ -25,7 +25,7 @@ pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
     }
 }
 
-fn handle_create(cwd: &Path, name: &str) -> anyhow::Result<()> {
+fn handle_create(cwd: &Path, name: &str, kind: &'static str) -> anyhow::Result<()> {
     cuelib::head::validate_slug(name)?;
 
     let repository_scope = store::repository_scope(cwd)?;
@@ -44,7 +44,7 @@ fn handle_create(cwd: &Path, name: &str) -> anyhow::Result<()> {
     }
 
     let metadata = NewContextMetadata {
-        kind: "work",
+        kind,
         created_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
     };
     let frontmatter = serde_yaml::to_string(&metadata)?;

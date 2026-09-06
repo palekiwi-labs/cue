@@ -32,3 +32,29 @@ fn context_create_writes_a_context_record_to_the_central_store() -> anyhow::Resu
 
     Ok(())
 }
+
+#[test]
+fn context_create_accepts_a_context_kind() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .args([
+            "context",
+            "create",
+            "architecture-notes",
+            "--kind",
+            "reference",
+        ])
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(
+        env.cue_home()
+            .join("acme/widgets/architecture-notes/context.md"),
+    )?;
+    assert!(content.contains("kind: reference\n"));
+
+    Ok(())
+}

@@ -144,6 +144,9 @@ pub enum ContextCommands {
     Create {
         /// Immutable context slug
         name: String,
+        /// What ends this context
+        #[arg(long, value_enum, default_value = "work")]
+        kind: ContextKind,
     },
     /// Create context.json, auto-populated from existing spec/ files
     Init {
@@ -184,6 +187,23 @@ pub enum ContextCommands {
         #[arg(long = "task")]
         task: Option<String>,
     },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum ContextKind {
+    Work,
+    Coord,
+    Reference,
+}
+
+impl ContextKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Work => "work",
+            Self::Coord => "coord",
+            Self::Reference => "reference",
+        }
+    }
 }
 
 #[derive(Subcommand)]
