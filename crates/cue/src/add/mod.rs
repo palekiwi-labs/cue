@@ -169,8 +169,17 @@ fn add_central_markdown(
     }
     let context_dir = central_context_dir(root, context)?;
 
-    if cue_type == "task" && !frontmatter.iter().any(|(key, _)| key == "status") {
-        frontmatter.push(("status".into(), "inbox".into()));
+    // A task is the only artifact that can be done, so it is the only type
+    // given lifecycle defaults. A new task is untriaged (`inbox`) and
+    // unranked (`normal`) until an operator decides otherwise; stamping both
+    // keeps every task filterable on status and priority without forcing a
+    // caller to supply them.
+    if cue_type == "task" {
+        for (key, default) in [("status", "inbox"), ("priority", "normal")] {
+            if !frontmatter.iter().any(|(existing, _)| existing == key) {
+                frontmatter.push((key.into(), default.into()));
+            }
+        }
     }
     // A trace is an artifact *about* a revision, so it is the only markdown
     // type carrying revision correlation. Both fields are stamped from the
