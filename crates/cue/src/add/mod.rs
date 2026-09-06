@@ -28,12 +28,13 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         scope_name,
     } = opts;
 
-    if cue_type == "task" {
-        return add_central_task(
+    if matches!(cue_type.as_str(), "task" | "spec") {
+        return add_central_markdown(
             root,
             &filename,
             &content,
             frontmatter,
+            &cue_type,
             force,
             scope_name.as_deref(),
         );
@@ -123,11 +124,12 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
     Ok(file_path)
 }
 
-fn add_central_task(
+fn add_central_markdown(
     root: &Path,
     filename: &str,
     content: &[u8],
     mut frontmatter: Vec<(String, String)>,
+    cue_type: &str,
     force: bool,
     context: Option<&str>,
 ) -> Result<PathBuf> {
@@ -136,7 +138,7 @@ fn add_central_task(
     validate_filename(filename)?;
 
     if Path::new(filename).components().count() != 1 {
-        bail!("Task names must not contain path separators: '{filename}'");
+        bail!("Artifact names must not contain path separators: '{filename}'");
     }
     let repository_dir = store::root()?.join(store::repository_scope(root)?);
     if !repository_dir.is_dir() {
@@ -150,7 +152,7 @@ fn add_central_task(
         bail!("Context does not exist: {context}");
     }
 
-    if !frontmatter.iter().any(|(key, _)| key == "status") {
+    if cue_type == "task" && !frontmatter.iter().any(|(key, _)| key == "status") {
         frontmatter.push(("status".into(), "inbox".into()));
     }
     if !frontmatter.iter().any(|(key, _)| key == "created_at") {
@@ -163,7 +165,7 @@ fn add_central_task(
     } else {
         filename.to_string()
     };
-    let file_path = context_dir.join("task").join(filename);
+    let file_path = context_dir.join(cue_type).join(filename);
     if file_path.exists() && !force {
         bail!(
             "File exists: {}. Use --force to overwrite.",
@@ -173,7 +175,7 @@ fn add_central_task(
 
     let mut final_content = build_frontmatter_bytes(&frontmatter)?;
     final_content.extend_from_slice(content);
-    fs::create_dir_all(file_path.parent().expect("task path has a parent"))?;
+    fs::create_dir_all(file_path.parent().expect("artifact path has a parent"))?;
     fs::write(&file_path, final_content)
         .with_context(|| format!("Failed to write to {}", file_path.display()))?;
 

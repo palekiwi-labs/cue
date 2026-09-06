@@ -192,3 +192,45 @@ fn add_rejects_write_without_active_context() {
             "No context selected; pass --task <context>",
         ));
 }
+
+#[test]
+fn add_creates_named_spec_with_structured_metadata() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "requirements",
+            "Release requirements",
+            "--type",
+            "spec",
+            "--task",
+            "release",
+            "--frontmatter",
+            "audience=operators",
+        ])
+        .assert()
+        .success();
+
+    let path = env
+        .cue_home()
+        .join("acme/widgets/release/spec/requirements.md");
+    let content = std::fs::read_to_string(path)?;
+    let (frontmatter, body) = content
+        .strip_prefix("---\n")
+        .and_then(|content| content.split_once("---\n"))
+        .expect("spec should contain YAML frontmatter");
+    let metadata: Value = serde_yaml::from_str(frontmatter)?;
+
+    assert_eq!(metadata["audience"], "operators");
+    assert!(metadata["created_at"].as_u64().is_some());
+    assert_eq!(body, "Release requirements");
+
+    Ok(())
+}
