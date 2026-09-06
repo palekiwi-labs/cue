@@ -68,6 +68,13 @@ impl TestEnv {
         &self.cue_home
     }
 
+    /// Advance the fixture repository to a new revision so tests can observe
+    /// revision-correlated behavior such as tmp grouping.
+    #[allow(dead_code)]
+    pub fn commit_new_revision(&self, filename: &str) {
+        commit_new_revision(self.root(), filename);
+    }
+
     #[allow(dead_code)]
     pub fn setup_repo_with_origin(&self) {
         setup_git_repo(self.root());
@@ -140,6 +147,29 @@ pub fn setup_git_repo(dir: &Path) {
     // those suites incrementally.
     std::fs::create_dir(dir.join(".cue")).expect("Failed to create legacy default test store");
     std::fs::create_dir(dir.join(".test-mem")).expect("Failed to create legacy custom test store");
+}
+
+#[allow(dead_code)]
+pub fn commit_new_revision(dir: &Path, filename: &str) {
+    std::fs::write(dir.join(filename), filename).expect("Failed to write revision file");
+
+    Command::new("git")
+        .args(["add", filename])
+        .current_dir(dir)
+        .output()
+        .expect("Failed to git add");
+
+    let output = Command::new("git")
+        .args(["commit", "-m", filename])
+        .current_dir(dir)
+        .output()
+        .expect("Failed to git commit");
+
+    assert!(
+        output.status.success(),
+        "Failed to create revision: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[allow(dead_code)]
