@@ -28,7 +28,10 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         scope_name,
     } = opts;
 
-    if matches!(cue_type.as_str(), "task" | "spec") {
+    if matches!(
+        cue_type.as_str(),
+        "task" | "spec" | "plan" | "note" | "trace"
+    ) {
         return add_central_markdown(
             root,
             &filename,
