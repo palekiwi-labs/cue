@@ -83,3 +83,28 @@ fn add_preserves_conventional_task_metadata() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn add_uses_context_from_environment() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_TASK", "release")
+        .args(["add", "publish", "Publish the release", "--type", "task"])
+        .assert()
+        .success();
+
+    assert!(
+        env.cue_home()
+            .join("acme/widgets/release/task/publish.md")
+            .is_file()
+    );
+
+    Ok(())
+}

@@ -131,8 +131,15 @@ fn add_central_task(
     force: bool,
     context: Option<&str>,
 ) -> Result<PathBuf> {
-    let context = context.context("No context selected; pass --task <context>")?;
-    cuelib::head::validate_slug(context)?;
+    let env_context = std::env::var("CUE_TASK")
+        .ok()
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty());
+    let context = context
+        .map(str::to_string)
+        .or(env_context)
+        .context("No context selected; pass --task <context>")?;
+    cuelib::head::validate_slug(&context)?;
     validate_filename(filename)?;
 
     if Path::new(filename).components().count() != 1 {
@@ -145,7 +152,7 @@ fn add_central_task(
             repository_dir.display()
         );
     }
-    let context_dir = repository_dir.join(context);
+    let context_dir = repository_dir.join(&context);
     if !context_dir.join("context.md").is_file() {
         bail!("Context does not exist: {context}");
     }
