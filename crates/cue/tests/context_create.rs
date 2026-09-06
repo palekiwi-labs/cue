@@ -78,3 +78,29 @@ fn context_create_accepts_an_advisory_mode() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn context_create_accepts_presentation_metadata() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .args([
+            "context",
+            "create",
+            "delivery",
+            "--title",
+            "Release delivery",
+            "--description",
+            "Coordinate the release",
+        ])
+        .assert()
+        .success();
+
+    let content = std::fs::read_to_string(env.cue_home().join("acme/widgets/delivery/context.md"))?;
+    assert!(content.contains("title: Release delivery\n"));
+    assert!(content.contains("description: Coordinate the release\n"));
+
+    Ok(())
+}

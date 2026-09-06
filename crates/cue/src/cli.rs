@@ -144,12 +144,18 @@ pub enum ContextCommands {
     Create {
         /// Immutable context slug
         name: String,
+        /// Presentation name
+        #[arg(long)]
+        title: Option<String>,
         /// What ends this context
         #[arg(long, value_enum, default_value = "work")]
         kind: ContextKind,
         /// Advisory session mode
         #[arg(long, value_enum)]
         mode: Option<ContextMode>,
+        /// One-line listing description
+        #[arg(long)]
+        description: Option<String>,
     },
     /// Create context.json, auto-populated from existing spec/ files
     Init {
