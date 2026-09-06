@@ -4,7 +4,6 @@ mod commands;
 mod config;
 mod context;
 mod git;
-mod init;
 mod list;
 mod log;
 

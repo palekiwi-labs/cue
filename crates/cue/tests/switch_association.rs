@@ -77,6 +77,8 @@ fn switch_on_unborn_branch_writes_association() -> anyhow::Result<()> {
     let env = TestEnv::new();
     // init only: HEAD points at an unborn branch with no commits yet.
     git(&env, &["init", "-b", "main"]);
+    helpers::setup_origin(env.root(), helpers::TEST_ORIGIN_URL);
+    std::fs::create_dir(env.root().join(".test-mem"))?;
     cue(&env).arg("init").assert().success();
 
     cue(&env)

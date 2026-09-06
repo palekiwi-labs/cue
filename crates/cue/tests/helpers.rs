@@ -71,7 +71,10 @@ impl TestEnv {
     #[allow(dead_code)]
     pub fn setup_repo_with_origin(&self) {
         setup_git_repo(self.root());
-        setup_origin(self.root(), TEST_ORIGIN_URL);
+        std::fs::remove_dir_all(self.root().join(".cue"))
+            .expect("Failed to remove legacy default test store");
+        std::fs::remove_dir_all(self.root().join(".test-mem"))
+            .expect("Failed to remove legacy custom test store");
     }
 }
 
@@ -129,6 +132,14 @@ pub fn setup_git_repo(dir: &Path) {
         .current_dir(dir)
         .output()
         .expect("Failed to git commit");
+
+    setup_origin(dir, TEST_ORIGIN_URL);
+
+    // Legacy command suites still exercise the old artifact model directly.
+    // Keep their fixture store explicit while central-store slices replace
+    // those suites incrementally.
+    std::fs::create_dir(dir.join(".cue")).expect("Failed to create legacy default test store");
+    std::fs::create_dir(dir.join(".test-mem")).expect("Failed to create legacy custom test store");
 }
 
 #[allow(dead_code)]

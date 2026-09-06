@@ -1321,20 +1321,6 @@ fn test_list_filter_nested_key() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_list_not_initialized() -> anyhow::Result<()> {
-    let env = helpers::TestEnv::new();
-    helpers::setup_git_repo(env.root());
-
-    env.command()
-        .arg("list")
-        .assert()
-        .failure()
-        .stderr(predicates::str::contains("cue init"));
-
-    Ok(())
-}
-
-#[test]
 fn test_list_type_filter() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());

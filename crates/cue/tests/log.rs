@@ -411,16 +411,6 @@ fn test_log_list() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     helpers::setup_git_repo(env.root());
 
-    // 1. Uninitialized
-    env.command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("log")
-        .arg("list")
-        .assert()
-        .failure()
-        .stderr(predicate::str::contains("cue init"));
-
     // Initialize mem
     env.command()
         .env("CUE_BRANCH_NAME", "test-mem")
