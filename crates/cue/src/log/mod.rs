@@ -1,12 +1,12 @@
-use crate::config::Config;
 use crate::git;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use cuelib::store;
 use serde::Deserialize;
 use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Deserialize, Default)]
 pub struct LogEntry {
@@ -25,7 +25,7 @@ pub struct LogAddOptions {
     pub scope_name: Option<String>,
 }
 
-pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<PathBuf> {
+pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
     let LogAddOptions {
         mut entry,
         scope_name,
@@ -45,45 +45,47 @@ pub fn add_entry(root: &Path, config: &Config, opts: LogAddOptions) -> Result<Pa
         hash.push_str("-dirty");
     }
 
-    // 3. Open store
-    let repository_root = store::main_worktree_root(root)?;
-    let resolved = store::open(root, config)?;
-
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir, scope_name.as_deref())?;
-    if scope.trim().is_empty() {
-        bail!("Scope name cannot be empty.");
+    // 3. Resolve the context in the central store.
+    let context = cuelib::head::resolve_active_context(root, scope_name.as_deref())?
+        .context("No context selected; pass --task <context>")?;
+    let repository_dir = store::root()?.join(store::repository_scope(root)?);
+    let context_dir = repository_dir.join(&context);
+    if !context_dir.join("context.md").is_file() {
+        bail!("Context does not exist: {context}");
     }
 
     if let Some(trace) = &entry.trace {
         entry.trace = Some(resolve_trace_reference(
             trace,
-            &repository_root,
-            &resolved.store_dir,
-            &scope,
+            &context_dir,
+            &repository_dir,
+            &context,
         )?);
     }
 
-    let log_file_path = resolved.store_dir.join(&scope).join("log.md");
-
-    // 4. Open file and get metadata (to check if it's new) before building markdown
-    if let Some(parent) = log_file_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-
-    let mut file = OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(&log_file_path)
-        .with_context(|| format!("Failed to open {}", log_file_path.display()))?;
-
-    let is_new = file.metadata()?.len() == 0;
-
-    // 5. Build Markdown
-    let md = build_log_markdown(&entry, &hash, is_new);
-
-    // 6. Append to file
-    file.write_all(md.as_bytes())
-        .with_context(|| format!("Failed to write to {}", log_file_path.display()))?;
+    // 4. Create one collision-safe file for the entry. Nanosecond timestamps
+    // sort chronologically by filename; the sequence handles an actual clock
+    // collision without overwriting another writer's entry.
+    let log_dir = context_dir.join("log");
+    fs::create_dir_all(&log_dir)?;
+    let created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let md = build_log_markdown(&entry, &hash, false);
+    let log_file_path = (0_u32..)
+        .find_map(|sequence| {
+            let path = log_dir.join(format!("{created_at:020}-{hash}-{sequence:04}.md"));
+            match OpenOptions::new().write(true).create_new(true).open(&path) {
+                Ok(mut file) => Some(
+                    file.write_all(md.as_bytes())
+                        .with_context(|| format!("Failed to write to {}", path.display()))
+                        .map(|()| path),
+                ),
+                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
+                Err(error) => Some(Err(error).with_context(|| {
+                    format!("Failed to create log entry in {}", log_dir.display())
+                })),
+            }
+        })
+        .expect("log entry sequence is unbounded")?;
 
     Ok(log_file_path)
 }

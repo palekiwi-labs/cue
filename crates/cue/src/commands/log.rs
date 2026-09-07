@@ -47,7 +47,6 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
 
             let log_file_path = log::add_entry(
                 cwd,
-                &config,
                 LogAddOptions {
                     entry,
                     scope_name: task,
