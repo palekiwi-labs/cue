@@ -28,7 +28,7 @@ figment = { version = "0.10.19", features = ["json", "env"] }
 anyhow = "1.0.102"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
-dirs = "6.0.0"
+dirs = "7.0.0"
 async-stream = "0.3"
 futures-core = "0.3"
 
