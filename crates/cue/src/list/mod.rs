@@ -99,11 +99,9 @@ fn apply_filters(fm: &serde_json::Value, filters: &[Filter]) -> bool {
 pub struct CueFile {
     pub path: String,
     pub name: String,
-    pub branch: String,
-    pub category: String,
-    pub hash: Option<String>,
-    pub commit_hash: Option<String>,
-    pub commit_timestamp: u64,
+    pub context: String,
+    #[serde(rename = "type")]
+    pub cue_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frontmatter: Option<serde_json::Value>,
 }
@@ -228,63 +226,28 @@ pub fn to_cue_file(path: &Path, cue_path: &Path) -> Option<CueFile> {
     let rel_to_mem = path.strip_prefix(cue_path).ok()?;
     let mut components = rel_to_mem.components();
 
-    let branch = components
+    let context = components
         .next()?
         .as_os_str()
         .to_string_lossy()
         .into_owned();
-    let category = components
+    let cue_type = components
         .next()?
         .as_os_str()
         .to_string_lossy()
         .into_owned();
+    let name = components
+        .collect::<PathBuf>()
+        .to_string_lossy()
+        .into_owned();
 
-    let rel_path = path.to_string_lossy().to_string();
-
-    let mut cue_file = CueFile {
-        path: rel_path,
-        name: String::new(),
-        branch: branch.clone(),
-        category: category.clone(),
-        hash: None,
-        commit_hash: None,
-        commit_timestamp: 0,
+    Some(CueFile {
+        path: path.to_string_lossy().into_owned(),
+        name,
+        context,
+        cue_type,
         frontmatter: None,
-    };
-
-    // Detect pinned artifacts structurally: any category with depth >= 4
-    // where the 3rd component parses as <timestamp>-<hash>.
-    let comp_count = rel_to_mem.components().count();
-    if comp_count >= 4 {
-        let mut comps = rel_to_mem.components();
-        comps.next(); // branch
-        comps.next(); // category
-        if let Some(ts_hash_dir) = comps.next() {
-            let ts_hash_str = ts_hash_dir.as_os_str().to_string_lossy();
-            if let Some((ts_str, hash_str)) = ts_hash_str.split_once('-')
-                && let Ok(ts) = ts_str.parse::<u64>()
-            {
-                cue_file.commit_timestamp = ts;
-                cue_file.hash = Some(hash_str.to_string());
-                cue_file.commit_hash = Some(hash_str.to_string());
-
-                // name is relative to the ts-hash dir
-                let prefix = cue_path.join(&branch).join(&category).join(ts_hash_dir);
-                if let Ok(rel_name) = path.strip_prefix(&prefix) {
-                    cue_file.name = rel_name.to_string_lossy().to_string();
-                }
-                return Some(cue_file);
-            }
-        }
-    }
-
-    // Flat artifact: name is relative to the category dir
-    let prefix = cue_path.join(&branch).join(&category);
-    if let Ok(rel_name) = path.strip_prefix(&prefix) {
-        cue_file.name = rel_name.to_string_lossy().to_string();
-    }
-
-    Some(cue_file)
+    })
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

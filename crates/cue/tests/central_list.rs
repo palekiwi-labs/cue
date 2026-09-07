@@ -62,3 +62,48 @@ fn list_without_an_active_context_reads_the_repository_scope() {
         .stdout(predicate::str::contains("release/note/decisions.md"))
         .stdout(predicate::str::contains("hotfix/note/incident.md"));
 }
+
+#[test]
+fn list_emits_central_artifact_metadata_as_json() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "add",
+            "decisions",
+            "Release decisions",
+            "--type",
+            "note",
+            "--task",
+            "release",
+            "--frontmatter",
+            "audience=operators",
+        ])
+        .assert()
+        .success();
+
+    let output = env
+        .command()
+        .args(["list", "--task", "release", "--frontmatter"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let artifacts: serde_json::Value = serde_json::from_slice(&output)?;
+    let artifact = &artifacts[0];
+
+    assert_eq!(artifact["context"], "release");
+    assert_eq!(artifact["type"], "note");
+    assert_eq!(artifact["name"], "decisions.md");
+    assert_eq!(artifact["frontmatter"]["audience"], "operators");
+    assert!(artifact.get("branch").is_none());
+    assert!(artifact.get("commit_timestamp").is_none());
+
+    Ok(())
+}
