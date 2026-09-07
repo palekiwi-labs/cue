@@ -20,8 +20,8 @@ pub fn handle(cwd: &Path, opts: ListOptions) -> Result<()> {
     // 3. Load config from git root
     let config = Config::load(&store_root)?;
 
-    // 4. Open store
-    let resolved = store::open(cwd, &config)?;
+    // 4. Resolve the repository's directory in the central store.
+    let store_dir = store::root()?.join(store::repository_scope(cwd)?);
 
     // 5. Delegate to domain module
     let filtered = list::list(cwd, &config, opts)?;
@@ -35,7 +35,7 @@ pub fn handle(cwd: &Path, opts: ListOptions) -> Result<()> {
         let cue_files: Vec<list::CueFile> = filtered
             .into_iter()
             .filter_map(|(path, cached_fm)| {
-                let mut mf = list::to_cue_file(&path, &resolved.store_dir)?;
+                let mut mf = list::to_cue_file(&path, &store_dir)?;
                 if include_frontmatter {
                     mf.frontmatter = cached_fm.filter(|v| !v.is_null());
                 }

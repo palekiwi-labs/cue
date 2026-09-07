@@ -136,11 +136,12 @@ pub fn list(
     // Parse frontmatter once when either filtering or outputting it requires it.
     let need_frontmatter = frontmatter || !filters.is_empty();
 
-    // 1. Open store
-    let resolved = store::open(root, config)?;
+    // 1. Resolve the current repository's directory in the central store.
+    let store_dir = store::root()?.join(store::repository_scope(root)?);
 
     // 2. Determine scan directory/directories
-    let mut paths = resolve_scan_paths(&resolved.head_dir, &resolved.store_dir, all, scope)?;
+    let active_context = cuelib::head::resolve_active_context(root, scope.as_deref())?;
+    let mut paths = resolve_central_scan_paths(&store_dir, all, active_context.as_deref())?;
 
     // 3. Sort
     paths.sort();
@@ -149,7 +150,7 @@ pub fn list(
     let valid_paths = paths.into_iter().filter(|path| {
         is_valid_cue_file(
             path,
-            &resolved.store_dir,
+            &store_dir,
             cue_type.as_deref(),
             include_gitignored,
             &config.ignored_types,
@@ -175,24 +176,19 @@ pub fn list(
     Ok(filtered)
 }
 
-pub fn resolve_scan_paths(
-    head_dir: &Path,
+fn resolve_central_scan_paths(
     store_dir: &Path,
     all: bool,
-    scope: Option<String>,
+    context: Option<&str>,
 ) -> Result<Vec<PathBuf>> {
-    if all {
-        collect_files(store_dir)
+    let scan_dir = if all {
+        store_dir.to_path_buf()
+    } else if let Some(context) = context {
+        store_dir.join(context)
     } else {
-        let scope = cuelib::head::resolve_scope(head_dir, scope.as_deref())?;
-        let scan_dir = store_dir.join(&scope);
-
-        if scan_dir.exists() {
-            collect_files(&scan_dir)
-        } else {
-            Ok(Vec::new())
-        }
-    }
+        store_dir.to_path_buf()
+    };
+    collect_files(&scan_dir)
 }
 
 pub fn is_valid_cue_file(
