@@ -149,3 +149,38 @@ fn list_reads_top_level_json_artifact_metadata() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn list_uses_the_branch_configured_active_context() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+
+    for (context, artifact) in [("release", "decisions"), ("hotfix", "incident")] {
+        env.command()
+            .args(["context", "create", context])
+            .assert()
+            .success();
+        env.command()
+            .args([
+                "add", artifact, "Notes", "--type", "note", "--task", context,
+            ])
+            .assert()
+            .success();
+    }
+
+    let config = std::process::Command::new("git")
+        .args(["config", "branch.main.cue-task", "release"])
+        .current_dir(env.root())
+        .output()?;
+    assert!(config.status.success());
+
+    env.command()
+        .arg("list")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("release/note/decisions.md"))
+        .stdout(predicate::str::contains("hotfix/note/incident.md").not());
+
+    Ok(())
+}
