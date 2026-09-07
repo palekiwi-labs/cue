@@ -107,3 +107,45 @@ fn list_emits_central_artifact_metadata_as_json() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn list_reads_top_level_json_artifact_metadata() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "add",
+            "analysis",
+            r#"{"findings":["ready"]}"#,
+            "--type",
+            "bin",
+            "--task",
+            "release",
+            "--frontmatter",
+            "analyzer=smoke-test",
+        ])
+        .assert()
+        .success();
+
+    let output = env
+        .command()
+        .args(["list", "--task", "release", "--frontmatter"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let artifacts: serde_json::Value = serde_json::from_slice(&output)?;
+    let artifact = &artifacts[0];
+
+    assert_eq!(artifact["type"], "bin");
+    assert_eq!(artifact["frontmatter"]["analyzer"], "smoke-test");
+    assert_eq!(artifact["frontmatter"]["findings"][0], "ready");
+
+    Ok(())
+}

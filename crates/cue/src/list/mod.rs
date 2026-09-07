@@ -82,8 +82,15 @@ fn evaluate_filter(filter: &Filter, fm: &serde_json::Value) -> bool {
     }
 }
 
-/// Parse frontmatter from `path` into a JSON value, or `Null` if absent/malformed.
-fn parse_frontmatter(path: &Path) -> serde_json::Value {
+/// Parse queryable artifact metadata, or `Null` if absent or malformed.
+fn parse_metadata(path: &Path) -> serde_json::Value {
+    if path.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("bin")) {
+        return std::fs::File::open(path)
+            .ok()
+            .and_then(|file| serde_json::from_reader(file).ok())
+            .unwrap_or(serde_json::Value::Null);
+    }
+
     extract_frontmatter_yaml(path)
         .and_then(|yaml| serde_yaml::from_str(&yaml).ok())
         .unwrap_or(serde_json::Value::Null)
@@ -159,7 +166,7 @@ pub fn list(
     let filtered: Vec<(PathBuf, Option<serde_json::Value>)> = valid_paths
         .filter_map(|path| {
             let fm_val = if need_frontmatter {
-                let fm = parse_frontmatter(&path);
+                let fm = parse_metadata(&path);
                 if !apply_filters(&fm, &filters) {
                     return None;
                 }
