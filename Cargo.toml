@@ -1,5 +1,6 @@
 [workspace]
 members = [
+    "crates/cue-agent",
     "crates/cue",
     "crates/cuelib",
     "crates/acuity-schema",
