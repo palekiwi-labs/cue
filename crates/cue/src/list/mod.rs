@@ -6,6 +6,8 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
+const SUPPORTED_ARTIFACT_TYPES: &[&str] = &["task", "spec", "plan", "note", "trace", "bin", "tmp"];
+
 // ── Frontmatter filter ───────────────────────────────────────────────────────
 
 #[derive(Debug, Clone, PartialEq)]
@@ -219,6 +221,10 @@ pub fn is_valid_cue_file(
     };
 
     let category = category_comp.as_os_str().to_string_lossy();
+
+    if !SUPPORTED_ARTIFACT_TYPES.contains(&category.as_ref()) {
+        return false;
+    }
 
     if let Some(requested) = cue_type {
         if category != requested {
