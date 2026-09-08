@@ -1,8 +1,7 @@
 use crate::git;
 use anyhow::{Context, Result, bail};
 use cuelib::store;
-use serde::Deserialize;
-use std::fmt::Write as _;
+use serde::{Deserialize, Serialize};
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::{Path, PathBuf};
@@ -17,6 +16,17 @@ pub struct LogEntry {
     #[serde(default)]
     pub decided: Vec<String>,
     #[serde(default)]
+    pub open: Vec<String>,
+}
+
+#[derive(Deserialize, Serialize)]
+pub struct StoredLogEntry {
+    pub timestamp: u64,
+    pub commit_hash: String,
+    pub title: String,
+    pub trace: Option<String>,
+    pub found: Vec<String>,
+    pub decided: Vec<String>,
     pub open: Vec<String>,
 }
 
@@ -65,72 +75,38 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
         )?);
     }
 
-    // 4. Create one collision-safe file for the entry. Nanosecond timestamps
-    // sort chronologically by filename; the sequence handles an actual clock
-    // collision without overwriting another writer's entry.
+    // 4. Create one collision-safe JSON file for the entry. Nanosecond
+    // timestamps sort chronologically by filename.
     let log_dir = context_dir.join("log");
     fs::create_dir_all(&log_dir)?;
-    let created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
-    let md = build_log_markdown(&entry, &hash, false);
-    let log_file_path = (0_u32..)
-        .find_map(|sequence| {
-            let path = log_dir.join(format!("{created_at:020}-{hash}-{sequence:04}.md"));
-            match OpenOptions::new().write(true).create_new(true).open(&path) {
-                Ok(mut file) => Some(
-                    file.write_all(md.as_bytes())
-                        .with_context(|| format!("Failed to write to {}", path.display()))
-                        .map(|()| path),
-                ),
-                Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => None,
-                Err(error) => Some(Err(error).with_context(|| {
+    loop {
+        let timestamp = u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos())
+            .context("Log timestamp exceeds supported range")?;
+        let path = log_dir.join(format!("{timestamp:020}.json"));
+        let mut file = match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(file) => file,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(error) => {
+                return Err(error).with_context(|| {
                     format!("Failed to create log entry in {}", log_dir.display())
-                })),
+                });
             }
-        })
-        .expect("log entry sequence is unbounded")?;
-
-    Ok(log_file_path)
-}
-
-fn build_log_markdown(entry: &LogEntry, hash: &str, is_new: bool) -> String {
-    let mut md = String::new();
-
-    if is_new {
-        md.push_str("# Project Log\n\n");
+        };
+        let stored = StoredLogEntry {
+            timestamp,
+            commit_hash: hash,
+            title: entry.title.trim().to_owned(),
+            trace: entry.trace,
+            found: entry.found,
+            decided: entry.decided,
+            open: entry.open,
+        };
+        serde_json::to_writer_pretty(&mut file, &stored)
+            .with_context(|| format!("Failed to write to {}", path.display()))?;
+        file.write_all(b"\n")
+            .with_context(|| format!("Failed to write to {}", path.display()))?;
+        return Ok(path);
     }
-
-    writeln!(&mut md, "## [{}] {}", hash, entry.title.trim()).unwrap();
-
-    if let Some(trace) = &entry.trace {
-        writeln!(&mut md, "\n[trace]({})", encode_markdown_path(trace)).unwrap();
-    }
-
-    let push_bullets = |label: &str, items: &[String], md: &mut String| {
-        for item in items {
-            let item = item.trim();
-            if !item.is_empty() {
-                writeln!(md, "- **{}:** {}", label, item).unwrap();
-            }
-        }
-    };
-
-    let has_bullets = entry
-        .found
-        .iter()
-        .chain(entry.decided.iter())
-        .chain(entry.open.iter())
-        .any(|i| !i.trim().is_empty());
-
-    if has_bullets {
-        writeln!(&mut md).unwrap();
-        push_bullets("Found", &entry.found, &mut md);
-        push_bullets("Decided", &entry.decided, &mut md);
-        push_bullets("Open", &entry.open, &mut md);
-    }
-
-    writeln!(&mut md).unwrap();
-
-    md
 }
 
 fn resolve_trace_reference(
@@ -185,16 +161,4 @@ fn resolve_trace_reference(
     }
 
     Ok(normalized)
-}
-
-fn encode_markdown_path(path: &str) -> String {
-    let mut encoded = String::with_capacity(path.len());
-    for byte in path.bytes() {
-        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'/' | b'_' | b'~') {
-            encoded.push(char::from(byte));
-        } else {
-            write!(&mut encoded, "%{byte:02X}").unwrap();
-        }
-    }
-    encoded
 }
