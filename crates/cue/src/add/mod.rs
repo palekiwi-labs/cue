@@ -15,19 +15,19 @@ pub struct AddOptions {
     pub save_at_root: bool,
     pub force: bool,
     pub scope_name: Option<String>,
-    pub home: Option<PathBuf>,
+    pub store_root: Option<PathBuf>,
     pub group: Option<String>,
 }
 
 /// Shared inputs locating a central artifact write: the repository, the
-/// requested file, and the store-home/context resolution inputs.
+/// requested file, and the store-root/context resolution inputs.
 struct CentralWrite<'a> {
     root: &'a Path,
     filename: &'a str,
     content: &'a [u8],
     force: bool,
     context: Option<&'a str>,
-    home: Option<&'a Path>,
+    store_root: Option<&'a Path>,
 }
 
 pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
@@ -39,7 +39,7 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         save_at_root,
         force,
         scope_name,
-        home,
+        store_root,
         group,
     } = opts;
 
@@ -49,7 +49,7 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         content: &content,
         force,
         context: scope_name.as_deref(),
-        home: home.as_deref(),
+        store_root: store_root.as_deref(),
     };
 
     if matches!(
@@ -163,14 +163,14 @@ fn add_central_markdown(
         content,
         force,
         context,
-        home,
+        store_root,
     } = write;
     validate_filename(filename)?;
 
     if Path::new(filename).components().count() != 1 {
         bail!("Artifact names must not contain path separators: '{filename}'");
     }
-    let context_dir = central_context_dir(root, context, home)?;
+    let context_dir = central_context_dir(root, context, store_root)?;
 
     // A task is the only artifact that can be done, so it is the only type
     // given lifecycle defaults. A new task is untriaged (`inbox`) and
@@ -226,13 +226,13 @@ fn add_central_bin(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> 
         content,
         force,
         context,
-        home,
+        store_root,
     } = write;
     validate_filename(filename)?;
     if Path::new(filename).components().count() != 1 {
         bail!("Artifact names must not contain path separators: '{filename}'");
     }
-    let context_dir = central_context_dir(root, context, home)?;
+    let context_dir = central_context_dir(root, context, store_root)?;
     let filename = if Path::new(filename).extension().is_none() {
         format!("{filename}.json")
     } else {
@@ -278,7 +278,7 @@ fn add_central_tmp(
         content,
         force,
         context,
-        home,
+        store_root,
     } = write;
     if !metadata.is_empty() {
         bail!("tmp artifacts do not support metadata");
@@ -287,7 +287,7 @@ fn add_central_tmp(
     cuelib::head::validate_slug(group).context("Invalid tmp group name")?;
     validate_filename(filename)?;
 
-    let context_dir = central_context_dir(root, context, home)?;
+    let context_dir = central_context_dir(root, context, store_root)?;
     let commit_hash = git::get_short_head_hash(root)
         .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
     let tmp_dir = context_dir.join("tmp");
@@ -315,10 +315,14 @@ fn add_central_tmp(
     Ok(file_path)
 }
 
-fn central_context_dir(root: &Path, context: Option<&str>, home: Option<&Path>) -> Result<PathBuf> {
+fn central_context_dir(
+    root: &Path,
+    context: Option<&str>,
+    store_root: Option<&Path>,
+) -> Result<PathBuf> {
     let context = cuelib::head::resolve_active_context(root, context)?
         .context("No context selected; pass --task <context>")?;
-    let repository_dir = store::root(home)?.join(store::repository_scope(root)?);
+    let repository_dir = store::root(store_root)?.join(store::repository_scope(root)?);
     if !repository_dir.is_dir() {
         bail!(
             "no cue store at {}; run `cue init` to create it",

@@ -411,10 +411,12 @@ mod tests {
 
         let result = load_context_or_config(&absent_path, &fallback);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Context file not found"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Context file not found")
+        );
     }
 
     #[test]
@@ -468,10 +470,12 @@ mod tests {
 
         let result = resolve_profile_with_config("my-task", "default", &root_config, &store);
         assert!(result.is_err());
-        assert!(result
-            .unwrap_err()
-            .to_string()
-            .contains("Profile 'default' not found in config default"));
+        assert!(
+            result
+                .unwrap_err()
+                .to_string()
+                .contains("Profile 'default' not found in config default")
+        );
     }
 
     #[test]

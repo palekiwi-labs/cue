@@ -9,7 +9,7 @@ fn test_init_creates_origin_scoped_central_store() -> anyhow::Result<()> {
 
     env.command().arg("init").assert().success();
 
-    assert!(env.cue_home().join("acme/widgets").is_dir());
+    assert!(env.cue_store().join("acme/widgets").is_dir());
     assert!(
         !env.root().join(".cue").exists(),
         "init must not create a repository-local store"
@@ -23,21 +23,21 @@ fn test_init_creates_origin_scoped_central_store() -> anyhow::Result<()> {
 }
 
 #[test]
-fn test_home_flag_overrides_env_home() -> anyhow::Result<()> {
+fn test_home_flag_overrides_env_store() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    let flag_home = env.root().join("flag-home");
+    let flag_store = env.root().join("flag-home");
 
     env.command()
-        .args(["init", "--home"])
-        .arg(&flag_home)
+        .args(["init", "--store"])
+        .arg(&flag_store)
         .assert()
         .success();
 
-    assert!(flag_home.join("acme/widgets").is_dir());
+    assert!(flag_store.join("acme/widgets").is_dir());
     assert!(
-        !env.cue_home().join("acme").exists(),
-        "--home must override $CUE_HOME"
+        !env.cue_store().join("acme").exists(),
+        "--store must override $CUE_STORE"
     );
 
     Ok(())

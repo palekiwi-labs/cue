@@ -593,7 +593,7 @@ fn test_list_json_spec() -> anyhow::Result<()> {
     assert_eq!(item["name"], "index.md");
     assert_eq!(item["category"], "spec");
     assert_eq!(item["branch"], "master"); // HEAD absent → resolve_scope returns "master"
-                                          // Root artifact: no hash or timestamp
+    // Root artifact: no hash or timestamp
     assert!(item["hash"].is_null());
     assert!(item["commit_hash"].is_null());
     assert_eq!(item["commit_timestamp"], 0);

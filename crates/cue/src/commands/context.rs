@@ -33,7 +33,11 @@ struct NewContextOptions<'a> {
     refs: &'a [String],
 }
 
-pub fn handle(cwd: &Path, command: ContextCommands, home: Option<&Path>) -> anyhow::Result<()> {
+pub fn handle(
+    cwd: &Path,
+    command: ContextCommands,
+    store_root: Option<&Path>,
+) -> anyhow::Result<()> {
     match command {
         ContextCommands::Create {
             name,
@@ -52,7 +56,7 @@ pub fn handle(cwd: &Path, command: ContextCommands, home: Option<&Path>) -> anyh
                 parent: parent.as_deref(),
                 refs: &refs,
             };
-            handle_create(cwd, &name, options, home)
+            handle_create(cwd, &name, options, store_root)
         }
         ContextCommands::Init { force, task } => handle_init(cwd, force, task.as_deref()),
         ContextCommands::Show { task } => handle_show(cwd, task.as_deref()),
@@ -66,12 +70,12 @@ fn handle_create(
     cwd: &Path,
     name: &str,
     options: NewContextOptions<'_>,
-    home: Option<&Path>,
+    store_root: Option<&Path>,
 ) -> anyhow::Result<()> {
     cuelib::head::validate_slug(name)?;
 
     let repository_scope = store::repository_scope(cwd)?;
-    let repository_dir = store::root(home)?.join(&repository_scope);
+    let repository_dir = store::root(store_root)?.join(&repository_scope);
     if !repository_dir.is_dir() {
         anyhow::bail!(
             "no cue store at {}; run `cue init` to create it",

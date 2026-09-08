@@ -29,7 +29,7 @@ fn list_reads_artifacts_from_an_explicit_central_context() {
         .assert()
         .success()
         .stdout(predicate::str::contains(
-            env.cue_home()
+            env.cue_store()
                 .join("acme/widgets/release/note/decisions.md")
                 .to_string_lossy()
                 .as_ref(),

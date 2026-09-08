@@ -24,7 +24,7 @@ fn log_add_writes_one_entry_file_in_the_central_context() -> anyhow::Result<()> 
         .assert()
         .success();
 
-    let log_dir = env.cue_home().join("acme/widgets/release/log");
+    let log_dir = env.cue_store().join("acme/widgets/release/log");
     let entries = std::fs::read_dir(&log_dir)?.collect::<Result<Vec<_>, _>>()?;
 
     assert_eq!(entries.len(), 1);

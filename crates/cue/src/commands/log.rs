@@ -7,15 +7,15 @@ use cuelib::store;
 use std::fs;
 use std::path::Path;
 
-pub fn handle(cwd: &Path, command: LogCommands, home: Option<&Path>) -> Result<()> {
+pub fn handle(cwd: &Path, command: LogCommands, store_root: Option<&Path>) -> Result<()> {
     // 1. Verify git repo
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
 
-    // 2. Derive store owner
-    let store_root = store::main_worktree_root(cwd)?;
+    // 2. Derive the repository root owning the legacy config
+    let repo_root = store::main_worktree_root(cwd)?;
 
     // 3. Load config
-    let config = Config::load(&store_root)?;
+    let config = Config::load(&repo_root)?;
 
     match command {
         LogCommands::Add {
@@ -50,7 +50,7 @@ pub fn handle(cwd: &Path, command: LogCommands, home: Option<&Path>) -> Result<(
                 LogAddOptions {
                     entry,
                     scope_name: task,
-                    home: home.map(Path::to_path_buf),
+                    store_root: store_root.map(Path::to_path_buf),
                 },
             )?;
             let rel_path = log_file_path.strip_prefix(cwd).unwrap_or(&log_file_path);

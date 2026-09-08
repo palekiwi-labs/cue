@@ -48,7 +48,7 @@ fn add_creates_a_task_inside_an_explicit_context() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let path = env.cue_home().join("acme/widgets/release/task/publish.md");
+    let path = env.cue_store().join("acme/widgets/release/task/publish.md");
     let content = std::fs::read_to_string(path)?;
     let (frontmatter, body) = content
         .strip_prefix("---\n")
@@ -93,7 +93,7 @@ fn add_honors_explicit_task_status_and_priority() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let path = env.cue_home().join("acme/widgets/release/task/publish.md");
+    let path = env.cue_store().join("acme/widgets/release/task/publish.md");
     let metadata = read_frontmatter(&path)?;
 
     assert_eq!(metadata["status"], "in-progress");
@@ -129,7 +129,7 @@ fn add_preserves_conventional_task_metadata() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let path = env.cue_home().join("acme/widgets/release/task/publish.md");
+    let path = env.cue_store().join("acme/widgets/release/task/publish.md");
     let content = std::fs::read_to_string(path)?;
     let frontmatter = content
         .strip_prefix("---\n")
@@ -161,7 +161,7 @@ fn add_uses_context_from_environment() -> anyhow::Result<()> {
         .success();
 
     assert!(
-        env.cue_home()
+        env.cue_store()
             .join("acme/widgets/release/task/publish.md")
             .is_file()
     );
@@ -191,7 +191,7 @@ fn add_uses_context_from_branch_config() -> anyhow::Result<()> {
         .success();
 
     assert!(
-        env.cue_home()
+        env.cue_store()
             .join("acme/widgets/release/task/publish.md")
             .is_file()
     );
@@ -224,12 +224,12 @@ fn environment_context_overrides_branch_config() -> anyhow::Result<()> {
         .success();
 
     assert!(
-        env.cue_home()
+        env.cue_store()
             .join("acme/widgets/hotfix/task/ship.md")
             .is_file()
     );
     assert!(
-        !env.cue_home()
+        !env.cue_store()
             .join("acme/widgets/release/task/ship.md")
             .exists()
     );
@@ -278,7 +278,7 @@ fn add_creates_named_spec_with_structured_metadata() -> anyhow::Result<()> {
         .success();
 
     let path = env
-        .cue_home()
+        .cue_store()
         .join("acme/widgets/release/spec/requirements.md");
     let content = std::fs::read_to_string(path)?;
     let (frontmatter, body) = content
@@ -320,7 +320,7 @@ fn add_creates_each_named_markdown_artifact_type() -> anyhow::Result<()> {
             .success();
 
         let path = env
-            .cue_home()
+            .cue_store()
             .join("acme/widgets/release")
             .join(cue_type)
             .join(format!("{name}.md"));
@@ -361,7 +361,7 @@ fn add_stamps_trace_revision_metadata() -> anyhow::Result<()> {
         .success();
 
     let path = env
-        .cue_home()
+        .cue_store()
         .join("acme/widgets/release/trace/smoke-run.md");
     let metadata = read_frontmatter(&path)?;
 
@@ -396,7 +396,7 @@ fn add_keeps_revision_metadata_off_other_markdown_types() -> anyhow::Result<()> 
             .success();
 
         let path = env
-            .cue_home()
+            .cue_store()
             .join("acme/widgets/release")
             .join(cue_type)
             .join(format!("{cue_type}.md"));
@@ -440,7 +440,7 @@ fn add_honors_explicit_trace_revision_metadata() -> anyhow::Result<()> {
         .success();
 
     let path = env
-        .cue_home()
+        .cue_store()
         .join("acme/widgets/release/trace/upstream-run.md");
     let metadata = read_frontmatter(&path)?;
 
@@ -476,7 +476,7 @@ fn add_creates_json_bin_with_top_level_metadata() -> anyhow::Result<()> {
         .success();
 
     let path = env
-        .cue_home()
+        .cue_store()
         .join("acme/widgets/release/bin/analysis.json");
     let content: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
 
@@ -511,7 +511,7 @@ fn add_creates_a_named_tmp_group_for_the_current_revision() -> anyhow::Result<()
         .assert()
         .success();
 
-    let tmp_dir = env.cue_home().join("acme/widgets/release/tmp");
+    let tmp_dir = env.cue_store().join("acme/widgets/release/tmp");
     let groups = std::fs::read_dir(&tmp_dir)?.collect::<Result<Vec<_>, _>>()?;
     assert_eq!(groups.len(), 1);
     let group_name = groups[0].file_name();
@@ -544,7 +544,7 @@ fn add_reuses_a_tmp_group_for_the_same_revision() -> anyhow::Result<()> {
             .success();
     }
 
-    let tmp_dir = env.cue_home().join("acme/widgets/release/tmp");
+    let tmp_dir = env.cue_store().join("acme/widgets/release/tmp");
     let groups = std::fs::read_dir(&tmp_dir)?.collect::<Result<Vec<_>, _>>()?;
     assert_eq!(groups.len(), 1);
     assert!(groups[0].path().join("first.txt").is_file());
@@ -572,7 +572,7 @@ fn add_separates_tmp_groups_by_name() -> anyhow::Result<()> {
             .success();
     }
 
-    let tmp_dir = env.cue_home().join("acme/widgets/release/tmp");
+    let tmp_dir = env.cue_store().join("acme/widgets/release/tmp");
     let mut groups = std::fs::read_dir(&tmp_dir)?
         .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
         .collect::<anyhow::Result<Vec<_>>>()?;
@@ -626,7 +626,7 @@ fn add_creates_a_new_tmp_group_for_a_new_revision() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let tmp_dir = env.cue_home().join("acme/widgets/release/tmp");
+    let tmp_dir = env.cue_store().join("acme/widgets/release/tmp");
     let groups = std::fs::read_dir(&tmp_dir)?.collect::<Result<Vec<_>, _>>()?;
     assert_eq!(groups.len(), 2);
     assert!(

@@ -1,6 +1,6 @@
 use crate::cli::ProjectCommands;
 use anyhow::Result;
-use cuelib::project::{derive_project_key, ProjectStore};
+use cuelib::project::{ProjectStore, derive_project_key};
 use std::path::{Path, PathBuf};
 
 pub fn handle(cwd: &Path, command: ProjectCommands) -> Result<()> {
@@ -59,11 +59,7 @@ fn resolve_path(cwd: &Path, explicit: Option<&str>) -> PathBuf {
     match explicit {
         Some(p) => {
             let p = PathBuf::from(p);
-            if p.is_absolute() {
-                p
-            } else {
-                cwd.join(p)
-            }
+            if p.is_absolute() { p } else { cwd.join(p) }
         }
         None => cwd.to_path_buf(),
     }

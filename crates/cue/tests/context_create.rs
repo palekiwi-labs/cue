@@ -15,7 +15,7 @@ fn context_create_writes_a_context_record_to_the_central_store() -> anyhow::Resu
         .stdout("Created acme/widgets/data-model-spike\n");
 
     let path = env
-        .cue_home()
+        .cue_store()
         .join("acme/widgets/data-model-spike/context.md");
     let content = std::fs::read_to_string(path)?;
     let frontmatter = content
@@ -34,28 +34,28 @@ fn context_create_writes_a_context_record_to_the_central_store() -> anyhow::Resu
 }
 
 #[test]
-fn context_create_honors_global_home_flag() -> anyhow::Result<()> {
+fn context_create_honors_global_store_flag() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    let flag_home = env.root().join("flag-home");
+    let flag_store = env.root().join("flag-home");
     env.command()
-        .args(["--home"])
-        .arg(&flag_home)
+        .args(["--store"])
+        .arg(&flag_store)
         .arg("init")
         .assert()
         .success();
 
     env.command()
-        .args(["--home"])
-        .arg(&flag_home)
+        .args(["--store"])
+        .arg(&flag_store)
         .args(["context", "create", "spike"])
         .assert()
         .success();
 
-    assert!(flag_home.join("acme/widgets/spike/context.md").is_file());
+    assert!(flag_store.join("acme/widgets/spike/context.md").is_file());
     assert!(
-        !env.cue_home().join("acme").exists(),
-        "--home must override $CUE_HOME for context creation"
+        !env.cue_store().join("acme").exists(),
+        "--store must override $CUE_STORE for context creation"
     );
 
     Ok(())
@@ -79,7 +79,7 @@ fn context_create_accepts_a_context_kind() -> anyhow::Result<()> {
         .success();
 
     let content = std::fs::read_to_string(
-        env.cue_home()
+        env.cue_store()
             .join("acme/widgets/architecture-notes/context.md"),
     )?;
     assert!(content.contains("kind: reference\n"));
@@ -99,7 +99,7 @@ fn context_create_accepts_an_advisory_mode() -> anyhow::Result<()> {
         .success();
 
     let content = std::fs::read_to_string(
-        env.cue_home()
+        env.cue_store()
             .join("acme/widgets/implementation/context.md"),
     )?;
     assert!(content.contains("mode: build\n"));
@@ -126,7 +126,8 @@ fn context_create_accepts_presentation_metadata() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let content = std::fs::read_to_string(env.cue_home().join("acme/widgets/delivery/context.md"))?;
+    let content =
+        std::fs::read_to_string(env.cue_store().join("acme/widgets/delivery/context.md"))?;
     assert!(content.contains("title: Release delivery\n"));
     assert!(content.contains("description: Coordinate the release\n"));
 
@@ -154,7 +155,7 @@ fn context_create_accepts_relationship_metadata() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let content = std::fs::read_to_string(env.cue_home().join("acme/widgets/child/context.md"))?;
+    let content = std::fs::read_to_string(env.cue_store().join("acme/widgets/child/context.md"))?;
     let frontmatter = content
         .strip_prefix("---\n")
         .and_then(|content| content.split_once("---\n"))

@@ -7,8 +7,8 @@ fn test_env_provides_central_store_and_origin_repo() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
 
-    assert!(env.cue_home().is_dir());
-    assert!(env.cue_home().starts_with(env.root()));
+    assert!(env.cue_store().is_dir());
+    assert!(env.cue_store().starts_with(env.root()));
 
     let output = Command::new("git")
         .args(["remote", "get-url", "origin"])

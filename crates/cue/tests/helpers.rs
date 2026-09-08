@@ -14,7 +14,7 @@ pub struct TestEnv {
     pub temp_dir: TempDir,
     pub config_dir: PathBuf,
     pub data_dir: PathBuf,
-    pub cue_home: PathBuf,
+    pub cue_store: PathBuf,
 }
 
 impl Default for TestEnv {
@@ -29,16 +29,16 @@ impl TestEnv {
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let config_dir = temp_dir.path().join("config");
         let data_dir = temp_dir.path().join("data");
-        let cue_home = temp_dir.path().join("cue-home");
+        let cue_store = temp_dir.path().join("cue-store");
         std::fs::create_dir_all(&config_dir).expect("Failed to create config dir");
         std::fs::create_dir_all(&data_dir).expect("Failed to create data dir");
-        std::fs::create_dir_all(&cue_home).expect("Failed to create CUE_HOME");
+        std::fs::create_dir_all(&cue_store).expect("Failed to create CUE_STORE");
 
         Self {
             temp_dir,
             config_dir,
             data_dir,
-            cue_home,
+            cue_store,
         }
     }
 
@@ -50,7 +50,7 @@ impl TestEnv {
         let mut cmd = assert_cmd::Command::cargo_bin("cue").expect("Failed to find cue binary");
         cmd.env("CUE_CONFIG_DIR", &self.config_dir)
             .env("CUE_DATA_DIR", &self.data_dir)
-            .env("CUE_HOME", &self.cue_home)
+            .env("CUE_STORE", &self.cue_store)
             .env_remove("CUE_ARTIFACT_TYPES")
             .env_remove("CUE_IGNORED_TYPES")
             .env_remove("CUE_TASK")
@@ -64,8 +64,8 @@ impl TestEnv {
     }
 
     #[allow(dead_code)]
-    pub fn cue_home(&self) -> &Path {
-        &self.cue_home
+    pub fn cue_store(&self) -> &Path {
+        &self.cue_store
     }
 
     /// Advance the fixture repository to a new revision so tests can observe

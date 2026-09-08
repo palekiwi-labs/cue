@@ -6,14 +6,14 @@ use std::path::{Path, PathBuf};
 
 /// Resolve the root of the central cue store.
 ///
-/// Precedence: an explicit `--home` override, then `$CUE_HOME` (if set and
+/// Precedence: an explicit `--store` override, then `$CUE_STORE` (if set and
 /// non-empty), then `~/cue`.
-pub fn root(home: Option<&Path>) -> Result<PathBuf> {
-    if let Some(path) = home {
+pub fn root(store_root: Option<&Path>) -> Result<PathBuf> {
+    if let Some(path) = store_root {
         return Ok(path.to_path_buf());
     }
 
-    if let Some(path) = std::env::var_os("CUE_HOME").filter(|path| !path.is_empty()) {
+    if let Some(path) = std::env::var_os("CUE_STORE").filter(|path| !path.is_empty()) {
         return Ok(PathBuf::from(path));
     }
 
