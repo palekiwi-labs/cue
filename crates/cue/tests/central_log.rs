@@ -1,5 +1,7 @@
 mod helpers;
 
+use predicates::prelude::*;
+
 #[test]
 fn log_add_writes_a_structured_json_entry() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
@@ -53,4 +55,54 @@ fn log_add_writes_a_structured_json_entry() -> anyhow::Result<()> {
     assert!(!env.root().join(".cue").exists());
 
     Ok(())
+}
+
+#[test]
+fn log_list_outputs_entries_in_chronological_order() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    for title in ["First discovery", "Second discovery"] {
+        env.command()
+            .args(["log", "add", "--task", "release", "--title", title])
+            .assert()
+            .success();
+    }
+
+    let output = env
+        .command()
+        .args(["log", "list", "--task", "release"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let entries: serde_json::Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(entries.as_array().map(Vec::len), Some(2));
+    assert_eq!(entries[0]["title"], "First discovery");
+    assert_eq!(entries[1]["title"], "Second discovery");
+    assert!(entries[0]["timestamp"].as_u64() < entries[1]["timestamp"].as_u64());
+
+    Ok(())
+}
+
+#[test]
+fn log_list_requires_an_active_context() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .args(["log", "list"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "No context selected; pass --task <context>",
+        ));
 }

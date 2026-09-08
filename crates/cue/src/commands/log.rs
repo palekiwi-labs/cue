@@ -1,21 +1,13 @@
 use crate::cli::LogCommands;
-use crate::config::Config;
 use crate::git;
 use crate::log::{self, LogAddOptions, LogEntry};
 use anyhow::{Context, Result};
-use cuelib::store;
 use std::fs;
 use std::path::Path;
 
 pub fn handle(cwd: &Path, command: LogCommands, store_root: Option<&Path>) -> Result<()> {
     // 1. Verify git repo
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
-
-    // 2. Derive the repository root owning the legacy config
-    let repo_root = store::main_worktree_root(cwd)?;
-
-    // 3. Load config
-    let config = Config::load(&repo_root)?;
 
     match command {
         LogCommands::Add {
@@ -54,23 +46,12 @@ pub fn handle(cwd: &Path, command: LogCommands, store_root: Option<&Path>) -> Re
                 },
             )?;
             let rel_path = log_file_path.strip_prefix(cwd).unwrap_or(&log_file_path);
-            eprintln!("✓ Logged");
+            eprintln!("Logged");
             println!("{}", rel_path.display());
         }
         LogCommands::List { task } => {
-            let resolved = store::open(cwd, &config)?;
-            let scope = cuelib::head::resolve_scope(&resolved.head_dir, task.as_deref())?;
-
-            let log_file_path = resolved.store_dir.join(&scope).join("log.md");
-
-            match fs::read_to_string(&log_file_path) {
-                Ok(content) => print!("{}", content),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {} // Silently exit
-                Err(e) => {
-                    return Err(e)
-                        .with_context(|| format!("Failed to read {}", log_file_path.display()));
-                }
-            }
+            let entries = log::list_entries(cwd, task.as_deref(), store_root)?;
+            println!("{}", serde_json::to_string_pretty(&entries)?);
         }
     }
 

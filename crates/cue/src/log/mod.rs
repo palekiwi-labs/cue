@@ -109,6 +109,49 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
     }
 }
 
+pub fn list_entries(
+    root: &Path,
+    scope_name: Option<&str>,
+    store_root: Option<&Path>,
+) -> Result<Vec<StoredLogEntry>> {
+    let context = cuelib::head::resolve_active_context(root, scope_name)?
+        .context("No context selected; pass --task <context>")?;
+    let context_dir = store::root(store_root)?
+        .join(store::repository_scope(root)?)
+        .join(&context);
+    if !context_dir.join("context.md").is_file() {
+        bail!("Context does not exist: {context}");
+    }
+
+    let log_dir = context_dir.join("log");
+    let entries = match fs::read_dir(&log_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Failed to read log directory {}", log_dir.display()));
+        }
+    };
+    let mut paths = entries
+        .map(|entry| entry.map(|entry| entry.path()))
+        .collect::<std::io::Result<Vec<_>>>()?;
+    paths.sort();
+
+    paths
+        .into_iter()
+        .filter(|path| {
+            path.extension()
+                .is_some_and(|extension| extension == "json")
+        })
+        .map(|path| {
+            let file = fs::File::open(&path)
+                .with_context(|| format!("Failed to read log entry {}", path.display()))?;
+            serde_json::from_reader(file)
+                .with_context(|| format!("Failed to parse log entry {}", path.display()))
+        })
+        .collect()
+}
+
 fn resolve_trace_reference(
     trace: &str,
     repository_root: &Path,
