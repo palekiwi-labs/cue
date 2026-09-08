@@ -52,7 +52,8 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
     }
 
     // 2. Gather Git context
-    let mut hash = git::get_short_head_hash(root).unwrap_or_else(|_| "initial".to_string());
+    let mut hash =
+        git::get_short_head_hash(root).context("Failed to resolve current commit for log entry")?;
     if git::is_working_tree_dirty(root).unwrap_or(false) {
         hash.push_str("-dirty");
     }

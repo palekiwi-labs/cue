@@ -106,3 +106,36 @@ fn log_list_requires_an_active_context() {
             "No context selected; pass --task <context>",
         ));
 }
+
+#[test]
+fn log_add_requires_a_repository_revision() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    let init = std::process::Command::new("git")
+        .args(["init", "-b", "main"])
+        .current_dir(env.root())
+        .output()?;
+    assert!(init.status.success());
+    helpers::setup_origin(env.root(), helpers::TEST_ORIGIN_URL);
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "log",
+            "add",
+            "--task",
+            "release",
+            "--title",
+            "Validated release",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Failed to resolve current commit for log entry",
+        ));
+
+    Ok(())
+}
