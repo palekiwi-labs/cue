@@ -45,6 +45,7 @@ impl TestEnv {
             .env("CUE_DATA_DIR", &self.data_dir)
             .env_remove("CUE_ARTIFACT_TYPES")
             .env_remove("CUE_IGNORED_TYPES")
+            .env_remove("CUE_TASK")
             .current_dir(self.temp_dir.path());
         cmd
     }

@@ -1,101 +1,73 @@
-use anyhow::{bail, Result};
-use std::fs;
+use crate::config::Config;
+use crate::git::{current_worktree_root, list_worktrees};
+use anyhow::{Context, Result, bail};
 use std::path::{Path, PathBuf};
 
 /// The result of resolving a cue store directory.
 ///
-/// When a `STORE` redirect file is present in `head_dir`, artifact I/O
-/// is directed to `store_dir` (the redirect target). HEAD is always read
-/// from and written to `head_dir`.
-///
-/// When no `STORE` file is present, `head_dir == store_dir`.
+/// `head_dir` is the local checkout's `.cue/` directory (where HEAD is read
+/// from and written to). `store_dir` is the store-owning git root's `.cue/`
+/// directory (where artifacts and task directories live).
 #[derive(Debug)]
 pub struct ResolvedStore {
     /// Directory to read/write HEAD from. Always the local `.cue/`.
     pub head_dir: PathBuf,
     /// Directory to read/write artifacts from.
-    /// Equals `head_dir` unless a `STORE` file redirects it.
     pub store_dir: PathBuf,
 }
 
-/// Resolve a cue store directory into a [`ResolvedStore`].
+/// Resolve the store-owning git root for a repository containing `start`.
 ///
-/// If `cue_dir/STORE` exists, its contents are interpreted as the redirect
-/// target for artifact I/O. The file must contain a single **absolute** path
-/// (non-absolute and empty/whitespace-only contents are rejected with a loud
-/// error). The target is then validated via [`validate_store_target`]: it must
-/// exist, contain a `master/` subdirectory, and must not itself contain a
-/// `STORE` file (chaining is not supported).
+/// The git root is the **main worktree**: the first entry of
+/// `git worktree list --porcelain`, normalized through
+/// `git rev-parse --show-toplevel`. The normalization is idempotent for
+/// normal repositories, resolves a submodule to its own toplevel (no
+/// inheritance from the parent repository), and fails loudly for a bare
+/// main worktree.
 ///
-/// If `STORE` is absent, `head_dir` and `store_dir` are both set to `cue_dir`.
-pub fn resolve_store(cue_dir: PathBuf) -> Result<ResolvedStore> {
-    let store_file = cue_dir.join("STORE");
-
-    if !store_file.exists() {
-        return Ok(ResolvedStore {
-            head_dir: cue_dir.clone(),
-            store_dir: cue_dir,
-        });
-    }
-
-    let raw = fs::read_to_string(&store_file)?;
-    let trimmed = raw.trim();
-
-    if trimmed.is_empty() {
-        bail!("STORE file is empty: {}", store_file.display());
-    }
-
-    let target_path = PathBuf::from(trimmed);
-
-    if !target_path.is_absolute() {
-        bail!(
-            "STORE must contain an absolute path (got '{}') in {}",
-            trimmed,
-            store_file.display()
-        );
-    }
-
-    validate_store_target(&target_path)?;
-
-    let store_dir = target_path.canonicalize()?;
-
-    Ok(ResolvedStore {
-        head_dir: cue_dir,
-        store_dir,
+/// Deliberately NOT `git rev-parse --git-common-dir`: that is
+/// cwd-relative and unreliable for submodules and
+/// `--separate-git-dir` checkouts.
+pub fn main_worktree_root(start: &Path) -> Result<PathBuf> {
+    let worktrees = list_worktrees(start)
+        .with_context(|| format!("Failed to list git worktrees from {}", start.display()))?;
+    let entry0 = worktrees.first().ok_or_else(|| {
+        anyhow::anyhow!(
+            "`git worktree list` returned no worktrees for {}",
+            start.display()
+        )
+    })?;
+    current_worktree_root(entry0).with_context(|| {
+        format!(
+            "Failed to resolve main worktree {} to a toplevel",
+            entry0.display()
+        )
     })
 }
 
-/// Validate that a store target path is usable as a redirect target.
+/// Open the cue store for the repository containing `root`.
 ///
-/// Checks:
-/// - The path exists.
-/// - The path contains a `master/` subdirectory.
-/// - The path does not itself contain a `STORE` file (chaining is not
-///   supported and will error loudly).
+/// `root` may be any directory inside a worktree of the repository
+/// (usually the current working directory). The store is always the
+/// `<git-root>/<dir_name>` directory, where the git root is the **main
+/// worktree** (see [`main_worktree_root`]); `head_dir` stays the local checkout's
+/// `<toplevel>/<dir_name>`.
 ///
-/// The caller is responsible for ensuring `target` is an absolute path before
-/// calling this function.
-pub fn validate_store_target(target: &Path) -> Result<()> {
-    if !target.exists() {
-        bail!("STORE target does not exist: {}", target.display());
-    }
-
-    if !target.join("master").is_dir() {
+/// The caller should load `config` from [`main_worktree_root`] (the store owner),
+/// not from the current worktree.
+pub fn open(root: &Path, config: &Config) -> Result<ResolvedStore> {
+    let store_dir = main_worktree_root(root)?.join(&config.dir_name);
+    if !store_dir.is_dir() {
         bail!(
-            "STORE target is not a valid cue store \
-             (missing master/ subdirectory): {}",
-            target.display()
+            "no cue store at {}; run `cue init` in the main repository to create it",
+            store_dir.display()
         );
     }
-
-    if target.join("STORE").exists() {
-        bail!(
-            "STORE target is itself a proxy (chaining not supported): {}",
-            target.display()
-        );
-    }
-
-    Ok(())
+    let head_dir = current_worktree_root(root)?.join(&config.dir_name);
+    Ok(ResolvedStore {
+        head_dir,
+        store_dir,
+    })
 }
 
 #[cfg(test)]
@@ -104,146 +76,252 @@ mod tests {
     use std::fs;
     use tempfile::tempdir;
 
-    // Helper: create a minimal valid cue store (contains master/ subdir).
+    // Helper: create a cue store with a master scope directory.
     fn make_store(path: &Path) {
         fs::create_dir_all(path.join("master")).unwrap();
     }
 
-    #[test]
-    fn no_store_file_returns_passthrough() {
-        let dir = tempdir().unwrap();
-        let cue_dir = dir.path().join(".cue");
-        fs::create_dir_all(&cue_dir).unwrap();
-
-        let resolved = resolve_store(cue_dir.clone()).unwrap();
-
-        assert_eq!(resolved.head_dir, cue_dir);
-        assert_eq!(resolved.store_dir, cue_dir);
-    }
-
-    #[test]
-    fn store_file_redirects_store_dir() {
-        let dir = tempdir().unwrap();
-        let proxy_cue = dir.path().join("worktree").join(".cue");
-        let real_store = dir.path().join("main").join(".cue");
-        fs::create_dir_all(&proxy_cue).unwrap();
-        make_store(&real_store);
-
-        fs::write(proxy_cue.join("STORE"), real_store.to_str().unwrap()).unwrap();
-
-        let resolved = resolve_store(proxy_cue.clone()).unwrap();
-
-        assert_eq!(resolved.head_dir, proxy_cue);
-        assert_eq!(resolved.store_dir, real_store.canonicalize().unwrap());
-    }
-
-    #[test]
-    fn store_file_trims_whitespace_from_path() {
-        let dir = tempdir().unwrap();
-        let proxy_cue = dir.path().join("worktree").join(".cue");
-        let real_store = dir.path().join("main").join(".cue");
-        fs::create_dir_all(&proxy_cue).unwrap();
-        make_store(&real_store);
-
-        // Write path with surrounding whitespace and a trailing newline.
-        let store_content = format!("  {}\n", real_store.to_str().unwrap());
-        fs::write(proxy_cue.join("STORE"), &store_content).unwrap();
-
-        let resolved = resolve_store(proxy_cue.clone()).unwrap();
-
-        assert_eq!(resolved.store_dir, real_store.canonicalize().unwrap());
-    }
-
-    #[test]
-    fn empty_store_file_errors() {
-        let dir = tempdir().unwrap();
-        let proxy_cue = dir.path().join(".cue");
-        fs::create_dir_all(&proxy_cue).unwrap();
-        fs::write(proxy_cue.join("STORE"), "").unwrap();
-
-        let err = resolve_store(proxy_cue).unwrap_err();
-        assert!(err.to_string().contains("empty"), "unexpected error: {err}");
-    }
-
-    #[test]
-    fn whitespace_only_store_file_errors() {
-        let dir = tempdir().unwrap();
-        let proxy_cue = dir.path().join(".cue");
-        fs::create_dir_all(&proxy_cue).unwrap();
-        fs::write(proxy_cue.join("STORE"), "   \n  ").unwrap();
-
-        let err = resolve_store(proxy_cue).unwrap_err();
-        assert!(err.to_string().contains("empty"), "unexpected error: {err}");
-    }
-
-    #[test]
-    fn relative_path_in_store_file_errors() {
-        let dir = tempdir().unwrap();
-        let proxy_cue = dir.path().join(".cue");
-        fs::create_dir_all(&proxy_cue).unwrap();
-        fs::write(proxy_cue.join("STORE"), "relative/path/.cue").unwrap();
-
-        let err = resolve_store(proxy_cue).unwrap_err();
+    // Helper: run git in `dir`, panicking on failure.
+    fn git(dir: &Path, args: &[&str]) {
+        let out = std::process::Command::new("git")
+            .args(args)
+            .current_dir(dir)
+            .output()
+            .expect("failed to spawn git");
         assert!(
-            err.to_string().contains("absolute"),
-            "unexpected error: {err}"
+            out.status.success(),
+            "git {:?} in {} failed: {}",
+            args,
+            dir.display(),
+            String::from_utf8_lossy(&out.stderr)
+        );
+    }
+
+    // Helper: init a normal git repo with one commit.
+    fn init_repo(dir: &Path) {
+        fs::create_dir_all(dir).unwrap();
+        git(dir, &["init", "-b", "main"]);
+        git(dir, &["config", "user.email", "test@example.com"]);
+        git(dir, &["config", "user.name", "Test"]);
+        git(dir, &["config", "commit.gpgsign", "false"]);
+        fs::write(dir.join("initial.txt"), "hello").unwrap();
+        git(dir, &["add", "."]);
+        git(dir, &["commit", "-m", "initial"]);
+    }
+
+    #[test]
+    fn open_plain_repo_resolves_root_cue_dir() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        init_repo(&main);
+        make_store(&main.join(".cue"));
+
+        let resolved = open(&main, &Config::default()).unwrap();
+
+        let root = current_worktree_root(&main).unwrap();
+        assert_eq!(resolved.head_dir, root.join(".cue"));
+        assert_eq!(resolved.store_dir, root.join(".cue"));
+    }
+
+    #[test]
+    fn open_missing_store_errors_with_init_hint() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        init_repo(&main);
+
+        let err = open(&main, &Config::default()).unwrap_err();
+
+        let msg = format!("{err:#}");
+        assert!(msg.contains("cue init"), "unexpected error: {msg}");
+        let root = current_worktree_root(&main).unwrap();
+        assert!(
+            msg.contains(&root.join(".cue").display().to_string()),
+            "unexpected error: {msg}"
         );
     }
 
     #[test]
-    fn store_file_pointing_to_nonexistent_path_errors() {
-        let dir = tempdir().unwrap();
-        let proxy_cue = dir.path().join(".cue");
-        fs::create_dir_all(&proxy_cue).unwrap();
+    fn open_accepts_store_without_master_scope() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        init_repo(&main);
+        fs::create_dir(main.join(".cue")).unwrap();
 
-        fs::write(
-            proxy_cue.join("STORE"),
-            "/nonexistent/path/that/does/not/exist",
-        )
-        .unwrap();
+        let resolved = open(&main, &Config::default()).unwrap();
 
-        let err = resolve_store(proxy_cue).unwrap_err();
-        assert!(
-            err.to_string().contains("does not exist"),
-            "unexpected error: {err}"
-        );
+        assert_eq!(resolved.store_dir, main.join(".cue"));
+        assert!(!resolved.store_dir.join("master").exists());
     }
 
     #[test]
-    fn chained_store_target_errors() {
-        let dir = tempdir().unwrap();
-        let proxy_cue = dir.path().join(".cue");
-        let chained_store = dir.path().join("chained").join(".cue");
-        fs::create_dir_all(&proxy_cue).unwrap();
-        // The chained store is a valid store (has master/) but is itself
-        // a proxy (contains a STORE file) — chaining must be rejected.
-        make_store(&chained_store);
-        fs::write(chained_store.join("STORE"), "/some/other/store").unwrap();
-
-        fs::write(proxy_cue.join("STORE"), chained_store.to_str().unwrap()).unwrap();
-
-        let err = resolve_store(proxy_cue).unwrap_err();
-        assert!(
-            err.to_string().contains("chaining"),
-            "unexpected error: {err}"
+    fn open_worktree_splits_head_and_store_dirs() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let wt = tmp.path().join("wt");
+        init_repo(&main);
+        make_store(&main.join(".cue"));
+        git(
+            &main,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "topic"],
         );
+
+        let resolved = open(&wt, &Config::default()).unwrap();
+
+        // Store dir is the main worktree's .cue; head dir is the local one.
+        let main_root = current_worktree_root(&main).unwrap();
+        let wt_root = current_worktree_root(&wt).unwrap();
+        assert_eq!(resolved.store_dir, main_root.join(".cue"));
+        assert_eq!(resolved.head_dir, wt_root.join(".cue"));
     }
 
     #[test]
-    fn store_file_pointing_to_path_without_master_errors() {
-        let dir = tempdir().unwrap();
-        let proxy_cue = dir.path().join("worktree").join(".cue");
-        let invalid_store = dir.path().join("invalid").join(".cue");
-        fs::create_dir_all(&proxy_cue).unwrap();
-        // Create the target dir but do NOT create master/ inside it.
-        fs::create_dir_all(&invalid_store).unwrap();
-
-        fs::write(proxy_cue.join("STORE"), invalid_store.to_str().unwrap()).unwrap();
-
-        let err = resolve_store(proxy_cue).unwrap_err();
-        assert!(
-            err.to_string().contains("missing master/"),
-            "unexpected error: {err}"
+    fn open_bare_main_worktree_fails_loudly() {
+        let tmp = tempdir().unwrap();
+        let src = tmp.path().join("src");
+        init_repo(&src);
+        let bare = tmp.path().join("bare.git");
+        git(
+            &src,
+            &[
+                "clone",
+                "--bare",
+                src.to_str().unwrap(),
+                bare.to_str().unwrap(),
+            ],
         );
+        let wt = tmp.path().join("wt");
+        git(
+            &bare,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "topic"],
+        );
+
+        let err = open(&wt, &Config::default()).unwrap_err();
+
+        let msg = format!("{err:#}");
+        assert!(
+            msg.contains("Failed to resolve main worktree"),
+            "unexpected error: {msg}"
+        );
+        assert!(msg.contains("bare.git"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn open_submodule_resolves_own_toplevel_only() {
+        let tmp = tempdir().unwrap();
+        let sub_src = tmp.path().join("subsrc");
+        init_repo(&sub_src);
+        let parent = tmp.path().join("parent");
+        init_repo(&parent);
+        // Parent has a store; the submodule must NOT inherit it.
+        make_store(&parent.join(".cue"));
+        // git >= 2.38.1 denies the file transport for submodule clones;
+        // repo-local config is ignored for this security setting, so it
+        // must be passed inline.
+        git(
+            &parent,
+            &[
+                "-c",
+                "protocol.file.allow=always",
+                "submodule",
+                "add",
+                sub_src.to_str().unwrap(),
+                "sub",
+            ],
+        );
+        git(&parent, &["commit", "-m", "add submodule"]);
+        let sub = parent.join("sub");
+        make_store(&sub.join(".cue"));
+
+        let resolved = open(&sub, &Config::default()).unwrap();
+
+        let sub_root = current_worktree_root(&sub).unwrap();
+        assert_eq!(resolved.store_dir, sub_root.join(".cue"));
+        assert_eq!(resolved.head_dir, sub_root.join(".cue"));
+    }
+
+    #[test]
+    fn open_ignores_stray_local_store_in_worktree() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let wt = tmp.path().join("wt");
+        init_repo(&main);
+        make_store(&main.join(".cue"));
+        git(
+            &main,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "topic"],
+        );
+        // Stray local store content in the worktree must not win.
+        make_store(&wt.join(".cue"));
+
+        let resolved = open(&wt, &Config::default()).unwrap();
+
+        let main_root = current_worktree_root(&main).unwrap();
+        let wt_root = current_worktree_root(&wt).unwrap();
+        assert_eq!(resolved.store_dir, main_root.join(".cue"));
+        assert_ne!(resolved.store_dir, wt_root.join(".cue"));
+        assert_eq!(resolved.head_dir, wt_root.join(".cue"));
+    }
+
+    #[test]
+    fn open_stray_local_master_does_not_satisfy_store() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let wt = tmp.path().join("wt");
+        init_repo(&main);
+        // Main has no store; only the worktree has a stray .cue/master.
+        git(
+            &main,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "topic"],
+        );
+        make_store(&wt.join(".cue"));
+
+        let err = open(&wt, &Config::default()).unwrap_err();
+
+        let msg = format!("{err:#}");
+        assert!(msg.contains("cue init"), "unexpected error: {msg}");
+    }
+
+    #[test]
+    fn open_honors_custom_dir_name_at_git_root() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let wt = tmp.path().join("wt");
+        init_repo(&main);
+        make_store(&main.join(".memory"));
+        git(
+            &main,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "topic"],
+        );
+
+        let config = Config {
+            dir_name: ".memory".into(),
+            ..Config::default()
+        };
+        let resolved = open(&wt, &config).unwrap();
+
+        let main_root = current_worktree_root(&main).unwrap();
+        let wt_root = current_worktree_root(&wt).unwrap();
+        assert_eq!(resolved.store_dir, main_root.join(".memory"));
+        assert_eq!(resolved.head_dir, wt_root.join(".memory"));
+    }
+
+    #[test]
+    fn main_worktree_root_returns_main_worktree_from_linked_worktree() {
+        let tmp = tempdir().unwrap();
+        let main = tmp.path().join("main");
+        let wt = tmp.path().join("wt");
+        init_repo(&main);
+        git(
+            &main,
+            &["worktree", "add", wt.to_str().unwrap(), "-b", "topic"],
+        );
+
+        // From a subdirectory of the linked worktree, too.
+        let sub = wt.join("nested");
+        fs::create_dir_all(&sub).unwrap();
+
+        let main_root = current_worktree_root(&main).unwrap();
+        assert_eq!(main_worktree_root(&wt).unwrap(), main_root);
+        assert_eq!(main_worktree_root(&sub).unwrap(), main_root);
     }
 }

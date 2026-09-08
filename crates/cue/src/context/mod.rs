@@ -1,5 +1,5 @@
 use crate::config::{Config, ContextConfig, ContextProfile};
-use crate::git::get_git_root;
+use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::store;
 use glob::glob;
 use serde::{Deserialize, Serialize};
@@ -18,6 +18,11 @@ pub struct ResolvedContext {
     pub instructions: Option<String>,
 }
 
+#[derive(Deserialize)]
+struct TaskFrontmatter {
+    kind: Option<String>,
+}
+
 /// Indicates where a resolved `ContextConfig` was loaded from.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextSource {
@@ -30,9 +35,23 @@ pub enum ContextSource {
 /// Returns the path to the `context.json` file for `scope` within `cue_dir`.
 ///
 /// `cue_dir` is the resolved store directory (may differ from the local `.cue/`
-/// when a `STORE` redirect is in effect).
+/// in a git worktree).
 pub fn context_json_path(cue_dir: &Path, scope: &str) -> PathBuf {
     cue_dir.join(scope).join("context.json")
+}
+
+fn task_kind(store_dir: &Path, scope: &str) -> Option<String> {
+    if scope == "master" {
+        return None;
+    }
+
+    let task_path = store_dir
+        .join("master")
+        .join("task")
+        .join(format!("{scope}.md"));
+    extract_frontmatter_yaml(&task_path)
+        .and_then(|yaml| serde_yaml::from_str::<TaskFrontmatter>(&yaml).ok())
+        .and_then(|frontmatter| frontmatter.kind)
 }
 
 pub fn load_context_config(path: &Path) -> anyhow::Result<ContextConfig> {
@@ -234,21 +253,27 @@ pub fn resolve_profile_with_config(
 pub fn gather_context(
     cwd: &Path,
     profile_name: Option<&str>,
+    task: Option<&str>,
 ) -> anyhow::Result<(ResolvedContext, ContextSource)> {
-    let profile_name = profile_name.unwrap_or("default");
-    let git_root = get_git_root(cwd)?;
-    let config = Config::load(&git_root)?;
-    let cue_dir = git_root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_dir)?;
+    let store_root = store::main_worktree_root(cwd)?;
+    let config = Config::load(&store_root)?;
+    let resolved = store::open(cwd, &config)?;
     let canonical_store = resolved.store_dir.canonicalize()?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
 
     // Load root context config, falling back to config default when absent.
     let context_path = context_json_path(&resolved.store_dir, &scope);
     let (root_config, context_source) = load_context_or_config(&context_path, &config.context)?;
 
+    let profile_name = profile_name
+        .map(str::to_owned)
+        .or_else(|| {
+            task_kind(&resolved.store_dir, &scope).filter(|kind| root_config.contains_key(kind))
+        })
+        .unwrap_or_else(|| "default".to_string());
+
     let paths =
-        resolve_profile_with_config(&scope, profile_name, &root_config, &resolved.store_dir)?;
+        resolve_profile_with_config(&scope, &profile_name, &root_config, &resolved.store_dir)?;
 
     let mut artifacts = Vec::new();
     for path in paths {
@@ -283,7 +308,7 @@ pub fn gather_context(
         });
     }
 
-    let profile_obj = root_config.get(profile_name).ok_or_else(|| {
+    let profile_obj = root_config.get(&profile_name).ok_or_else(|| {
         let source = match context_source {
             ContextSource::File => context_path.display().to_string(),
             ContextSource::ConfigDefault => "config default".to_string(),
@@ -302,12 +327,11 @@ pub fn gather_context(
     ))
 }
 
-pub fn init_context(cwd: &Path, force: bool) -> anyhow::Result<PathBuf> {
-    let git_root = get_git_root(cwd)?;
-    let config = Config::load(&git_root)?;
-    let cue_dir = git_root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_dir)?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+pub fn init_context(cwd: &Path, force: bool, task: Option<&str>) -> anyhow::Result<PathBuf> {
+    let store_root = store::main_worktree_root(cwd)?;
+    let config = Config::load(&store_root)?;
+    let resolved = store::open(cwd, &config)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
     let config_path = context_json_path(&resolved.store_dir, &scope);
 
     if config_path.exists() && !force {

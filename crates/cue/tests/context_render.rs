@@ -79,6 +79,7 @@ fn test_context_render_uses_head_scope() -> anyhow::Result<()> {
     helpers::setup_git_repo(env.root());
 
     let cue_dir = env.root().join(".cue");
+    fs::create_dir_all(cue_dir.join("master"))?;
     let task_dir = cue_dir.join("my-task");
     let spec_dir = task_dir.join("spec");
     fs::create_dir_all(&spec_dir)?;
@@ -104,6 +105,129 @@ fn test_context_render_uses_head_scope() -> anyhow::Result<()> {
         .stdout(predicate::str::contains(
             "path=\"my-task/spec/task-file.md\"",
         ));
+
+    Ok(())
+}
+
+#[test]
+fn test_context_render_uses_task_kind_profile_when_profile_is_omitted() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    let cue_dir = env.root().join(".cue");
+    let task_dir = cue_dir.join("my-task");
+    let spec_dir = task_dir.join("spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(spec_dir.join("build.md"), "build profile content")?;
+    fs::write(spec_dir.join("default.md"), "default profile content")?;
+    fs::write(
+        task_dir.join("context.json"),
+        r#"{
+        "default": {
+            "artifacts": ["./spec/default.md"]
+        },
+        "build": {
+            "artifacts": ["./spec/build.md"]
+        }
+    }"#,
+    )?;
+
+    let task_cards = cue_dir.join("master").join("task");
+    fs::create_dir_all(&task_cards)?;
+    fs::write(
+        task_cards.join("my-task.md"),
+        "---\ntitle: My task\nkind: build\n---\n",
+    )?;
+    fs::write(cue_dir.join("HEAD"), "my-task")?;
+
+    env.command()
+        .arg("context")
+        .arg("render")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("build profile content"))
+        .stdout(predicate::str::contains("default profile content").not());
+
+    Ok(())
+}
+
+#[test]
+fn test_context_render_explicit_profile_overrides_task_kind() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    let cue_dir = env.root().join(".cue");
+    let task_dir = cue_dir.join("my-task");
+    let spec_dir = task_dir.join("spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(spec_dir.join("build.md"), "build profile content")?;
+    fs::write(spec_dir.join("review.md"), "review profile content")?;
+    fs::write(
+        task_dir.join("context.json"),
+        r#"{
+        "build": {
+            "artifacts": ["./spec/build.md"]
+        },
+        "review": {
+            "artifacts": ["./spec/review.md"]
+        }
+    }"#,
+    )?;
+
+    let task_cards = cue_dir.join("master").join("task");
+    fs::create_dir_all(&task_cards)?;
+    fs::write(
+        task_cards.join("my-task.md"),
+        "---\ntitle: My task\nkind: build\n---\n",
+    )?;
+    fs::write(cue_dir.join("HEAD"), "my-task")?;
+
+    env.command()
+        .arg("context")
+        .arg("render")
+        .arg("--profile")
+        .arg("review")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("review profile content"))
+        .stdout(predicate::str::contains("build profile content").not());
+
+    Ok(())
+}
+
+#[test]
+fn test_context_render_falls_back_when_task_kind_profile_is_missing() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    let cue_dir = env.root().join(".cue");
+    let task_dir = cue_dir.join("my-task");
+    let spec_dir = task_dir.join("spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(spec_dir.join("default.md"), "default profile content")?;
+    fs::write(
+        task_dir.join("context.json"),
+        r#"{
+        "default": {
+            "artifacts": ["./spec/default.md"]
+        }
+    }"#,
+    )?;
+
+    let task_cards = cue_dir.join("master").join("task");
+    fs::create_dir_all(&task_cards)?;
+    fs::write(
+        task_cards.join("my-task.md"),
+        "---\ntitle: My task\nkind: build\n---\n",
+    )?;
+    fs::write(cue_dir.join("HEAD"), "my-task")?;
+
+    env.command()
+        .arg("context")
+        .arg("render")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("default profile content"));
 
     Ok(())
 }
@@ -140,6 +264,51 @@ fn test_context_render_uses_config_default_when_no_context_json() -> anyhow::Res
     Ok(())
 }
 
+#[test]
+fn test_context_render_uses_task_kind_profile_from_config_default() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    let cue_dir = env.root().join(".cue");
+    let task_dir = cue_dir.join("my-task");
+    let spec_dir = task_dir.join("spec");
+    fs::create_dir_all(&spec_dir)?;
+    fs::write(spec_dir.join("build.md"), "build profile content")?;
+    fs::write(spec_dir.join("default.md"), "default profile content")?;
+
+    let task_cards = cue_dir.join("master").join("task");
+    fs::create_dir_all(&task_cards)?;
+    fs::write(
+        task_cards.join("my-task.md"),
+        "---\ntitle: My task\nkind: build\n---\n",
+    )?;
+    fs::write(cue_dir.join("HEAD"), "my-task")?;
+    fs::write(
+        env.root().join("cue.json"),
+        r#"{
+        "context": {
+            "default": {
+                "artifacts": ["./spec/default.md"]
+            },
+            "build": {
+                "artifacts": ["./spec/build.md"]
+            }
+        }
+    }"#,
+    )?;
+
+    env.command()
+        .arg("context")
+        .arg("render")
+        .assert()
+        .success()
+        .stderr(predicate::str::contains("no context.json"))
+        .stdout(predicate::str::contains("build profile content"))
+        .stdout(predicate::str::contains("default profile content").not());
+
+    Ok(())
+}
+
 /// A config-default profile that includes an on-disk scope resolves that
 /// scope's artifacts correctly (review #12).
 #[test]
@@ -149,6 +318,8 @@ fn test_context_render_config_default_with_include() -> anyhow::Result<()> {
 
     // "master" scope has no context.json — profile comes from cue.json.
     // The profile includes "@other-task".
+    let master_dir = env.root().join(".cue").join("master");
+    fs::create_dir_all(&master_dir)?;
     let other_dir = env.root().join(".cue").join("other-task");
     let other_spec = other_dir.join("spec");
     fs::create_dir_all(&other_spec)?;
@@ -231,6 +402,69 @@ fn test_context_render_no_head_falls_back_to_master() -> anyhow::Result<()> {
         .assert()
         .success()
         .stdout(predicate::str::contains("master fallback"));
+
+    Ok(())
+}
+
+#[test]
+fn test_context_render_with_task_flag_overrides_env_and_head() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+
+    let cue_dir = env.root().join(".cue");
+    fs::create_dir_all(cue_dir.join("master"))?;
+
+    // Create head-task
+    let head_task_dir = cue_dir.join("head-task");
+    fs::create_dir_all(head_task_dir.join("spec"))?;
+    fs::write(head_task_dir.join("spec/head.md"), "from head task")?;
+    fs::write(
+        head_task_dir.join("context.json"),
+        r#"{"default": {"artifacts": ["./spec/head.md"]}}"#,
+    )?;
+
+    // Create env-task
+    let env_task_dir = cue_dir.join("env-task");
+    fs::create_dir_all(env_task_dir.join("spec"))?;
+    fs::write(env_task_dir.join("spec/env.md"), "from env task")?;
+    fs::write(
+        env_task_dir.join("context.json"),
+        r#"{"default": {"artifacts": ["./spec/env.md"]}}"#,
+    )?;
+
+    // Create flag-task
+    let flag_task_dir = cue_dir.join("flag-task");
+    fs::create_dir_all(flag_task_dir.join("spec"))?;
+    fs::write(flag_task_dir.join("spec/flag.md"), "from flag task")?;
+    fs::write(
+        flag_task_dir.join("context.json"),
+        r#"{"default": {"artifacts": ["./spec/flag.md"]}}"#,
+    )?;
+
+    // Set HEAD to head-task
+    fs::write(cue_dir.join("HEAD"), "head-task")?;
+
+    // 1. Env overrides HEAD
+    env.command()
+        .env("CUE_TASK", "env-task")
+        .arg("context")
+        .arg("render")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("from env task"))
+        .stdout(predicate::str::contains("path=\"env-task/spec/env.md\""));
+
+    // 2. Flag overrides both Env and HEAD
+    env.command()
+        .env("CUE_TASK", "env-task")
+        .arg("context")
+        .arg("render")
+        .arg("--task")
+        .arg("flag-task")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("from flag task"))
+        .stdout(predicate::str::contains("path=\"flag-task/spec/flag.md\""));
 
     Ok(())
 }

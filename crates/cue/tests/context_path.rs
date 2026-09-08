@@ -64,6 +64,9 @@ fn test_context_path_missing_errors() -> anyhow::Result<()> {
     let env = TestEnv::new();
     helpers::setup_git_repo(env.root());
 
+    // Initialize cue
+    env.command().arg("init").assert().success();
+
     env.command()
         .arg("context")
         .arg("path")
@@ -73,5 +76,24 @@ fn test_context_path_missing_errors() -> anyhow::Result<()> {
             "Context file not found for scope: master",
         ));
 
+    Ok(())
+}
+
+#[test]
+fn context_path_task_flag_overrides_env() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+    env.command().arg("init").assert().success();
+
+    let context_json = env.root().join(".cue/flag-task/context.json");
+    fs::create_dir_all(context_json.parent().unwrap())?;
+    fs::write(&context_json, "{}")?;
+
+    env.command()
+        .env("CUE_TASK", "env-task")
+        .args(["context", "path", "--task", "flag-task"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(context_json.to_str().unwrap()));
     Ok(())
 }

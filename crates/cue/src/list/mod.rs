@@ -136,16 +136,8 @@ pub fn list(
     // Parse frontmatter once when either filtering or outputting it requires it.
     let need_frontmatter = frontmatter || !filters.is_empty();
 
-    // 1. Check if .cue exists and resolve store
-    let cue_path = root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_path)?;
-
-    if !resolved.head_dir.is_dir() {
-        anyhow::bail!(
-            "{} directory does not exist. Run `cue init` first.",
-            config.dir_name
-        );
-    }
+    // 1. Open store
+    let resolved = store::open(root, config)?;
 
     // 2. Determine scan directory/directories
     let mut paths = resolve_scan_paths(&resolved.head_dir, &resolved.store_dir, all, scope)?;
@@ -192,12 +184,7 @@ pub fn resolve_scan_paths(
     if all {
         collect_files(store_dir)
     } else {
-        let scope = if let Some(s) = scope {
-            cuelib::head::validate_slug(&s)?;
-            s
-        } else {
-            cuelib::head::resolve_scope(head_dir)?
-        };
+        let scope = cuelib::head::resolve_scope(head_dir, scope.as_deref())?;
         let scan_dir = store_dir.join(&scope);
 
         if scan_dir.exists() {

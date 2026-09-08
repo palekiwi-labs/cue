@@ -107,3 +107,21 @@ fn test_context_init_with_template() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn context_init_task_flag_overrides_env() -> anyhow::Result<()> {
+    let env = TestEnv::new();
+    helpers::setup_git_repo(env.root());
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .env("CUE_TASK", "env-task")
+        .args(["context", "init", "--task", "flag-task"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Created flag-task/context.json"));
+
+    assert!(env.root().join(".cue/flag-task/context.json").is_file());
+    assert!(!env.root().join(".cue/env-task/context.json").exists());
+    Ok(())
+}

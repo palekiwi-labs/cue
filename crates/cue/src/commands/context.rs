@@ -3,40 +3,37 @@ use crate::config::Config;
 use crate::context::{
     ContextSource, context_json_path, gather_context, init_context, load_context_or_config,
 };
-use crate::git::get_git_root;
 use cuelib::store;
 use std::path::Path;
 
 pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
     match command {
-        ContextCommands::Init { force } => handle_init(cwd, force),
-        ContextCommands::Show => handle_show(cwd),
-        ContextCommands::Profiles => handle_profiles(cwd),
-        ContextCommands::Render { profile } => handle_render(cwd, profile),
-        ContextCommands::Path { all } => handle_path(cwd, all),
+        ContextCommands::Init { force, task } => handle_init(cwd, force, task.as_deref()),
+        ContextCommands::Show { task } => handle_show(cwd, task.as_deref()),
+        ContextCommands::Profiles { task } => handle_profiles(cwd, task.as_deref()),
+        ContextCommands::Render { profile, task } => handle_render(cwd, profile, task.as_deref()),
+        ContextCommands::Path { all, task } => handle_path(cwd, all, task.as_deref()),
     }
 }
 
-fn handle_init(cwd: &Path, force: bool) -> anyhow::Result<()> {
-    let git_root = get_git_root(cwd)?;
-    let config = Config::load(&git_root)?;
-    let cue_dir = git_root.join(&config.dir_name);
-    let resolved_store = store::resolve_store(cue_dir)?;
-    let config_path = init_context(cwd, force)?;
+fn handle_init(cwd: &Path, force: bool, task: Option<&str>) -> anyhow::Result<()> {
+    let store_root = store::main_worktree_root(cwd)?;
+    let config = Config::load(&store_root)?;
+    let resolved_store = store::open(cwd, &config)?;
+    let config_path = init_context(cwd, force, task)?;
     let relative_path = config_path
         .strip_prefix(&resolved_store.store_dir)
-        .or_else(|_| config_path.strip_prefix(&git_root))
+        .or_else(|_| config_path.strip_prefix(&store_root))
         .unwrap_or(&config_path);
     println!("Created {}", relative_path.display());
     Ok(())
 }
 
-fn handle_show(cwd: &Path) -> anyhow::Result<()> {
-    let git_root = get_git_root(cwd)?;
-    let config = Config::load(&git_root)?;
-    let cue_dir = git_root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_dir)?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+fn handle_show(cwd: &Path, task: Option<&str>) -> anyhow::Result<()> {
+    let store_root = store::main_worktree_root(cwd)?;
+    let config = Config::load(&store_root)?;
+    let resolved = store::open(cwd, &config)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
     let config_path = context_json_path(&resolved.store_dir, &scope);
 
     let (context_config, source) = load_context_or_config(&config_path, &config.context)?;
@@ -48,12 +45,11 @@ fn handle_show(cwd: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_profiles(cwd: &Path) -> anyhow::Result<()> {
-    let git_root = get_git_root(cwd)?;
-    let config = Config::load(&git_root)?;
-    let cue_dir = git_root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_dir)?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+fn handle_profiles(cwd: &Path, task: Option<&str>) -> anyhow::Result<()> {
+    let store_root = store::main_worktree_root(cwd)?;
+    let config = Config::load(&store_root)?;
+    let resolved = store::open(cwd, &config)?;
+    let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
     let config_path = context_json_path(&resolved.store_dir, &scope);
 
     let (context_config, source) = load_context_or_config(&config_path, &config.context)?;
@@ -70,12 +66,11 @@ fn handle_profiles(cwd: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_render(cwd: &Path, profile: Option<String>) -> anyhow::Result<()> {
-    let git_root = get_git_root(cwd)?;
-    let config = Config::load(&git_root)?;
-    let cue_dir = git_root.join(&config.dir_name);
-    let resolved_store = store::resolve_store(cue_dir)?;
-    let (resolved, source) = gather_context(cwd, profile.as_deref())?;
+fn handle_render(cwd: &Path, profile: Option<String>, task: Option<&str>) -> anyhow::Result<()> {
+    let store_root = store::main_worktree_root(cwd)?;
+    let config = Config::load(&store_root)?;
+    let resolved_store = store::open(cwd, &config)?;
+    let (resolved, source) = gather_context(cwd, profile.as_deref(), task)?;
     if source == ContextSource::ConfigDefault {
         eprintln!("(no context.json; using config default)");
     }
@@ -84,7 +79,7 @@ fn handle_render(cwd: &Path, profile: Option<String>) -> anyhow::Result<()> {
         let relative_path = artifact
             .path
             .strip_prefix(&resolved_store.store_dir)
-            .or_else(|_| artifact.path.strip_prefix(&git_root))
+            .or_else(|_| artifact.path.strip_prefix(&store_root))
             .unwrap_or(&artifact.path);
         let normalized_path = relative_path.display().to_string().replace('\\', "/");
 
@@ -101,11 +96,10 @@ fn handle_render(cwd: &Path, profile: Option<String>) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn handle_path(cwd: &Path, all: bool) -> anyhow::Result<()> {
-    let git_root = get_git_root(cwd)?;
-    let config = Config::load(&git_root)?;
-    let cue_dir = git_root.join(&config.dir_name);
-    let resolved = store::resolve_store(cue_dir)?;
+fn handle_path(cwd: &Path, all: bool, task: Option<&str>) -> anyhow::Result<()> {
+    let store_root = store::main_worktree_root(cwd)?;
+    let config = Config::load(&store_root)?;
+    let resolved = store::open(cwd, &config)?;
 
     if all {
         if !resolved.store_dir.exists() {
@@ -127,7 +121,7 @@ fn handle_path(cwd: &Path, all: bool) -> anyhow::Result<()> {
             println!("{}", path.display());
         }
     } else {
-        let scope = cuelib::head::resolve_scope(&resolved.head_dir)?;
+        let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
         let config_path = context_json_path(&resolved.store_dir, &scope);
         if config_path.exists() {
             println!("{}", config_path.display());
