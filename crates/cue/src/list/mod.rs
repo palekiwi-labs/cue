@@ -120,6 +120,7 @@ pub struct ListOptions {
     pub include_gitignored: bool,
     pub json: bool,
     pub frontmatter: bool,
+    pub home: Option<std::path::PathBuf>,
     pub filters: Vec<Filter>,
 }
 
@@ -134,6 +135,7 @@ pub fn list(
         cue_type,
         include_gitignored,
         frontmatter,
+        home,
         filters,
         ..
     } = opts;
@@ -142,7 +144,7 @@ pub fn list(
     let need_frontmatter = frontmatter || !filters.is_empty();
 
     // 1. Resolve the current repository's directory in the central store.
-    let store_dir = store::root()?.join(store::repository_scope(root)?);
+    let store_dir = store::root(home.as_deref())?.join(store::repository_scope(root)?);
 
     // 2. Determine scan directory/directories
     let active_context = cuelib::head::resolve_active_context(root, scope.as_deref())?;

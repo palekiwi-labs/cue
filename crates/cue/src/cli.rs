@@ -19,6 +19,10 @@ pub struct Cli {
     #[arg(short = 'C', long = "dir", value_name = "PATH", global = true)]
     pub dir: Option<std::path::PathBuf>,
 
+    /// Root of the central cue store; overrides $CUE_HOME
+    #[arg(long, value_name = "PATH", global = true)]
+    pub home: Option<std::path::PathBuf>,
+
     #[command(subcommand)]
     pub command: Commands,
 }

@@ -34,6 +34,34 @@ fn context_create_writes_a_context_record_to_the_central_store() -> anyhow::Resu
 }
 
 #[test]
+fn context_create_honors_global_home_flag() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    let flag_home = env.root().join("flag-home");
+    env.command()
+        .args(["--home"])
+        .arg(&flag_home)
+        .arg("init")
+        .assert()
+        .success();
+
+    env.command()
+        .args(["--home"])
+        .arg(&flag_home)
+        .args(["context", "create", "spike"])
+        .assert()
+        .success();
+
+    assert!(flag_home.join("acme/widgets/spike/context.md").is_file());
+    assert!(
+        !env.cue_home().join("acme").exists(),
+        "--home must override $CUE_HOME for context creation"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn context_create_accepts_a_context_kind() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();

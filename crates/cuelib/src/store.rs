@@ -5,7 +5,14 @@ use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 
 /// Resolve the root of the central cue store.
-pub fn root() -> Result<PathBuf> {
+///
+/// Precedence: an explicit `--home` override, then `$CUE_HOME` (if set and
+/// non-empty), then `~/cue`.
+pub fn root(home: Option<&Path>) -> Result<PathBuf> {
+    if let Some(path) = home {
+        return Ok(path.to_path_buf());
+    }
+
     if let Some(path) = std::env::var_os("CUE_HOME").filter(|path| !path.is_empty()) {
         return Ok(PathBuf::from(path));
     }

@@ -21,7 +21,7 @@ pub fn handle(cwd: &Path, opts: ListOptions) -> Result<()> {
     let config = Config::load(&store_root)?;
 
     // 4. Resolve the repository's directory in the central store.
-    let store_dir = store::root()?.join(store::repository_scope(cwd)?);
+    let store_dir = store::root(opts.home.as_deref())?.join(store::repository_scope(cwd)?);
 
     // 5. Delegate to domain module
     let filtered = list::list(cwd, &config, opts)?;

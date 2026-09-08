@@ -7,7 +7,7 @@ use cuelib::store;
 use std::fs;
 use std::path::Path;
 
-pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
+pub fn handle(cwd: &Path, command: LogCommands, home: Option<&Path>) -> Result<()> {
     // 1. Verify git repo
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
 
@@ -50,6 +50,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
                 LogAddOptions {
                     entry,
                     scope_name: task,
+                    home: home.map(Path::to_path_buf),
                 },
             )?;
             let rel_path = log_file_path.strip_prefix(cwd).unwrap_or(&log_file_path);

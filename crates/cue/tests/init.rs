@@ -23,6 +23,27 @@ fn test_init_creates_origin_scoped_central_store() -> anyhow::Result<()> {
 }
 
 #[test]
+fn test_home_flag_overrides_env_home() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    let flag_home = env.root().join("flag-home");
+
+    env.command()
+        .args(["init", "--home"])
+        .arg(&flag_home)
+        .assert()
+        .success();
+
+    assert!(flag_home.join("acme/widgets").is_dir());
+    assert!(
+        !env.cue_home().join("acme").exists(),
+        "--home must override $CUE_HOME"
+    );
+
+    Ok(())
+}
+
+#[test]
 fn test_init_not_a_git_repo() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
 

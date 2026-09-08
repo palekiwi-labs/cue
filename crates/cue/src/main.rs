@@ -27,10 +27,11 @@ fn main() -> anyhow::Result<()> {
         }
         None => env::current_dir()?,
     };
+    let home = cli.home.as_deref();
 
     match cli.command {
         Commands::Init => {
-            commands::init::handle(&cwd)?;
+            commands::init::handle(&cwd, home)?;
         }
         Commands::Add {
             filename,
@@ -71,6 +72,7 @@ fn main() -> anyhow::Result<()> {
                     save_at_root: root,
                     force,
                     scope_name: task,
+                    home: home.map(std::path::Path::to_path_buf),
                     group,
                 },
             )?;
@@ -93,12 +95,13 @@ fn main() -> anyhow::Result<()> {
                     include_gitignored,
                     json,
                     frontmatter,
+                    home: home.map(std::path::Path::to_path_buf),
                     filters,
                 },
             )?;
         }
         Commands::Log { command } => {
-            commands::log::handle(&cwd, command)?;
+            commands::log::handle(&cwd, command, home)?;
         }
         Commands::Switch { target, json } => {
             commands::switch::handle(&cwd, target, json)?;
@@ -107,7 +110,7 @@ fn main() -> anyhow::Result<()> {
             commands::status::handle(&cwd, task, json)?;
         }
         Commands::Context { command } => {
-            commands::context::handle(&cwd, command)?;
+            commands::context::handle(&cwd, command, home)?;
         }
         Commands::Config { command } => {
             commands::config::handle(&cwd, command)?;
