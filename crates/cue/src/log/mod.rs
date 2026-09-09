@@ -60,7 +60,7 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
 
     // 3. Resolve the context in the central store.
     let context = cuelib::head::resolve_active_context(root, scope_name.as_deref())?
-        .context("No context selected; pass --task <context>")?;
+        .context("No context selected; pass --context <context>")?;
     let repository_dir = store::root(store_root.as_deref())?.join(store::repository_scope(root)?);
     let context_dir = repository_dir.join(&context);
     if !context_dir.join("context.md").is_file() {

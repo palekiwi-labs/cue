@@ -17,7 +17,7 @@ pub fn handle(cwd: &Path, command: LogCommands, store_root: Option<&Path>) -> Re
             decided,
             open,
             file,
-            task,
+            context,
         } => {
             let entry = if let Some(path) = file {
                 let content = fs::read_to_string(&path)
@@ -41,7 +41,7 @@ pub fn handle(cwd: &Path, command: LogCommands, store_root: Option<&Path>) -> Re
                 cwd,
                 LogAddOptions {
                     entry,
-                    scope_name: task,
+                    scope_name: context,
                     store_root: store_root.map(Path::to_path_buf),
                 },
             )?;

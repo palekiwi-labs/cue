@@ -209,8 +209,8 @@ pub enum LogCommands {
         #[arg(long, conflicts_with_all = &["title", "trace", "found", "decided", "open"])]
         file: Option<String>,
         /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
-        #[arg(long = "task")]
-        task: Option<String>,
+        #[arg(long)]
+        context: Option<String>,
     },
     /// List log entries
     List {

@@ -16,7 +16,7 @@ fn log_add_writes_a_structured_json_entry() -> anyhow::Result<()> {
         .args([
             "log",
             "add",
-            "--task",
+            "--context",
             "release",
             "--title",
             "Validated release",
