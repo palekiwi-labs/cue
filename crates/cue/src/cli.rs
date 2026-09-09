@@ -117,22 +117,11 @@ pub enum Commands {
         #[command(subcommand)]
         command: ContextCommands,
     },
-    /// Manage cue configuration
-    Config {
-        #[command(subcommand)]
-        command: ConfigCommands,
-    },
     /// Manage registered projects in the project store
     Project {
         #[command(subcommand)]
         command: ProjectCommands,
     },
-}
-
-#[derive(Subcommand)]
-pub enum ConfigCommands {
-    /// Show the resolved configuration as JSON
-    Show,
 }
 
 #[derive(Subcommand)]
