@@ -3,9 +3,11 @@ use crate::config::Config;
 use crate::context::{
     ContextSource, context_json_path, gather_context, init_context, load_context_or_config,
 };
+use anyhow::Context as _;
+use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::store;
-use serde::Serialize;
-use std::path::Path;
+use serde::{Deserialize, Serialize};
+use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[derive(Serialize)]
@@ -33,6 +35,32 @@ struct NewContextOptions<'a> {
     refs: &'a [String],
 }
 
+#[derive(Deserialize)]
+struct StoredContextMetadata {
+    title: Option<String>,
+    kind: String,
+    mode: Option<String>,
+    description: Option<String>,
+    created_at: u64,
+    parent: Option<String>,
+    #[serde(default)]
+    refs: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ContextListEntry {
+    context: String,
+    scope: String,
+    title: Option<String>,
+    kind: String,
+    mode: Option<String>,
+    description: Option<String>,
+    created_at: u64,
+    parent: Option<String>,
+    refs: Vec<String>,
+    path: PathBuf,
+}
+
 pub fn handle(
     cwd: &Path,
     command: ContextCommands,
@@ -58,12 +86,68 @@ pub fn handle(
             };
             handle_create(cwd, &name, options, store_root)
         }
+        ContextCommands::List { json } => handle_list(cwd, json, store_root),
         ContextCommands::Init { force, task } => handle_init(cwd, force, task.as_deref()),
         ContextCommands::Show { task } => handle_show(cwd, task.as_deref()),
         ContextCommands::Profiles { task } => handle_profiles(cwd, task.as_deref()),
         ContextCommands::Render { profile, task } => handle_render(cwd, profile, task.as_deref()),
         ContextCommands::Path { all, task } => handle_path(cwd, all, task.as_deref()),
     }
+}
+
+fn handle_list(cwd: &Path, json: bool, store_root: Option<&Path>) -> anyhow::Result<()> {
+    let scope = store::repository_scope(cwd)?;
+    let repository_dir = store::root(store_root)?.join(&scope);
+    if !repository_dir.is_dir() {
+        anyhow::bail!(
+            "no cue store at {}; run `cue init` to create it",
+            repository_dir.display()
+        );
+    }
+
+    let mut contexts = Vec::new();
+    for entry in std::fs::read_dir(&repository_dir)? {
+        let context_dir = entry?.path();
+        let context_path = context_dir.join("context.md");
+        if !context_path.is_file() {
+            continue;
+        }
+        let context = context_dir
+            .file_name()
+            .and_then(|name| name.to_str())
+            .context("context directory name is not valid UTF-8")?
+            .to_string();
+        let frontmatter = extract_frontmatter_yaml(&context_path).with_context(|| {
+            format!(
+                "could not read context metadata at {}",
+                context_path.display()
+            )
+        })?;
+        let metadata: StoredContextMetadata = serde_yaml::from_str(&frontmatter)
+            .with_context(|| format!("invalid context metadata at {}", context_path.display()))?;
+        contexts.push(ContextListEntry {
+            context,
+            scope: scope.display().to_string(),
+            title: metadata.title,
+            kind: metadata.kind,
+            mode: metadata.mode,
+            description: metadata.description,
+            created_at: metadata.created_at,
+            parent: metadata.parent,
+            refs: metadata.refs,
+            path: context_path,
+        });
+    }
+    contexts.sort_by(|left, right| left.context.cmp(&right.context));
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&contexts)?);
+    } else {
+        for context in contexts {
+            println!("{}", context.context);
+        }
+    }
+    Ok(())
 }
 
 fn handle_create(

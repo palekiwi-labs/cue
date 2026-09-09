@@ -170,6 +170,12 @@ pub enum ContextCommands {
         #[arg(long = "ref")]
         refs: Vec<String>,
     },
+    /// List contexts in the current repository scope
+    List {
+        /// Output structured JSON instead of context slugs
+        #[arg(long)]
+        json: bool,
+    },
     /// Create context.json, auto-populated from existing spec/ files
     Init {
         /// Overwrite existing context.json
