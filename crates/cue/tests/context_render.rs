@@ -167,3 +167,33 @@ fn repeated_entry_is_emitted_once() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn directory_entry_is_skipped() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "add",
+            "index",
+            "Release scope",
+            "--type",
+            "spec",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    env.command()
+        .args(["context", "render", "spec", "--context", "release"])
+        .assert()
+        .success()
+        .stdout("")
+        .stderr("");
+}
