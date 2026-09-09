@@ -1,4 +1,3 @@
-use crate::config::Config;
 use crate::git;
 use anyhow::{Context, Result, bail};
 use cuelib::store;
@@ -12,7 +11,6 @@ pub struct AddOptions {
     pub content: Vec<u8>,
     pub frontmatter: Vec<(String, String)>,
     pub cue_type: String,
-    pub save_at_root: bool,
     pub force: bool,
     pub scope_name: Option<String>,
     pub store_root: Option<PathBuf>,
@@ -30,13 +28,12 @@ struct CentralWrite<'a> {
     store_root: Option<&'a Path>,
 }
 
-pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
+pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
     let AddOptions {
         filename,
         content,
         frontmatter,
         cue_type,
-        save_at_root,
         force,
         scope_name,
         store_root,
@@ -52,6 +49,9 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         store_root: store_root.as_deref(),
     };
 
+    if cue_type != "tmp" && group.is_some() {
+        bail!("--group is only valid for tmp artifacts");
+    }
     if matches!(
         cue_type.as_str(),
         "task" | "spec" | "plan" | "note" | "trace"
@@ -64,92 +64,7 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
     if cue_type == "tmp" {
         return add_central_tmp(write, frontmatter, group.as_deref());
     }
-    if group.is_some() {
-        bail!("--group is only valid for tmp artifacts");
-    }
-
-    // 1. Open store
-    let resolved = store::open(root, config)?;
-
-    // 2. Validate artifact type
-    if !config.artifact_types.contains(&cue_type) {
-        bail!(
-            "Unknown artifact type '{}'. Valid types: {}",
-            cue_type,
-            config.artifact_types.join(", ")
-        );
-    }
-
-    // 3. Resolve scope (HEAD read from head_dir)
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir, scope_name.as_deref())?;
-    if scope.trim().is_empty() {
-        bail!("Scope name cannot be empty.");
-    }
-
-    // 4. Resolve destination directory (artifact write into store_dir)
-    let type_dir = resolved.store_dir.join(&scope).join(&cue_type);
-    let dest_dir = if save_at_root {
-        type_dir
-    } else {
-        let ts = git::get_head_timestamp(root)?;
-        let hash = git::get_short_head_hash(root)
-            .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
-        type_dir.join(format!("{}-{}", ts, hash))
-    };
-
-    // 5. Validate filename for path traversal
-    validate_filename(&filename)?;
-
-    // 5b. Normalize markdown filenames: a slug-like filename for a
-    // markdown artifact type gets `.md` appended so it satisfies the
-    // contract expected by the board reader (`read_artifacts`). A
-    // filename is slug-like when it has no extension, or when its
-    // extension does not look like a real one (`looks_like_extension`)
-    // — `Path::extension` splits at the last dot, so versioned slugs
-    // such as `v0.2.0-notes` would otherwise masquerade as extensioned
-    // files and stay board-invisible. Genuine payload extensions
-    // (`.txt`, `.png`, `.md`) and non-markdown types pass through.
-    let has_real_extension = Path::new(&filename)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(looks_like_extension);
-    let filename =
-        if !has_real_extension && cuelib::artifact::MARKDOWN_TYPES.contains(&cue_type.as_str()) {
-            format!("{filename}.md")
-        } else {
-            filename
-        };
-
-    let file_path = dest_dir.join(&filename);
-
-    // 7. Check if exists
-    if file_path.exists() && !force {
-        bail!(
-            "File exists: {}. Use --force to overwrite.",
-            file_path.display()
-        );
-    }
-
-    // 8. Create parent dirs
-    if let Some(parent) = file_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-    }
-
-    // 9. Assemble final content (prepend frontmatter if provided)
-    let final_content = if frontmatter.is_empty() {
-        content
-    } else {
-        let mut fm = build_frontmatter_bytes(&frontmatter)?;
-        fm.extend_from_slice(&content);
-        fm
-    };
-
-    // 10. Write file
-    fs::write(&file_path, final_content)
-        .with_context(|| format!("Failed to write to {}", file_path.display()))?;
-
-    Ok(file_path)
+    unreachable!("artifact types are constrained by clap")
 }
 
 fn add_central_markdown(
@@ -197,6 +112,11 @@ fn add_central_markdown(
             let hash = git::get_short_head_hash(root)
                 .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
             frontmatter.push(("commit_hash".into(), hash));
+        }
+        // Hashes made only of decimal digits must remain strings rather than
+        // being coerced into YAML numbers by the field-agnostic encoder.
+        if let Some((_, hash)) = frontmatter.iter_mut().find(|(key, _)| key == "commit_hash") {
+            *hash = format!("'{}'", hash.replace('\'', "''"));
         }
     }
     if !frontmatter.iter().any(|(key, _)| key == "created_at") {
@@ -421,27 +341,6 @@ pub fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
     Ok(out)
 }
 
-/// Maximum length of a dot segment still considered a file extension.
-const MAX_EXTENSION_LEN: usize = 8;
-
-/// Returns `true` if `ext` looks like a real file extension rather
-/// than the tail of a dotted slug.
-///
-/// `Path::extension` splits at the last dot, so it happily reports
-/// `0-notes` for `v0.2.0-notes` and `2` for `v1.2`. Those are slugs,
-/// not filenames, and must still be normalized to `.md`. A dot
-/// segment counts as an extension only when it starts with an ASCII
-/// letter, is entirely ASCII alphanumeric, and is short.
-///
-/// Known residual: a slug whose tail happens to look like an
-/// extension (`spec.v2`) passes through unnormalized.
-fn looks_like_extension(ext: &str) -> bool {
-    !ext.is_empty()
-        && ext.len() <= MAX_EXTENSION_LEN
-        && ext.starts_with(|c: char| c.is_ascii_alphabetic())
-        && ext.chars().all(|c| c.is_ascii_alphanumeric())
-}
-
 /// Validate a caller-supplied artifact filename.
 ///
 /// Allows only `Normal` path components: subdirectory grouping like
@@ -539,50 +438,6 @@ pub fn resolve_clipboard(filename: &str) -> anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn real_extensions_are_recognized() {
-        for ext in [
-            "md", "MD", "txt", "log", "sh", "png", "jpeg", "yaml", "rs", "json",
-        ] {
-            assert!(
-                looks_like_extension(ext),
-                "'{ext}' should count as a file extension"
-            );
-        }
-    }
-
-    #[test]
-    fn dotted_slug_tails_are_not_extensions() {
-        // Tails produced by `Path::extension` on versioned or dated
-        // slugs: digit-leading, hyphenated, empty, or implausibly long.
-        for ext in [
-            "",
-            "0-notes",
-            "2",
-            "30-standup",
-            "0",
-            "v2-draft",
-            "verylongextension",
-        ] {
-            assert!(
-                !looks_like_extension(ext),
-                "'{ext}' should not count as a file extension"
-            );
-        }
-    }
-
-    #[test]
-    fn extension_of_versioned_slug_is_rejected() {
-        // Guards the exact reported case end to end at the predicate
-        // level: `v0.2.0-notes` must be treated as extensionless.
-        let ext = Path::new("v0.2.0-notes")
-            .extension()
-            .and_then(|e| e.to_str())
-            .expect("Path::extension reports a tail for dotted slugs");
-        assert_eq!(ext, "0-notes");
-        assert!(!looks_like_extension(ext));
-    }
 
     #[test]
     fn validate_filename_accepts_valid_inputs() {

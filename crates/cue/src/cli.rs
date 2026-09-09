@@ -57,13 +57,15 @@ pub enum Commands {
         /// Frontmatter fields to prepend to the artifact (repeatable, KEY=VALUE format)
         #[arg(short = 'f', long = "frontmatter", value_name = "KEY=VALUE", value_parser = parse_frontmatter_field)]
         frontmatter: Vec<(String, String)>,
-        /// Type of artifact (must be in configured artifact_types)
-        #[arg(short = 't', long = "type", default_value = "spec")]
+        /// Type of artifact
+        #[arg(
+            short = 't',
+            long = "type",
+            default_value = "spec",
+            value_parser = ["task", "spec", "plan", "note", "trace", "bin", "tmp"]
+        )]
         cue_type: String,
-        /// Save artifact at the root of the type directory, not under a <timestamp>-<hash> subdir
-        #[arg(long)]
-        root: bool,
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
         #[arg(long = "task")]
         task: Option<String>,
         /// Group name for tmp artifacts
@@ -76,18 +78,12 @@ pub enum Commands {
 
     /// List artifacts for a scope
     List {
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task", conflicts_with = "all")]
+        /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
+        #[arg(long = "task")]
         task: Option<String>,
-        /// List files for all branches
-        #[arg(short = 'a', long)]
-        all: bool,
         /// Filter by artifact type
         #[arg(short = 't', long = "type")]
         cue_type: Option<String>,
-        /// Include ignored artifact types (e.g. tmp)
-        #[arg(short = 'i', long)]
-        include_gitignored: bool,
         /// Output as JSON
         #[arg(short = 'j', long)]
         json: bool,
@@ -212,13 +208,13 @@ pub enum LogCommands {
         /// Read entry data from a JSON file
         #[arg(long, conflicts_with_all = &["title", "trace", "found", "decided", "open"])]
         file: Option<String>,
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
         #[arg(long = "task")]
         task: Option<String>,
     },
     /// List log entries
     List {
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
         #[arg(long)]
         task: Option<String>,
     },

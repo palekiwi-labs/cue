@@ -51,3 +51,31 @@ fn legacy_context_commands_are_removed() {
             )));
     }
 }
+
+#[test]
+fn legacy_artifact_options_are_removed() {
+    for args in [
+        vec!["add", "artifact", "body", "--root"],
+        vec!["list", "--all"],
+        vec!["list", "--include-gitignored"],
+    ] {
+        let env = helpers::TestEnv::new();
+
+        env.command()
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("unexpected argument"));
+    }
+}
+
+#[test]
+fn removed_artifact_types_are_rejected_at_the_cli_boundary() {
+    let env = helpers::TestEnv::new();
+
+    env.command()
+        .args(["add", "artifact", "body", "--type", "doc"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("invalid value 'doc'"));
+}

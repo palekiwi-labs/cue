@@ -1,4 +1,3 @@
-use crate::config::Config;
 use anyhow::Result;
 use cuelib::artifact::{collect_files, extract_frontmatter_yaml};
 use cuelib::store;
@@ -117,25 +116,17 @@ pub struct CueFile {
 
 pub struct ListOptions {
     pub scope: Option<String>,
-    pub all: bool,
     pub cue_type: Option<String>,
-    pub include_gitignored: bool,
     pub json: bool,
     pub frontmatter: bool,
     pub store_root: Option<std::path::PathBuf>,
     pub filters: Vec<Filter>,
 }
 
-pub fn list(
-    root: &Path,
-    config: &Config,
-    opts: ListOptions,
-) -> Result<Vec<(PathBuf, Option<serde_json::Value>)>> {
+pub fn list(root: &Path, opts: ListOptions) -> Result<Vec<(PathBuf, Option<serde_json::Value>)>> {
     let ListOptions {
         scope,
-        all,
         cue_type,
-        include_gitignored,
         frontmatter,
         store_root,
         filters,
@@ -150,21 +141,15 @@ pub fn list(
 
     // 2. Determine scan directory/directories
     let active_context = cuelib::head::resolve_active_context(root, scope.as_deref())?;
-    let mut paths = resolve_central_scan_paths(&store_dir, all, active_context.as_deref())?;
+    let mut paths = resolve_central_scan_paths(&store_dir, active_context.as_deref())?;
 
     // 3. Sort
     paths.sort();
 
-    // 4. Filter by structure (type, gitignored)
-    let valid_paths = paths.into_iter().filter(|path| {
-        is_valid_cue_file(
-            path,
-            &store_dir,
-            cue_type.as_deref(),
-            include_gitignored,
-            &config.ignored_types,
-        )
-    });
+    // 4. Filter by supported artifact structure and requested type
+    let valid_paths = paths
+        .into_iter()
+        .filter(|path| is_valid_cue_file(path, &store_dir, cue_type.as_deref()));
 
     // 5. Parse frontmatter once (if needed), apply filters, carry value forward.
     let filtered: Vec<(PathBuf, Option<serde_json::Value>)> = valid_paths
@@ -185,14 +170,8 @@ pub fn list(
     Ok(filtered)
 }
 
-fn resolve_central_scan_paths(
-    store_dir: &Path,
-    all: bool,
-    context: Option<&str>,
-) -> Result<Vec<PathBuf>> {
-    let scan_dir = if all {
-        store_dir.to_path_buf()
-    } else if let Some(context) = context {
+fn resolve_central_scan_paths(store_dir: &Path, context: Option<&str>) -> Result<Vec<PathBuf>> {
+    let scan_dir = if let Some(context) = context {
         store_dir.join(context)
     } else {
         store_dir.to_path_buf()
@@ -200,13 +179,7 @@ fn resolve_central_scan_paths(
     collect_files(&scan_dir)
 }
 
-pub fn is_valid_cue_file(
-    path: &Path,
-    cue_path: &Path,
-    cue_type: Option<&str>,
-    include_gitignored: bool,
-    ignored_types: &[String],
-) -> bool {
+pub fn is_valid_cue_file(path: &Path, cue_path: &Path, cue_type: Option<&str>) -> bool {
     let Ok(rel_to_mem) = path.strip_prefix(cue_path) else {
         return false;
     };
@@ -226,11 +199,9 @@ pub fn is_valid_cue_file(
         return false;
     }
 
-    if let Some(requested) = cue_type {
-        if category != requested {
-            return false;
-        }
-    } else if !include_gitignored && ignored_types.iter().any(|t| t == category.as_ref()) {
+    if let Some(requested) = cue_type
+        && category != requested
+    {
         return false;
     }
 

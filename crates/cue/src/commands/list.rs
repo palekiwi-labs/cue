@@ -1,6 +1,5 @@
 pub use crate::list::ListOptions;
 
-use crate::config::Config;
 use crate::git;
 use crate::list;
 use anyhow::{Context, Result};
@@ -14,19 +13,13 @@ pub fn handle(cwd: &Path, opts: ListOptions) -> Result<()> {
     // 1. Verify git repo
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
 
-    // 2. Derive store owner
-    let store_root = store::main_worktree_root(cwd)?;
-
-    // 3. Load config from git root
-    let config = Config::load(&store_root)?;
-
-    // 4. Resolve the repository's directory in the central store.
+    // 2. Resolve the repository's directory in the central store.
     let store_dir = store::root(opts.store_root.as_deref())?.join(store::repository_scope(cwd)?);
 
-    // 5. Delegate to domain module
-    let filtered = list::list(cwd, &config, opts)?;
+    // 3. Delegate to domain module
+    let filtered = list::list(cwd, opts)?;
 
-    // 6. Output
+    // 4. Output
     if !json_output {
         for (path, _) in filtered {
             println!("{}", path.display());

@@ -118,6 +118,52 @@ fn list_only_returns_supported_artifact_types() -> anyhow::Result<()> {
 }
 
 #[test]
+fn list_includes_tmp_as_a_supported_artifact_type() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "add",
+            "report.txt",
+            "temporary report",
+            "--type",
+            "tmp",
+            "--task",
+            "release",
+            "--group",
+            "qa",
+        ])
+        .assert()
+        .success();
+
+    let output = env
+        .command()
+        .args(["list", "--task", "release", "--type", "tmp", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let artifacts: serde_json::Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(artifacts.as_array().map(Vec::len), Some(1));
+    assert_eq!(artifacts[0]["type"], "tmp");
+    assert!(
+        artifacts[0]["name"]
+            .as_str()
+            .unwrap()
+            .ends_with("/report.txt")
+    );
+
+    Ok(())
+}
+
+#[test]
 fn list_emits_central_artifact_metadata_as_json() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();

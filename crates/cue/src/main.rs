@@ -1,7 +1,6 @@
 mod add;
 mod cli;
 mod commands;
-mod config;
 mod git;
 mod list;
 mod log;
@@ -39,7 +38,6 @@ fn main() -> anyhow::Result<()> {
             clipboard,
             frontmatter,
             cue_type,
-            root,
             force,
             task,
             group,
@@ -68,7 +66,6 @@ fn main() -> anyhow::Result<()> {
                     content: resolved_content,
                     frontmatter,
                     cue_type,
-                    save_at_root: root,
                     force,
                     scope_name: task,
                     store_root: store_root.map(std::path::Path::to_path_buf),
@@ -78,9 +75,7 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::List {
             task,
-            all,
             cue_type,
-            include_gitignored,
             json,
             frontmatter,
             filters,
@@ -89,9 +84,7 @@ fn main() -> anyhow::Result<()> {
                 &cwd,
                 commands::list::ListOptions {
                     scope: task,
-                    all,
                     cue_type,
-                    include_gitignored,
                     json,
                     frontmatter,
                     store_root: store_root.map(std::path::Path::to_path_buf),
