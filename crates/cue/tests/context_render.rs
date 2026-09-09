@@ -124,3 +124,46 @@ fn missing_entry_is_skipped_silently() {
         .stdout("")
         .stderr("");
 }
+
+#[test]
+fn repeated_entry_is_emitted_once() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "add",
+            "index",
+            "Release scope",
+            "--type",
+            "spec",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    let stdout = env
+        .command()
+        .args([
+            "context",
+            "render",
+            "spec/index.md",
+            "spec/index.md",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    assert_eq!(String::from_utf8(stdout)?.matches("<artifact ").count(), 1);
+
+    Ok(())
+}
