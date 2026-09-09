@@ -25,12 +25,12 @@ fn switch_sets_the_current_branch_context() {
     env.setup_repo_with_origin();
 
     env.command()
-        .args(["context", "switch", "release"])
+        .args(["context", "switch", "../release"])
         .assert()
         .success()
-        .stdout("switched branch 'main' to context 'release'\n");
+        .stdout("switched branch 'main' to context '../release'\n");
 
-    assert_eq!(branch_context(&env, "main").as_deref(), Some("release"));
+    assert_eq!(branch_context(&env, "main").as_deref(), Some("../release"));
     assert!(!env.root().join(".cue").exists());
     assert_eq!(
         std::fs::read_dir(env.cue_store())
@@ -156,6 +156,19 @@ fn switched_context_is_observed_by_status() -> anyhow::Result<()> {
     let status: serde_json::Value = serde_json::from_slice(&output)?;
 
     assert_eq!(status["context"], "release");
+
+    env.command().args(["context", "unset"]).assert().success();
+    let output = env
+        .command()
+        .args(["status", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let status: serde_json::Value = serde_json::from_slice(&output)?;
+    assert!(status["context"].is_null());
+
     Ok(())
 }
 
@@ -173,4 +186,15 @@ fn switch_requires_a_slug_and_unset_rejects_one() {
         .assert()
         .failure()
         .stderr(predicates::str::contains("unexpected argument 'release'"));
+}
+
+#[test]
+fn unset_with_an_explicit_branch_still_requires_a_git_repository() {
+    let env = helpers::TestEnv::new();
+
+    env.command()
+        .args(["context", "unset", "--branch", "future"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("not a git repository"));
 }
