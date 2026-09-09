@@ -64,15 +64,6 @@
           };
         });
 
-        packages.curator = rustPlatform.buildRustPackage (common // {
-          pname = "curator";
-          cargoBuildFlags = [ "-p" "curator" ];
-          meta = common.meta // {
-            description = "curator: TUI for the cue memory system";
-            mainProgram = "curator";
-          };
-        });
-
         packages.acuity = rustPlatform.buildRustPackage (common // {
           pname = "acuity";
           cargoBuildFlags = [ "-p" "acuity" ];

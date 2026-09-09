@@ -109,9 +109,6 @@ fn main() -> anyhow::Result<()> {
         Commands::Context { command } => {
             commands::context::handle(&cwd, command, store_root)?;
         }
-        Commands::Project { command } => {
-            commands::project::handle(&cwd, command)?;
-        }
     }
 
     Ok(())

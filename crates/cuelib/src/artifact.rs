@@ -14,7 +14,7 @@ pub const CANONICAL_TYPES: &[&str] = &[
 
 /// Artifact types whose payload is a markdown document (frontmatter
 /// plus markdown body). Extensionless filenames get `.md` appended so
-/// `read_artifacts` can surface them to the curator board.
+/// `read_artifacts` can surface them to markdown consumers.
 pub const MARKDOWN_TYPES: &[&str] = &["doc", "note", "plan", "spec", "task", "todo"];
 
 /// Default artifact types that are gitignored and not listed.
