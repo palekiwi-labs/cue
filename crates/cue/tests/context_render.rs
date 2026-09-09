@@ -227,3 +227,35 @@ fn render_rejects_a_nonexistent_context() {
         .failure()
         .stderr(predicate::str::contains("Context does not exist: missing"));
 }
+
+#[test]
+fn context_document_renders_as_an_entry() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    let stdout = env
+        .command()
+        .args(["context", "render", "context.md", "--context", "release"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let path = env.cue_store().join("acme/widgets/release/context.md");
+    let content = std::fs::read_to_string(&path)?;
+    assert_eq!(
+        String::from_utf8(stdout)?,
+        format!(
+            "<artifact path=\"{}\">\n{content}\n</artifact>\n\n",
+            path.display()
+        )
+    );
+
+    Ok(())
+}
