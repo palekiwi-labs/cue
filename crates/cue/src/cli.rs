@@ -216,6 +216,6 @@ pub enum LogCommands {
     List {
         /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
         #[arg(long)]
-        task: Option<String>,
+        context: Option<String>,
     },
 }

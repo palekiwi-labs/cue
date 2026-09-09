@@ -69,14 +69,14 @@ fn log_list_outputs_entries_in_chronological_order() -> anyhow::Result<()> {
 
     for title in ["First discovery", "Second discovery"] {
         env.command()
-            .args(["log", "add", "--task", "release", "--title", title])
+            .args(["log", "add", "--context", "release", "--title", title])
             .assert()
             .success();
     }
 
     let output = env
         .command()
-        .args(["log", "list", "--task", "release"])
+        .args(["log", "list", "--context", "release"])
         .assert()
         .success()
         .get_output()

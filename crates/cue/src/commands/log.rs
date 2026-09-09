@@ -49,8 +49,8 @@ pub fn handle(cwd: &Path, command: LogCommands, store_root: Option<&Path>) -> Re
             eprintln!("Logged");
             println!("{}", rel_path.display());
         }
-        LogCommands::List { task } => {
-            let entries = log::list_entries(cwd, task.as_deref(), store_root)?;
+        LogCommands::List { context } => {
+            let entries = log::list_entries(cwd, context.as_deref(), store_root)?;
             println!("{}", serde_json::to_string_pretty(&entries)?);
         }
     }

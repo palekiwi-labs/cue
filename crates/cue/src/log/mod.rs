@@ -116,7 +116,7 @@ pub fn list_entries(
     store_root: Option<&Path>,
 ) -> Result<Vec<StoredLogEntry>> {
     let context = cuelib::head::resolve_active_context(root, scope_name)?
-        .context("No context selected; pass --task <context>")?;
+        .context("No context selected; pass --context <context>")?;
     let context_dir = store::root(store_root)?
         .join(store::repository_scope(root)?)
         .join(&context);
