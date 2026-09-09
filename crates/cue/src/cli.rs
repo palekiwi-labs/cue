@@ -150,45 +150,6 @@ pub enum ContextCommands {
         #[arg(long)]
         json: bool,
     },
-    /// Create context.json, auto-populated from existing spec/ files
-    Init {
-        /// Overwrite existing context.json
-        #[arg(long)]
-        force: bool,
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
-    },
-    /// Print raw context.json
-    Show {
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
-    },
-    /// List available profile names
-    Profiles {
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
-    },
-    /// Expand and stream context to stdout
-    Render {
-        /// Profile name to render
-        #[arg(short = 'p', long)]
-        profile: Option<String>,
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
-    },
-    /// Print absolute path to context.json
-    Path {
-        /// Show paths for all branches
-        #[arg(short = 'a', long)]
-        all: bool,
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
-    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]

@@ -36,3 +36,18 @@ fn project_command_is_removed() {
             "unrecognized subcommand 'project'",
         ));
 }
+
+#[test]
+fn legacy_context_commands_are_removed() {
+    for command in ["init", "show", "profiles", "render", "path"] {
+        let env = helpers::TestEnv::new();
+
+        env.command()
+            .args(["context", command])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(format!(
+                "unrecognized subcommand '{command}'"
+            )));
+    }
+}

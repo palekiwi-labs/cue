@@ -2,7 +2,6 @@ mod add;
 mod cli;
 mod commands;
 mod config;
-mod context;
 mod git;
 mod list;
 mod log;
