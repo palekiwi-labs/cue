@@ -49,7 +49,13 @@ fn list_without_an_active_context_reads_the_repository_scope() {
             .success();
         env.command()
             .args([
-                "add", artifact, "Notes", "--type", "note", "--task", context,
+                "add",
+                artifact,
+                "Notes",
+                "--type",
+                "note",
+                "--context",
+                context,
             ])
             .assert()
             .success();
@@ -79,7 +85,7 @@ fn list_only_returns_supported_artifact_types() -> anyhow::Result<()> {
             "Release decisions",
             "--type",
             "note",
-            "--task",
+            "--context",
             "release",
         ])
         .assert()
@@ -88,7 +94,7 @@ fn list_only_returns_supported_artifact_types() -> anyhow::Result<()> {
         .args([
             "log",
             "add",
-            "--task",
+            "--context",
             "release",
             "--title",
             "Validated release",
@@ -102,7 +108,7 @@ fn list_only_returns_supported_artifact_types() -> anyhow::Result<()> {
 
     let output = env
         .command()
-        .args(["list", "--task", "release", "--json"])
+        .args(["list", "--context", "release", "--json"])
         .assert()
         .success()
         .get_output()
@@ -133,7 +139,7 @@ fn list_includes_tmp_as_a_supported_artifact_type() -> anyhow::Result<()> {
             "temporary report",
             "--type",
             "tmp",
-            "--task",
+            "--context",
             "release",
             "--group",
             "qa",
@@ -143,7 +149,7 @@ fn list_includes_tmp_as_a_supported_artifact_type() -> anyhow::Result<()> {
 
     let output = env
         .command()
-        .args(["list", "--task", "release", "--type", "tmp", "--json"])
+        .args(["list", "--context", "release", "--type", "tmp", "--json"])
         .assert()
         .success()
         .get_output()
@@ -179,7 +185,7 @@ fn list_emits_central_artifact_metadata_as_json() -> anyhow::Result<()> {
             "Release decisions",
             "--type",
             "note",
-            "--task",
+            "--context",
             "release",
             "--frontmatter",
             "audience=operators",
@@ -189,7 +195,7 @@ fn list_emits_central_artifact_metadata_as_json() -> anyhow::Result<()> {
 
     let output = env
         .command()
-        .args(["list", "--task", "release", "--frontmatter"])
+        .args(["list", "--context", "release", "--frontmatter"])
         .assert()
         .success()
         .get_output()
@@ -224,7 +230,7 @@ fn list_reads_top_level_json_artifact_metadata() -> anyhow::Result<()> {
             r#"{"findings":["ready"]}"#,
             "--type",
             "bin",
-            "--task",
+            "--context",
             "release",
             "--frontmatter",
             "analyzer=smoke-test",
@@ -234,7 +240,7 @@ fn list_reads_top_level_json_artifact_metadata() -> anyhow::Result<()> {
 
     let output = env
         .command()
-        .args(["list", "--task", "release", "--frontmatter"])
+        .args(["list", "--context", "release", "--frontmatter"])
         .assert()
         .success()
         .get_output()
@@ -263,14 +269,20 @@ fn list_uses_the_branch_configured_active_context() -> anyhow::Result<()> {
             .success();
         env.command()
             .args([
-                "add", artifact, "Notes", "--type", "note", "--task", context,
+                "add",
+                artifact,
+                "Notes",
+                "--type",
+                "note",
+                "--context",
+                context,
             ])
             .assert()
             .success();
     }
 
     let config = std::process::Command::new("git")
-        .args(["config", "branch.main.cue-task", "release"])
+        .args(["config", "branch.main.cue-context", "release"])
         .current_dir(env.root())
         .output()?;
     assert!(config.status.success());

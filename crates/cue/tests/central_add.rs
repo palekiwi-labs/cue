@@ -83,7 +83,7 @@ fn add_honors_explicit_task_status_and_priority() -> anyhow::Result<()> {
             "Publish the release",
             "--type",
             "task",
-            "--task",
+            "--context",
             "release",
             "--frontmatter",
             "status=in-progress",
@@ -119,7 +119,7 @@ fn add_preserves_conventional_task_metadata() -> anyhow::Result<()> {
             "Publish the release",
             "--type",
             "task",
-            "--task",
+            "--context",
             "release",
             "--frontmatter",
             "kind=deploy",
@@ -259,13 +259,13 @@ fn environment_context_overrides_branch_config() -> anyhow::Result<()> {
     }
 
     let config = std::process::Command::new("git")
-        .args(["config", "branch.main.cue-task", "release"])
+        .args(["config", "branch.main.cue-context", "release"])
         .current_dir(env.root())
         .output()?;
     assert!(config.status.success());
 
     env.command()
-        .env("CUE_TASK", "hotfix")
+        .env("CUE_CONTEXT", "hotfix")
         .args(["add", "ship", "Ship the hotfix", "--type", "task"])
         .assert()
         .success();
@@ -295,7 +295,7 @@ fn add_rejects_write_without_active_context() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "No context selected; pass --task <context>",
+            "No context selected; pass --context <context>",
         ));
 }
 
@@ -316,7 +316,7 @@ fn add_creates_named_spec_with_structured_metadata() -> anyhow::Result<()> {
             "Release requirements",
             "--type",
             "spec",
-            "--task",
+            "--context",
             "release",
             "--frontmatter",
             "audience=operators",
@@ -360,7 +360,7 @@ fn add_creates_each_named_markdown_artifact_type() -> anyhow::Result<()> {
                 "Artifact body",
                 "--type",
                 cue_type,
-                "--task",
+                "--context",
                 "release",
             ])
             .assert()
@@ -401,7 +401,7 @@ fn add_stamps_trace_revision_metadata() -> anyhow::Result<()> {
             "Observed output",
             "--type",
             "trace",
-            "--task",
+            "--context",
             "release",
         ])
         .assert()
@@ -436,7 +436,7 @@ fn add_keeps_revision_metadata_off_other_markdown_types() -> anyhow::Result<()> 
                 "Artifact body",
                 "--type",
                 cue_type,
-                "--task",
+                "--context",
                 "release",
             ])
             .assert()
@@ -476,7 +476,7 @@ fn add_honors_explicit_trace_revision_metadata() -> anyhow::Result<()> {
             "Observed output",
             "--type",
             "trace",
-            "--task",
+            "--context",
             "release",
             "--frontmatter",
             "repo_id=upstream/library",
@@ -514,7 +514,7 @@ fn add_creates_json_bin_with_top_level_metadata() -> anyhow::Result<()> {
             r#"{"findings":["ready"]}"#,
             "--type",
             "bin",
-            "--task",
+            "--context",
             "release",
             "--frontmatter",
             "analyzer=smoke-test",
@@ -550,7 +550,7 @@ fn add_creates_a_named_tmp_group_for_the_current_revision() -> anyhow::Result<()
             "check output",
             "--type",
             "tmp",
-            "--task",
+            "--context",
             "release",
             "--group",
             "qa",
@@ -585,7 +585,15 @@ fn add_reuses_a_tmp_group_for_the_same_revision() -> anyhow::Result<()> {
     for file in ["first.txt", "second.txt"] {
         env.command()
             .args([
-                "add", file, "output", "--type", "tmp", "--task", "release", "--group", "qa",
+                "add",
+                file,
+                "output",
+                "--type",
+                "tmp",
+                "--context",
+                "release",
+                "--group",
+                "qa",
             ])
             .assert()
             .success();
@@ -613,7 +621,15 @@ fn add_separates_tmp_groups_by_name() -> anyhow::Result<()> {
     for group in ["qa", "bench"] {
         env.command()
             .args([
-                "add", "run.txt", "output", "--type", "tmp", "--task", "release", "--group", group,
+                "add",
+                "run.txt",
+                "output",
+                "--type",
+                "tmp",
+                "--context",
+                "release",
+                "--group",
+                group,
             ])
             .assert()
             .success();
@@ -648,7 +664,7 @@ fn add_creates_a_new_tmp_group_for_a_new_revision() -> anyhow::Result<()> {
             "output",
             "--type",
             "tmp",
-            "--task",
+            "--context",
             "release",
             "--group",
             "qa",
@@ -665,7 +681,7 @@ fn add_creates_a_new_tmp_group_for_a_new_revision() -> anyhow::Result<()> {
             "output",
             "--type",
             "tmp",
-            "--task",
+            "--context",
             "release",
             "--group",
             "qa",

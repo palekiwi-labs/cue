@@ -70,6 +70,25 @@ fn legacy_artifact_options_are_removed() {
 }
 
 #[test]
+fn legacy_task_context_selector_is_removed() {
+    for args in [
+        vec!["status", "--task", "release"],
+        vec!["add", "artifact", "body", "--task", "release"],
+        vec!["list", "--task", "release"],
+        vec!["log", "add", "--task", "release", "--title", "Entry"],
+        vec!["log", "list", "--task", "release"],
+    ] {
+        let env = helpers::TestEnv::new();
+
+        env.command()
+            .args(args)
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("unexpected argument '--task'"));
+    }
+}
+
+#[test]
 fn removed_artifact_types_are_rejected_at_the_cli_boundary() {
     let env = helpers::TestEnv::new();
 

@@ -157,7 +157,7 @@ fn dir_flag_add_writes_to_target_repository_scope() {
             "Target repository decisions",
             "--type",
             "note",
-            "--task",
+            "--context",
             "release",
         ])
         .assert()

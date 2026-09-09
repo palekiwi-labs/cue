@@ -103,7 +103,7 @@ fn log_list_requires_an_active_context() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "No context selected; pass --task <context>",
+            "No context selected; pass --context <context>",
         ));
 }
 
@@ -126,7 +126,7 @@ fn log_add_requires_a_repository_revision() -> anyhow::Result<()> {
         .args([
             "log",
             "add",
-            "--task",
+            "--context",
             "release",
             "--title",
             "Validated release",

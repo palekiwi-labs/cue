@@ -21,18 +21,20 @@ cue init
 cue add <filename> "<content>"
 ```
 
-The store is created at `<main-git-root>/.cue/` and is shared by all linked Git
-worktrees. Each worktree retains its own local `.cue/HEAD` selection.
+The central store root is selected by `$CUE_STORE` or defaults to `~/cue`.
+Repositories are partitioned by their origin-derived `<org>/<repo>` scope, so
+linked worktrees and clones of the same origin share context without project-
+local cue files.
 
-Scoped commands resolve their task context in this order:
+Scoped commands resolve their active context in this order:
 
-1. an explicit `--task <slug>` argument;
-2. the `$CUE_TASK` environment variable;
-3. the worktree-local `.cue/HEAD` file;
-4. the global `master` context.
+1. an explicit `--context <slug>` argument;
+2. the `$CUE_CONTEXT` environment variable;
+3. `branch.<current-branch>.cue-context` in local Git configuration;
+4. unset.
 
-Agents should set `$CUE_TASK` for child processes and sessions so they inherit
-the intended task scope without changing the human-owned `.cue/HEAD` file.
+Agents should set `$CUE_CONTEXT` for child processes and sessions so they
+inherit the intended context without changing repository configuration.
 
 Run `cue --help` for the full command reference.
 
