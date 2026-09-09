@@ -53,7 +53,7 @@ impl TestEnv {
             .env("CUE_STORE", &self.cue_store)
             .env_remove("CUE_ARTIFACT_TYPES")
             .env_remove("CUE_IGNORED_TYPES")
-            .env_remove("CUE_TASK")
+            .env_remove("CUE_CONTEXT")
             .current_dir(self.temp_dir.path());
         cmd
     }

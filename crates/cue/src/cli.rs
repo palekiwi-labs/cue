@@ -33,7 +33,7 @@ pub enum Commands {
     Init,
     /// Print the active context
     Status {
-        /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-task
         #[arg(long)]
         context: Option<String>,
         /// Output structured JSON instead of human-readable text
@@ -65,7 +65,7 @@ pub enum Commands {
             value_parser = ["task", "spec", "plan", "note", "trace", "bin", "tmp"]
         )]
         cue_type: String,
-        /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-task
         #[arg(long)]
         context: Option<String>,
         /// Group name for tmp artifacts
@@ -78,7 +78,7 @@ pub enum Commands {
 
     /// List artifacts for a scope
     List {
-        /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-task
         #[arg(long)]
         context: Option<String>,
         /// Filter by artifact type
@@ -208,13 +208,13 @@ pub enum LogCommands {
         /// Read entry data from a JSON file
         #[arg(long, conflicts_with_all = &["title", "trace", "found", "decided", "open"])]
         file: Option<String>,
-        /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-task
         #[arg(long)]
         context: Option<String>,
     },
     /// List log entries
     List {
-        /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-task
         #[arg(long)]
         context: Option<String>,
     },

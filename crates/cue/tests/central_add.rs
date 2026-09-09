@@ -155,7 +155,7 @@ fn add_uses_context_from_environment() -> anyhow::Result<()> {
         .success();
 
     env.command()
-        .env("CUE_TASK", "release")
+        .env("CUE_CONTEXT", "release")
         .args(["add", "publish", "Publish the release", "--type", "task"])
         .assert()
         .success();
@@ -167,6 +167,26 @@ fn add_uses_context_from_environment() -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+#[test]
+fn add_ignores_legacy_task_environment_variable() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .env("CUE_TASK", "release")
+        .args(["add", "publish", "Publish the release", "--type", "task"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "No context selected; pass --context <context>",
+        ));
 }
 
 #[test]
