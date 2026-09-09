@@ -152,6 +152,48 @@ fn log_list_renders_markdown_in_chronological_order() -> anyhow::Result<()> {
 }
 
 #[test]
+fn markdown_log_list_renders_trace_links() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "add",
+            "evidence",
+            "Release evidence",
+            "--type",
+            "trace",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "log",
+            "add",
+            "--context",
+            "release",
+            "--title",
+            "Captured evidence",
+            "--trace",
+            "trace/evidence.md",
+        ])
+        .assert()
+        .success();
+
+    env.command()
+        .args(["log", "list", "--context", "release", "--format", "md"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("[trace](trace/evidence.md)"));
+}
+
+#[test]
 fn log_list_requires_an_active_context() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
