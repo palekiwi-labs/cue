@@ -194,6 +194,24 @@ fn markdown_log_list_renders_trace_links() {
 }
 
 #[test]
+fn markdown_log_list_is_empty_without_entries() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args(["log", "list", "--context", "release", "--format", "md"])
+        .assert()
+        .success()
+        .stdout("")
+        .stderr("");
+}
+
+#[test]
 fn log_list_requires_an_active_context() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
