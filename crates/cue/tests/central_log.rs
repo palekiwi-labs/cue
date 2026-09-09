@@ -244,6 +244,41 @@ fn log_list_limit_keeps_the_newest_json_entries() -> anyhow::Result<()> {
 }
 
 #[test]
+fn log_list_limit_keeps_the_newest_markdown_entries() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    for title in ["First discovery", "Second discovery"] {
+        env.command()
+            .args(["log", "add", "--context", "release", "--title", title])
+            .assert()
+            .success();
+    }
+
+    env.command()
+        .args([
+            "log",
+            "list",
+            "--context",
+            "release",
+            "--format",
+            "md",
+            "--limit",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stdout(
+            predicate::str::contains("Second discovery")
+                .and(predicate::str::contains("First discovery").not()),
+        );
+}
+
+#[test]
 fn log_list_requires_an_active_context() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
