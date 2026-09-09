@@ -93,6 +93,65 @@ fn log_list_outputs_entries_in_chronological_order() -> anyhow::Result<()> {
 }
 
 #[test]
+fn log_list_renders_markdown_in_chronological_order() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    for (title, finding) in [
+        ("First discovery", "First fact"),
+        ("Second discovery", "Second fact"),
+    ] {
+        env.command()
+            .args([
+                "log",
+                "add",
+                "--context",
+                "release",
+                "--title",
+                title,
+                "--found",
+                finding,
+            ])
+            .assert()
+            .success();
+    }
+
+    let json = env
+        .command()
+        .args(["log", "list", "--context", "release"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let entries: serde_json::Value = serde_json::from_slice(&json)?;
+    let first_hash = entries[0]["commit_hash"].as_str().unwrap();
+    let second_hash = entries[1]["commit_hash"].as_str().unwrap();
+
+    env.command()
+        .args([
+            "log",
+            "list",
+            "--context",
+            "release",
+            "--format",
+            "md",
+        ])
+        .assert()
+        .success()
+        .stdout(format!(
+            "## [{first_hash}] First discovery\n\n- **Found:** First fact\n\n## [{second_hash}] Second discovery\n\n- **Found:** Second fact\n\n"
+        ));
+
+    Ok(())
+}
+
+#[test]
 fn log_list_requires_an_active_context() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();

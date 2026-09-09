@@ -1,9 +1,10 @@
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use cuelib::store;
 use serde::{Deserialize, Serialize};
+use std::fmt::Write as _;
 use std::fs::{self, OpenOptions};
-use std::io::Write;
+use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -151,6 +152,62 @@ pub fn list_entries(
                 .with_context(|| format!("Failed to parse log entry {}", path.display()))
         })
         .collect()
+}
+
+pub fn render_markdown(entries: &[StoredLogEntry]) -> String {
+    let mut markdown = String::new();
+
+    for entry in entries {
+        writeln!(
+            &mut markdown,
+            "## [{}] {}",
+            entry.commit_hash,
+            entry.title.trim()
+        )
+        .unwrap();
+
+        if let Some(trace) = &entry.trace {
+            writeln!(&mut markdown, "\n[trace]({})", encode_markdown_path(trace)).unwrap();
+        }
+
+        let has_bullets = entry
+            .found
+            .iter()
+            .chain(entry.decided.iter())
+            .chain(entry.open.iter())
+            .any(|item| !item.trim().is_empty());
+        if has_bullets {
+            writeln!(&mut markdown).unwrap();
+            push_bullets("Found", &entry.found, &mut markdown);
+            push_bullets("Decided", &entry.decided, &mut markdown);
+            push_bullets("Open", &entry.open, &mut markdown);
+        }
+
+        writeln!(&mut markdown).unwrap();
+    }
+
+    markdown
+}
+
+fn push_bullets(label: &str, items: &[String], markdown: &mut String) {
+    for item in items {
+        let item = item.trim();
+        if !item.is_empty() {
+            writeln!(markdown, "- **{label}:** {item}").unwrap();
+        }
+    }
+}
+
+fn encode_markdown_path(path: &str) -> String {
+    let mut encoded = String::with_capacity(path.len());
+    for byte in path.bytes() {
+        if byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'.' | b'/' | b'_' | b'~') {
+            encoded.push(char::from(byte));
+        } else {
+            write!(&mut encoded, "%{byte:02X}").unwrap();
+        }
+    }
+    encoded
 }
 
 fn resolve_trace_reference(

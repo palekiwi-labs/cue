@@ -226,5 +226,14 @@ pub enum LogCommands {
         /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
         #[arg(long)]
         context: Option<String>,
+        /// Output format
+        #[arg(long, value_enum, default_value = "json")]
+        format: LogFormat,
     },
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum LogFormat {
+    Json,
+    Md,
 }
