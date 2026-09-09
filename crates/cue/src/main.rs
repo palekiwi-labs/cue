@@ -107,7 +107,7 @@ fn main() -> anyhow::Result<()> {
             commands::switch::handle(&cwd, target, json)?;
         }
         Commands::Status { task, json } => {
-            commands::status::handle(&cwd, task, json)?;
+            commands::status::handle(&cwd, task, json, store_root)?;
         }
         Commands::Context { command } => {
             commands::context::handle(&cwd, command, store_root)?;

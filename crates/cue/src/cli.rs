@@ -41,9 +41,9 @@ pub enum Commands {
         #[arg(long)]
         json: bool,
     },
-    /// Print the active task context
+    /// Print the active context
     Status {
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
         #[arg(long = "task")]
         task: Option<String>,
         /// Output structured JSON instead of human-readable text
