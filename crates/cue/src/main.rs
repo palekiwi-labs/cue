@@ -74,7 +74,7 @@ fn main() -> anyhow::Result<()> {
             )?;
         }
         Commands::List {
-            task,
+            context,
             cue_type,
             json,
             frontmatter,
@@ -83,7 +83,7 @@ fn main() -> anyhow::Result<()> {
             commands::list::handle(
                 &cwd,
                 commands::list::ListOptions {
-                    scope: task,
+                    scope: context,
                     cue_type,
                     json,
                     frontmatter,

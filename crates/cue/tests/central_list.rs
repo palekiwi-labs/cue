@@ -18,14 +18,14 @@ fn list_reads_artifacts_from_an_explicit_central_context() {
             "Release decisions",
             "--type",
             "note",
-            "--task",
+            "--context",
             "release",
         ])
         .assert()
         .success();
 
     env.command()
-        .args(["list", "--task", "release"])
+        .args(["list", "--context", "release"])
         .assert()
         .success()
         .stdout(predicate::str::contains(

@@ -79,8 +79,8 @@ pub enum Commands {
     /// List artifacts for a scope
     List {
         /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
-        #[arg(long = "task")]
-        task: Option<String>,
+        #[arg(long)]
+        context: Option<String>,
         /// Filter by artifact type
         #[arg(short = 't', long = "type")]
         cue_type: Option<String>,
