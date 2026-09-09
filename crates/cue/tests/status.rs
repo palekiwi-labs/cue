@@ -26,7 +26,7 @@ fn status_json_describes_an_explicit_central_context() -> anyhow::Result<()> {
 
     let output = env
         .command()
-        .args(["status", "--task", "release", "--json"])
+        .args(["status", "--context", "release", "--json"])
         .assert()
         .success()
         .get_output()

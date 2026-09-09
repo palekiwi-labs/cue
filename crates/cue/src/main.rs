@@ -95,8 +95,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Log { command } => {
             commands::log::handle(&cwd, command, store_root)?;
         }
-        Commands::Status { task, json } => {
-            commands::status::handle(&cwd, task, json, store_root)?;
+        Commands::Status { context, json } => {
+            commands::status::handle(&cwd, context, json, store_root)?;
         }
         Commands::Context { command } => {
             commands::context::handle(&cwd, command, store_root)?;

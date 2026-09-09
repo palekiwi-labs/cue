@@ -34,8 +34,8 @@ pub enum Commands {
     /// Print the active context
     Status {
         /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
-        #[arg(long = "task")]
-        task: Option<String>,
+        #[arg(long)]
+        context: Option<String>,
         /// Output structured JSON instead of human-readable text
         #[arg(long)]
         json: bool,
