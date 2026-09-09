@@ -62,3 +62,64 @@ fn switch_requires_an_explicit_branch_in_detached_head() {
             "cannot switch context in detached HEAD; specify target branch with --branch <name>",
         ));
 }
+
+#[test]
+fn unset_clears_the_current_branch_context_idempotently() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    assert!(
+        git(
+            &env,
+            ["config", "--local", "branch.main.cue-context", "release",].as_slice(),
+        )
+        .status
+        .success()
+    );
+
+    for _ in 0..2 {
+        env.command()
+            .args(["context", "unset"])
+            .assert()
+            .success()
+            .stdout("unset context for branch 'main'\n");
+        assert_eq!(branch_context(&env, "main"), None);
+    }
+}
+
+#[test]
+fn unset_clears_an_explicit_branch_from_detached_head() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    assert!(
+        git(
+            &env,
+            ["config", "--local", "branch.future.cue-context", "release",].as_slice(),
+        )
+        .status
+        .success()
+    );
+    assert!(git(&env, &["checkout", "--detach"]).status.success());
+
+    env.command()
+        .args(["context", "unset", "--branch", "future"])
+        .assert()
+        .success()
+        .stdout("unset context for branch 'future'\n");
+
+    assert_eq!(branch_context(&env, "future"), None);
+}
+
+#[test]
+fn unset_requires_an_explicit_branch_in_detached_head() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    assert!(git(&env, &["checkout", "--detach"]).status.success());
+
+    env.command()
+        .args(["context", "unset"])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains(
+            "cannot unset context in detached HEAD; specify target branch with --branch <name>",
+        ));
+}

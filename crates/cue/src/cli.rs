@@ -163,6 +163,12 @@ pub enum ContextCommands {
         #[arg(long)]
         branch: Option<String>,
     },
+    /// Remove a context association from a Git branch
+    Unset {
+        /// Branch to configure; defaults to the current branch
+        #[arg(long)]
+        branch: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]

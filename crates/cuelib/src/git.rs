@@ -56,6 +56,23 @@ pub fn set_branch_context(root: &Path, branch: &str, context: &str) -> anyhow::R
     Ok(())
 }
 
+pub fn unset_branch_context(root: &Path, branch: &str) -> anyhow::Result<()> {
+    run_git(["rev-parse", "--git-dir"], root)?;
+    if get_branch_context(root, branch).is_none() {
+        return Ok(());
+    }
+    run_git(
+        [
+            "config",
+            "--local",
+            "--unset-all",
+            &branch_context_key(branch),
+        ],
+        root,
+    )?;
+    Ok(())
+}
+
 pub fn get_short_head_hash(cwd: &Path) -> anyhow::Result<String> {
     run_git(["rev-parse", "--short", "HEAD"], cwd)
 }

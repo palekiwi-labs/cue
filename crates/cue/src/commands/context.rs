@@ -87,6 +87,7 @@ pub fn handle(
             handle_render(cwd, entries, context, store_root)
         }
         ContextCommands::Switch { slug, branch } => handle_switch(cwd, &slug, branch),
+        ContextCommands::Unset { branch } => handle_unset(cwd, branch),
     }
 }
 
@@ -98,6 +99,17 @@ fn handle_switch(cwd: &Path, slug: &str, branch: Option<String>) -> anyhow::Resu
         )?;
     cuelib::git::set_branch_context(cwd, &branch, slug)?;
     println!("switched branch '{branch}' to context '{slug}'");
+    Ok(())
+}
+
+fn handle_unset(cwd: &Path, branch: Option<String>) -> anyhow::Result<()> {
+    let branch = branch
+        .or_else(|| cuelib::git::current_branch(cwd))
+        .context(
+            "cannot unset context in detached HEAD; specify target branch with --branch <name>",
+        )?;
+    cuelib::git::unset_branch_context(cwd, &branch)?;
+    println!("unset context for branch '{branch}'");
     Ok(())
 }
 
