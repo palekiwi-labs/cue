@@ -214,3 +214,16 @@ fn render_requires_an_active_context() {
             "No context selected; pass --context <context>",
         ));
 }
+
+#[test]
+fn render_rejects_a_nonexistent_context() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .args(["context", "render", "context.md", "--context", "missing"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("Context does not exist: missing"));
+}
