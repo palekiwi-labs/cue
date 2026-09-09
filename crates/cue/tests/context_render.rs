@@ -100,3 +100,27 @@ fn multiple_entries_keep_argument_order() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn missing_entry_is_skipped_silently() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "context",
+            "render",
+            "spec/missing.md",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success()
+        .stdout("")
+        .stderr("");
+}
