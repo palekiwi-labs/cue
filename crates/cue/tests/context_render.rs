@@ -1,5 +1,7 @@
 mod helpers;
 
+use predicates::prelude::*;
+
 #[test]
 fn render_wraps_a_named_artifact_with_its_absolute_path() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
@@ -196,4 +198,19 @@ fn directory_entry_is_skipped() {
         .success()
         .stdout("")
         .stderr("");
+}
+
+#[test]
+fn render_requires_an_active_context() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+
+    env.command()
+        .args(["context", "render", "context.md"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "No context selected; pass --context <context>",
+        ));
 }
