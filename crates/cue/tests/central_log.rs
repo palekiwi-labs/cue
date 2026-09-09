@@ -212,6 +212,38 @@ fn markdown_log_list_is_empty_without_entries() {
 }
 
 #[test]
+fn log_list_limit_keeps_the_newest_json_entries() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    for title in ["First discovery", "Second discovery"] {
+        env.command()
+            .args(["log", "add", "--context", "release", "--title", title])
+            .assert()
+            .success();
+    }
+
+    let output = env
+        .command()
+        .args(["log", "list", "--context", "release", "--limit", "1"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let entries: serde_json::Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(entries.as_array().map(Vec::len), Some(1));
+    assert_eq!(entries[0]["title"], "Second discovery");
+
+    Ok(())
+}
+
+#[test]
 fn log_list_requires_an_active_context() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();

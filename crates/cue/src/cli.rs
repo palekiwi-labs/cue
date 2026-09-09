@@ -229,6 +229,9 @@ pub enum LogCommands {
         /// Output format
         #[arg(long, value_enum, default_value = "json")]
         format: LogFormat,
+        /// Keep only the newest N entries
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
     },
 }
 

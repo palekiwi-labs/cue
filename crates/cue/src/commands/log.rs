@@ -49,11 +49,19 @@ pub fn handle(cwd: &Path, command: LogCommands, store_root: Option<&Path>) -> Re
             eprintln!("Logged");
             println!("{}", rel_path.display());
         }
-        LogCommands::List { context, format } => {
+        LogCommands::List {
+            context,
+            format,
+            limit,
+        } => {
             let entries = log::list_entries(cwd, context.as_deref(), store_root)?;
+            let start = limit
+                .map(|limit| entries.len().saturating_sub(limit))
+                .unwrap_or(0);
+            let entries = &entries[start..];
             match format {
-                LogFormat::Json => println!("{}", serde_json::to_string_pretty(&entries)?),
-                LogFormat::Md => print!("{}", log::render_markdown(&entries)),
+                LogFormat::Json => println!("{}", serde_json::to_string_pretty(entries)?),
+                LogFormat::Md => print!("{}", log::render_markdown(entries)),
             }
         }
     }
