@@ -6,7 +6,7 @@ use crate::git;
 /// Resolve the active context for the central store model.
 ///
 /// Precedence is an explicit context, `$CUE_CONTEXT`, then the current branch's
-/// `branch.<name>.cue-task` Git configuration. Detached HEAD and absent values
+/// `branch.<name>.cue-context` Git configuration. Detached HEAD and absent values
 /// leave the context unset.
 pub fn resolve_active_context(root: &Path, explicit: Option<&str>) -> Result<Option<String>> {
     if let Some(context) = explicit {
@@ -25,7 +25,7 @@ pub fn resolve_active_context(root: &Path, explicit: Option<&str>) -> Result<Opt
     let Some(branch) = git::current_branch(root) else {
         return Ok(None);
     };
-    let Some(context) = git::get_branch_task(root, &branch) else {
+    let Some(context) = git::get_branch_context(root, &branch) else {
         return Ok(None);
     };
     validate_slug(&context)?;

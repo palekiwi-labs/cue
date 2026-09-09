@@ -200,7 +200,7 @@ fn add_uses_context_from_branch_config() -> anyhow::Result<()> {
         .success();
 
     let config = std::process::Command::new("git")
-        .args(["config", "branch.main.cue-task", "release"])
+        .args(["config", "branch.main.cue-context", "release"])
         .current_dir(env.root())
         .output()?;
     assert!(config.status.success());
@@ -215,6 +215,33 @@ fn add_uses_context_from_branch_config() -> anyhow::Result<()> {
             .join("acme/widgets/release/task/publish.md")
             .is_file()
     );
+
+    Ok(())
+}
+
+#[test]
+fn add_ignores_legacy_task_branch_config() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    let config = std::process::Command::new("git")
+        .args(["config", "branch.main.cue-task", "release"])
+        .current_dir(env.root())
+        .output()?;
+    assert!(config.status.success());
+
+    env.command()
+        .args(["add", "publish", "Publish the release", "--type", "task"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "No context selected; pass --context <context>",
+        ));
 
     Ok(())
 }

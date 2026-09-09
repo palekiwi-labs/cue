@@ -30,13 +30,13 @@ pub fn current_branch(cwd: &Path) -> Option<String> {
 
 /// Dotted branch names are safe: the config subsection is opaque up to
 /// the last dot.
-pub fn branch_task_key(branch: &str) -> String {
-    format!("branch.{branch}.cue-task")
+pub fn branch_context_key(branch: &str) -> String {
+    format!("branch.{branch}.cue-context")
 }
 
-pub fn get_branch_task(root: &Path, branch: &str) -> Option<String> {
+pub fn get_branch_context(root: &Path, branch: &str) -> Option<String> {
     let value = run_git(
-        ["config", "--local", "--get", &branch_task_key(branch)],
+        ["config", "--local", "--get", &branch_context_key(branch)],
         root,
     )
     .ok()?;
