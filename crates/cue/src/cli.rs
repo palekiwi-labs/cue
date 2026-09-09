@@ -31,16 +31,6 @@ pub struct Cli {
 pub enum Commands {
     /// Initialize agent artifacts directory structure
     Init,
-    /// Switch the active task context
-    #[command(arg_required_else_help = false)]
-    Switch {
-        /// Task slug or path to a task card file; omit to restore the
-        /// task associated with the current branch
-        target: Option<String>,
-        /// Output structured JSON instead of human-readable text
-        #[arg(long)]
-        json: bool,
-    },
     /// Print the active context
     Status {
         /// Set context; overrides $CUE_TASK and branch.<name>.cue-task

@@ -6,4 +6,3 @@ pub mod list;
 pub mod log;
 pub mod project;
 pub mod status;
-pub mod switch;
