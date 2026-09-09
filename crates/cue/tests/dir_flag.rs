@@ -1,144 +1,191 @@
 mod helpers;
 
-// Integration tests for the global --dir / -C flag.
-//
-// The flag overrides the process CWD for all subcommands so they
-// operate on the project at <PATH> rather than the directory from
-// which `cue` was invoked.
+use predicates::prelude::*;
+use serde_json::Value;
+use std::path::Path;
+use std::process::Command;
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
+const CWD_ORIGIN: &str = "https://github.com/acme/cwd.git";
+const TARGET_ORIGIN: &str = "https://github.com/acme/target.git";
 
-/// Set up a git repo with a `.test-mem/` cue directory and one artifact.
-fn setup_repo_with_artifact(env: &helpers::TestEnv) {
-    helpers::setup_git_repo(env.root());
-
-    env.command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init")
-        .assert()
-        .success();
-
-    env.command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("add")
-        .arg("--root")
-        .arg("index.md")
-        .arg("artifact in target project")
-        .assert()
-        .success();
+fn setup_repo(env: &helpers::TestEnv, origin: &str) {
+    env.setup_repo_with_origin();
+    let output = Command::new("git")
+        .args(["remote", "set-url", "origin", origin])
+        .current_dir(env.root())
+        .output()
+        .expect("failed to set fixture origin");
+    assert!(
+        output.status.success(),
+        "failed to set fixture origin: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
-/// Set up a git repo with a `.test-mem/` cue directory but no artifacts.
-fn setup_repo_empty(env: &helpers::TestEnv) {
-    helpers::setup_git_repo(env.root());
-
-    env.command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("init")
-        .assert()
-        .success();
-}
-
-// ── Tests ─────────────────────────────────────────────────────────────────────
-
-/// `cue --dir <path> list` lists artifacts in the project at <path>,
-/// not in the CWD project.
-#[test]
-fn test_dir_flag_targets_given_path() -> anyhow::Result<()> {
-    let cwd_env = helpers::TestEnv::new();
-    setup_repo_empty(&cwd_env);
-
-    let target_env = helpers::TestEnv::new();
-    setup_repo_with_artifact(&target_env);
-
-    // Without --dir: lists from CWD project — should be empty.
-    let out_without = cwd_env
+fn status_scope(
+    cwd_env: &helpers::TestEnv,
+    store: &Path,
+    dir_flag: &str,
+    target: &Path,
+) -> anyhow::Result<String> {
+    let output = cwd_env
         .command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("list")
+        .env("CUE_STORE", store)
+        .arg(dir_flag)
+        .arg(target)
+        .args(["status", "--json"])
         .assert()
         .success()
         .get_output()
         .stdout
         .clone();
-    assert!(out_without.is_empty(), "CWD project has no artifacts");
-
-    // With --dir: lists from target project — should contain the artifact.
-    let out_with = String::from_utf8(
-        cwd_env
-            .command()
-            .env("CUE_BRANCH_NAME", "test-mem")
-            .env("CUE_DIR_NAME", ".test-mem")
-            .arg("--dir")
-            .arg(target_env.root())
-            .arg("list")
-            .assert()
-            .success()
-            .get_output()
-            .stdout
-            .clone(),
-    )?;
-    assert!(
-        out_with.contains("index.md"),
-        "should list artifact from target project"
-    );
-
-    Ok(())
+    let status: Value = serde_json::from_slice(&output)?;
+    Ok(status["scope"]
+        .as_str()
+        .expect("status should contain a repository scope")
+        .to_owned())
 }
 
-/// `-C` short alias behaves identically to `--dir`.
 #[test]
-fn test_short_alias_c() -> anyhow::Result<()> {
+fn dir_flag_targets_given_repository() -> anyhow::Result<()> {
     let cwd_env = helpers::TestEnv::new();
-    setup_repo_empty(&cwd_env);
-
+    setup_repo(&cwd_env, CWD_ORIGIN);
     let target_env = helpers::TestEnv::new();
-    setup_repo_with_artifact(&target_env);
+    setup_repo(&target_env, TARGET_ORIGIN);
 
-    let out = String::from_utf8(
-        cwd_env
-            .command()
-            .env("CUE_BRANCH_NAME", "test-mem")
-            .env("CUE_DIR_NAME", ".test-mem")
-            .arg("-C")
-            .arg(target_env.root())
-            .arg("list")
-            .assert()
-            .success()
-            .get_output()
-            .stdout
-            .clone(),
-    )?;
-    assert!(
-        out.contains("index.md"),
-        "-C should list artifact from target project"
+    assert_eq!(
+        status_scope(&cwd_env, cwd_env.cue_store(), "--dir", target_env.root())?,
+        "acme/target"
     );
 
     Ok(())
 }
 
-/// A path that does not exist produces a clear error, not a panic.
 #[test]
-fn test_dir_flag_nonexistent_path_errors() {
+fn short_alias_targets_given_repository() -> anyhow::Result<()> {
+    let cwd_env = helpers::TestEnv::new();
+    setup_repo(&cwd_env, CWD_ORIGIN);
+    let target_env = helpers::TestEnv::new();
+    setup_repo(&target_env, TARGET_ORIGIN);
+
+    assert_eq!(
+        status_scope(&cwd_env, cwd_env.cue_store(), "-C", target_env.root())?,
+        "acme/target"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn dir_flag_accepts_a_relative_path() -> anyhow::Result<()> {
+    let cwd_env = helpers::TestEnv::new();
+    setup_repo(&cwd_env, CWD_ORIGIN);
+    let target_env = helpers::TestEnv::new();
+    setup_repo(&target_env, TARGET_ORIGIN);
+
+    let target_root = target_env.root().canonicalize()?;
+    let relative = Path::new("..").join(
+        target_root
+            .file_name()
+            .expect("temporary directory should have a name"),
+    );
+
+    assert_eq!(
+        status_scope(&cwd_env, cwd_env.cue_store(), "--dir", &relative)?,
+        "acme/target"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn dir_flag_is_accepted_after_the_subcommand() -> anyhow::Result<()> {
+    let cwd_env = helpers::TestEnv::new();
+    setup_repo(&cwd_env, CWD_ORIGIN);
+    let target_env = helpers::TestEnv::new();
+    setup_repo(&target_env, TARGET_ORIGIN);
+
+    let output = cwd_env
+        .command()
+        .env("CUE_STORE", cwd_env.cue_store())
+        .args(["status", "--json", "--dir"])
+        .arg(target_env.root())
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let status: Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(status["scope"], "acme/target");
+
+    Ok(())
+}
+
+#[test]
+fn dir_flag_add_writes_to_target_repository_scope() {
+    let cwd_env = helpers::TestEnv::new();
+    setup_repo(&cwd_env, CWD_ORIGIN);
+    let target_env = helpers::TestEnv::new();
+    setup_repo(&target_env, TARGET_ORIGIN);
+    let store = cwd_env.cue_store();
+
+    cwd_env
+        .command()
+        .env("CUE_STORE", store)
+        .arg("--dir")
+        .arg(target_env.root())
+        .arg("init")
+        .assert()
+        .success();
+    cwd_env
+        .command()
+        .env("CUE_STORE", store)
+        .arg("--dir")
+        .arg(target_env.root())
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    cwd_env
+        .command()
+        .env("CUE_STORE", store)
+        .arg("--dir")
+        .arg(target_env.root())
+        .args([
+            "add",
+            "decisions",
+            "Target repository decisions",
+            "--type",
+            "note",
+            "--task",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        store
+            .join("acme/target/release/note/decisions.md")
+            .is_file()
+    );
+    assert!(!store.join("acme/cwd/release").exists());
+}
+
+#[test]
+fn dir_flag_rejects_a_nonexistent_path() {
     let env = helpers::TestEnv::new();
 
     env.command()
         .arg("--dir")
         .arg("/this/path/does/not/exist/abc123")
-        .arg("list")
+        .arg("status")
         .assert()
         .failure()
-        .stderr(predicates::str::contains("does not exist"));
+        .stderr(predicate::str::contains("does not exist"));
 }
 
-/// A path that points to a file (not a directory) produces a clear
-/// error, not a panic.
 #[test]
-fn test_dir_flag_file_path_errors() -> anyhow::Result<()> {
+fn dir_flag_rejects_a_file_path() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     let file_path = env.root().join("not_a_dir.txt");
     std::fs::write(&file_path, "I am a file")?;
@@ -146,156 +193,22 @@ fn test_dir_flag_file_path_errors() -> anyhow::Result<()> {
     env.command()
         .arg("--dir")
         .arg(&file_path)
-        .arg("list")
+        .arg("status")
         .assert()
         .failure()
-        .stderr(predicates::str::contains("not a directory"));
+        .stderr(predicate::str::contains("not a directory"));
 
     Ok(())
 }
 
-/// A relative path (e.g. `../other`) is resolved correctly.
 #[test]
-fn test_dir_flag_relative_path() -> anyhow::Result<()> {
-    let cwd_env = helpers::TestEnv::new();
-    setup_repo_empty(&cwd_env);
-
-    let target_env = helpers::TestEnv::new();
-    setup_repo_with_artifact(&target_env);
-
-    // Build a relative path from cwd_env to target_env using ".."
-    // Both are in temp dirs; construct a relative path via the common
-    // tmpfs parent. We use "../<target_basename>" as a pragmatic
-    // relative reference that resolves to the target root.
-    let cwd_root = cwd_env.root().canonicalize()?;
-    let target_root = target_env.root().canonicalize()?;
-    let target_name = target_root.file_name().unwrap();
-    let relative = std::path::PathBuf::from("..").join(target_name);
-
-    let out = String::from_utf8(
-        cwd_env
-            .command()
-            .env("CUE_BRANCH_NAME", "test-mem")
-            .env("CUE_DIR_NAME", ".test-mem")
-            .current_dir(&cwd_root)
-            .arg("--dir")
-            .arg(&relative)
-            .arg("list")
-            .assert()
-            .success()
-            .get_output()
-            .stdout
-            .clone(),
-    )?;
-    assert!(
-        out.contains("index.md"),
-        "relative --dir should resolve to target project"
-    );
-
-    Ok(())
-}
-
-/// A valid directory that is not a git repo produces a git error
-/// downstream (not an unhandled panic). This documents the UX.
-#[test]
-fn test_dir_flag_non_git_directory_errors() -> anyhow::Result<()> {
+fn dir_flag_reports_a_non_git_directory_error() {
     let env = helpers::TestEnv::new();
-    // env.root() is a plain temp dir — not a git repo.
+
     env.command()
         .arg("--dir")
         .arg(env.root())
-        .arg("list")
+        .arg("status")
         .assert()
         .failure();
-
-    Ok(())
-}
-
-/// The flag is accepted *after* the subcommand (guards `global = true`).
-#[test]
-fn test_dir_flag_accepted_after_subcommand() -> anyhow::Result<()> {
-    let cwd_env = helpers::TestEnv::new();
-    setup_repo_empty(&cwd_env);
-
-    let target_env = helpers::TestEnv::new();
-    setup_repo_with_artifact(&target_env);
-
-    let out = String::from_utf8(
-        cwd_env
-            .command()
-            .env("CUE_BRANCH_NAME", "test-mem")
-            .env("CUE_DIR_NAME", ".test-mem")
-            .arg("list")
-            .arg("--dir")
-            .arg(target_env.root())
-            .assert()
-            .success()
-            .get_output()
-            .stdout
-            .clone(),
-    )?;
-    assert!(
-        out.contains("index.md"),
-        "--dir after subcommand should still target the given project"
-    );
-
-    Ok(())
-}
-
-/// `cue --dir <path> add` writes the artifact into the target
-/// project, not the CWD project.
-#[test]
-fn test_dir_flag_add_writes_to_target() -> anyhow::Result<()> {
-    let cwd_env = helpers::TestEnv::new();
-    setup_repo_empty(&cwd_env);
-
-    let target_env = helpers::TestEnv::new();
-    setup_repo_empty(&target_env);
-
-    // Add an artifact into target via --dir.
-    cwd_env
-        .command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("--dir")
-        .arg(target_env.root())
-        .arg("add")
-        .arg("--root")
-        .arg("remote.md")
-        .arg("written via --dir")
-        .assert()
-        .success();
-
-    // Listing from cwd should be empty.
-    let cwd_out = cwd_env
-        .command()
-        .env("CUE_BRANCH_NAME", "test-mem")
-        .env("CUE_DIR_NAME", ".test-mem")
-        .arg("list")
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    assert!(cwd_out.is_empty(), "CWD project should have no artifacts");
-
-    // Listing from target should show the artifact.
-    let target_out = String::from_utf8(
-        target_env
-            .command()
-            .env("CUE_BRANCH_NAME", "test-mem")
-            .env("CUE_DIR_NAME", ".test-mem")
-            .arg("list")
-            .assert()
-            .success()
-            .get_output()
-            .stdout
-            .clone(),
-    )?;
-    assert!(
-        target_out.contains("remote.md"),
-        "artifact should land in the target project"
-    );
-
-    Ok(())
 }
