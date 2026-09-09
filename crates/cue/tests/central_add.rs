@@ -42,7 +42,7 @@ fn add_creates_a_task_inside_an_explicit_context() -> anyhow::Result<()> {
             "Publish the release",
             "--type",
             "task",
-            "--task",
+            "--context",
             "release",
         ])
         .assert()

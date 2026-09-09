@@ -66,8 +66,8 @@ pub enum Commands {
         )]
         cue_type: String,
         /// Set context; overrides $CUE_TASK and branch.<name>.cue-task
-        #[arg(long = "task")]
-        task: Option<String>,
+        #[arg(long)]
+        context: Option<String>,
         /// Group name for tmp artifacts
         #[arg(long, value_name = "NAME")]
         group: Option<String>,
