@@ -155,6 +155,14 @@ pub enum ContextCommands {
         #[arg(long)]
         context: Option<String>,
     },
+    /// Associate a context with a Git branch
+    Switch {
+        /// Context slug to associate with the branch
+        slug: String,
+        /// Branch to configure; defaults to the current branch
+        #[arg(long)]
+        branch: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]

@@ -48,6 +48,14 @@ pub fn get_branch_context(root: &Path, branch: &str) -> Option<String> {
     }
 }
 
+pub fn set_branch_context(root: &Path, branch: &str, context: &str) -> anyhow::Result<()> {
+    run_git(
+        ["config", "--local", &branch_context_key(branch), context],
+        root,
+    )?;
+    Ok(())
+}
+
 pub fn get_short_head_hash(cwd: &Path) -> anyhow::Result<String> {
     run_git(["rev-parse", "--short", "HEAD"], cwd)
 }
