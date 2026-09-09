@@ -146,6 +146,15 @@ pub enum ContextCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Concatenate context artifacts for injection into a session
+    Render {
+        /// Artifact paths relative to the context directory
+        #[arg(value_name = "ENTRY")]
+        entries: Vec<String>,
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
+        #[arg(long)]
+        context: Option<String>,
+    },
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]

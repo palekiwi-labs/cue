@@ -4,6 +4,7 @@ mod commands;
 mod git;
 mod list;
 mod log;
+mod render;
 
 use crate::add::resolve_clipboard;
 use crate::cli::{Cli, Commands};
