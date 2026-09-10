@@ -6,7 +6,6 @@ use predicates::prelude::*;
 fn render_wraps_a_named_artifact_with_its_absolute_path() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -50,7 +49,6 @@ fn render_wraps_a_named_artifact_with_its_absolute_path() -> anyhow::Result<()> 
 fn multiple_entries_keep_argument_order() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -106,7 +104,6 @@ fn multiple_entries_keep_argument_order() -> anyhow::Result<()> {
 fn missing_entry_is_skipped_silently() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -124,7 +121,6 @@ fn missing_entry_is_skipped_silently() {
 fn repeated_entry_is_emitted_once() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -166,7 +162,6 @@ fn repeated_entry_is_emitted_once() -> anyhow::Result<()> {
 fn directory_entry_is_skipped() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -196,7 +191,6 @@ fn directory_entry_is_skipped() {
 fn render_requires_an_active_context() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
 
     env.command()
         .args(["render", "context.md"])
@@ -211,7 +205,6 @@ fn render_requires_an_active_context() {
 fn render_rejects_a_nonexistent_context() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
 
     env.command()
         .args(["render", "context.md", "--context", "missing"])
@@ -224,7 +217,6 @@ fn render_rejects_a_nonexistent_context() {
 fn context_document_renders_as_an_entry() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -256,7 +248,6 @@ fn context_document_renders_as_an_entry() -> anyhow::Result<()> {
 fn stdin_entries_render_at_the_marker_position() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -317,7 +308,6 @@ fn stdin_entries_render_at_the_marker_position() -> anyhow::Result<()> {
 fn absolute_stdin_entries_do_not_require_an_active_context() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -342,7 +332,6 @@ fn absolute_stdin_entries_do_not_require_an_active_context() -> anyhow::Result<(
 fn filtered_list_output_pipes_into_render_after_named_anchors() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()

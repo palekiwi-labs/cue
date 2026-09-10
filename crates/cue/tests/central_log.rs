@@ -6,7 +6,6 @@ use predicates::prelude::*;
 fn log_add_writes_a_structured_json_entry() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -61,7 +60,6 @@ fn log_add_writes_a_structured_json_entry() -> anyhow::Result<()> {
 fn log_list_outputs_entries_in_chronological_order() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -96,7 +94,6 @@ fn log_list_outputs_entries_in_chronological_order() -> anyhow::Result<()> {
 fn log_list_renders_markdown_in_chronological_order() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -155,7 +152,6 @@ fn log_list_renders_markdown_in_chronological_order() -> anyhow::Result<()> {
 fn markdown_log_list_renders_trace_links() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -197,7 +193,6 @@ fn markdown_log_list_renders_trace_links() {
 fn markdown_log_list_is_empty_without_entries() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -215,7 +210,6 @@ fn markdown_log_list_is_empty_without_entries() {
 fn log_list_limit_keeps_the_newest_json_entries() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -247,7 +241,6 @@ fn log_list_limit_keeps_the_newest_json_entries() -> anyhow::Result<()> {
 fn log_list_limit_keeps_the_newest_markdown_entries() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -282,7 +275,6 @@ fn log_list_limit_keeps_the_newest_markdown_entries() {
 fn log_list_requires_an_active_context() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
 
     env.command()
         .args(["log", "list"])
@@ -302,7 +294,6 @@ fn log_add_requires_a_repository_revision() -> anyhow::Result<()> {
         .output()?;
     assert!(init.status.success());
     helpers::setup_origin(env.root(), helpers::TEST_ORIGIN_URL);
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()

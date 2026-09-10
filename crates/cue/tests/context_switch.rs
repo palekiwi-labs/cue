@@ -135,7 +135,6 @@ fn unset_requires_an_explicit_branch_in_detached_head() {
 fn switched_context_is_observed_by_status() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()

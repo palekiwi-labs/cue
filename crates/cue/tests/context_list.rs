@@ -6,7 +6,6 @@ use serde_json::Value;
 fn context_list_json_reports_central_context_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args([
             "context",
@@ -54,10 +53,31 @@ fn context_list_json_reports_central_context_metadata() -> anyhow::Result<()> {
 }
 
 #[test]
+fn context_list_succeeds_with_no_contexts_when_repository_scope_is_missing() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+
+    assert!(!env.cue_store().join("acme/widgets").exists());
+
+    env.command()
+        .args(["context", "list"])
+        .assert()
+        .success()
+        .stdout("");
+
+    env.command()
+        .args(["context", "list", "--json"])
+        .assert()
+        .success()
+        .stdout("[]\n");
+
+    Ok(())
+}
+
+#[test]
 fn context_list_prints_only_contexts_in_slug_order() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "zeta"])
         .assert()

@@ -14,11 +14,11 @@ nix profile add github:palekiwi-labs/cue
 
 ## Usage
 
-Initialize artifact storage in the current project, then add artifacts:
+Create a context for the current project, then add artifacts to it:
 
 ```
-cue init
-cue add <filename> "<content>"
+cue context create <slug>
+cue add <filename> "<content>" --context <slug>
 ```
 
 The central store root is selected by `$CUE_STORE` or defaults to `~/cue`.

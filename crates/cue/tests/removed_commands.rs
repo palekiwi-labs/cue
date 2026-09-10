@@ -3,6 +3,17 @@ mod helpers;
 use predicates::prelude::*;
 
 #[test]
+fn init_command_is_removed() {
+    let env = helpers::TestEnv::new();
+
+    env.command()
+        .arg("init")
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unrecognized subcommand 'init'"));
+}
+
+#[test]
 fn switch_command_is_removed() {
     let env = helpers::TestEnv::new();
 

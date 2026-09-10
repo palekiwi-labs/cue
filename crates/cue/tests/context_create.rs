@@ -38,12 +38,6 @@ fn context_create_honors_global_store_flag() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
     let flag_store = env.root().join("flag-home");
-    env.command()
-        .args(["--store"])
-        .arg(&flag_store)
-        .arg("init")
-        .assert()
-        .success();
 
     env.command()
         .args(["--store"])
@@ -65,7 +59,6 @@ fn context_create_honors_global_store_flag() -> anyhow::Result<()> {
 fn context_create_accepts_a_context_kind() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
 
     env.command()
         .args([
@@ -91,7 +84,6 @@ fn context_create_accepts_a_context_kind() -> anyhow::Result<()> {
 fn context_create_accepts_an_advisory_mode() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
 
     env.command()
         .args(["context", "create", "implementation", "--mode", "build"])
@@ -111,7 +103,6 @@ fn context_create_accepts_an_advisory_mode() -> anyhow::Result<()> {
 fn context_create_accepts_presentation_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
 
     env.command()
         .args([
@@ -138,7 +129,6 @@ fn context_create_accepts_presentation_metadata() -> anyhow::Result<()> {
 fn context_create_accepts_relationship_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
 
     env.command()
         .args([

@@ -29,8 +29,6 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Initialize agent artifacts directory structure
-    Init,
     /// Print the active context
     Status {
         /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context

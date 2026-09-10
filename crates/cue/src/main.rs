@@ -29,9 +29,6 @@ fn main() -> anyhow::Result<()> {
     let store_root = cli.store.as_deref();
 
     match cli.command {
-        Commands::Init => {
-            commands::init::handle(&cwd, store_root)?;
-        }
         Commands::Add {
             filename,
             content,

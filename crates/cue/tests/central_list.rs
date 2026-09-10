@@ -6,7 +6,6 @@ use predicates::prelude::*;
 fn list_reads_artifacts_from_an_explicit_central_context() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -40,7 +39,6 @@ fn list_reads_artifacts_from_an_explicit_central_context() {
 fn list_without_an_active_context_reads_the_repository_scope() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
 
     for (context, artifact) in [("release", "decisions"), ("hotfix", "incident")] {
         env.command()
@@ -73,7 +71,6 @@ fn list_without_an_active_context_reads_the_repository_scope() {
 fn list_only_returns_supported_artifact_types() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -127,7 +124,6 @@ fn list_only_returns_supported_artifact_types() -> anyhow::Result<()> {
 fn list_includes_tmp_as_a_supported_artifact_type() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -173,7 +169,6 @@ fn list_includes_tmp_as_a_supported_artifact_type() -> anyhow::Result<()> {
 fn list_emits_central_artifact_metadata_as_json() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -218,7 +213,6 @@ fn list_emits_central_artifact_metadata_as_json() -> anyhow::Result<()> {
 fn list_reads_top_level_json_artifact_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -260,7 +254,6 @@ fn list_reads_top_level_json_artifact_metadata() -> anyhow::Result<()> {
 fn list_uses_the_branch_configured_active_context() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
 
     for (context, artifact) in [("release", "decisions"), ("hotfix", "incident")] {
         env.command()
@@ -301,7 +294,6 @@ fn list_uses_the_branch_configured_active_context() -> anyhow::Result<()> {
 fn list_matches_any_repeated_artifact_type() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()

@@ -116,45 +116,43 @@ fn target_branch(cwd: &Path, branch: Option<String>, action: &str) -> anyhow::Re
 fn handle_list(cwd: &Path, json: bool, store_root: Option<&Path>) -> anyhow::Result<()> {
     let scope = store::repository_scope(cwd)?;
     let repository_dir = store::root(store_root)?.join(&scope);
-    if !repository_dir.is_dir() {
-        anyhow::bail!(
-            "no cue store at {}; run `cue init` to create it",
-            repository_dir.display()
-        );
-    }
 
     let mut contexts = Vec::new();
-    for entry in std::fs::read_dir(&repository_dir)? {
-        let context_dir = entry?.path();
-        let context_path = context_dir.join("context.md");
-        if !context_path.is_file() {
-            continue;
+    if repository_dir.is_dir() {
+        for entry in std::fs::read_dir(&repository_dir)? {
+            let context_dir = entry?.path();
+            let context_path = context_dir.join("context.md");
+            if !context_path.is_file() {
+                continue;
+            }
+            let context = context_dir
+                .file_name()
+                .and_then(|name| name.to_str())
+                .context("context directory name is not valid UTF-8")?
+                .to_string();
+            let frontmatter = extract_frontmatter_yaml(&context_path).with_context(|| {
+                format!(
+                    "could not read context metadata at {}",
+                    context_path.display()
+                )
+            })?;
+            let metadata: StoredContextMetadata =
+                serde_yaml::from_str(&frontmatter).with_context(|| {
+                    format!("invalid context metadata at {}", context_path.display())
+                })?;
+            contexts.push(ContextListEntry {
+                context,
+                scope: scope.display().to_string(),
+                title: metadata.title,
+                kind: metadata.kind,
+                mode: metadata.mode,
+                description: metadata.description,
+                created_at: metadata.created_at,
+                parent: metadata.parent,
+                refs: metadata.refs,
+                path: context_path,
+            });
         }
-        let context = context_dir
-            .file_name()
-            .and_then(|name| name.to_str())
-            .context("context directory name is not valid UTF-8")?
-            .to_string();
-        let frontmatter = extract_frontmatter_yaml(&context_path).with_context(|| {
-            format!(
-                "could not read context metadata at {}",
-                context_path.display()
-            )
-        })?;
-        let metadata: StoredContextMetadata = serde_yaml::from_str(&frontmatter)
-            .with_context(|| format!("invalid context metadata at {}", context_path.display()))?;
-        contexts.push(ContextListEntry {
-            context,
-            scope: scope.display().to_string(),
-            title: metadata.title,
-            kind: metadata.kind,
-            mode: metadata.mode,
-            description: metadata.description,
-            created_at: metadata.created_at,
-            parent: metadata.parent,
-            refs: metadata.refs,
-            path: context_path,
-        });
     }
     contexts.sort_by(|left, right| left.context.cmp(&right.context));
 

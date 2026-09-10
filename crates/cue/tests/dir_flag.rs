@@ -135,14 +135,6 @@ fn dir_flag_add_writes_to_target_repository_scope() {
         .env("CUE_STORE", store)
         .arg("--dir")
         .arg(target_env.root())
-        .arg("init")
-        .assert()
-        .success();
-    cwd_env
-        .command()
-        .env("CUE_STORE", store)
-        .arg("--dir")
-        .arg(target_env.root())
         .args(["context", "create", "release"])
         .assert()
         .success();

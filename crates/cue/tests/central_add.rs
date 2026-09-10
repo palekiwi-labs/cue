@@ -29,7 +29,6 @@ fn head_hash(repo: &Path) -> anyhow::Result<String> {
 fn add_creates_a_task_inside_an_explicit_context() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -70,7 +69,6 @@ fn add_creates_a_task_inside_an_explicit_context() -> anyhow::Result<()> {
 fn add_honors_explicit_task_status_and_priority() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -106,7 +104,6 @@ fn add_honors_explicit_task_status_and_priority() -> anyhow::Result<()> {
 fn add_preserves_conventional_task_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -148,7 +145,6 @@ fn add_preserves_conventional_task_metadata() -> anyhow::Result<()> {
 fn add_uses_context_from_environment() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -173,7 +169,6 @@ fn add_uses_context_from_environment() -> anyhow::Result<()> {
 fn add_ignores_legacy_task_environment_variable() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -193,7 +188,6 @@ fn add_ignores_legacy_task_environment_variable() {
 fn add_uses_context_from_branch_config() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -223,7 +217,6 @@ fn add_uses_context_from_branch_config() -> anyhow::Result<()> {
 fn add_ignores_legacy_task_branch_config() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -250,7 +243,6 @@ fn add_ignores_legacy_task_branch_config() -> anyhow::Result<()> {
 fn environment_context_overrides_branch_config() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     for context in ["release", "hotfix"] {
         env.command()
             .args(["context", "create", context])
@@ -288,7 +280,6 @@ fn environment_context_overrides_branch_config() -> anyhow::Result<()> {
 fn add_rejects_write_without_active_context() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
 
     env.command()
         .args(["add", "publish", "Publish the release", "--type", "task"])
@@ -303,7 +294,6 @@ fn add_rejects_write_without_active_context() {
 fn add_creates_named_spec_with_structured_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -345,7 +335,6 @@ fn add_creates_named_spec_with_structured_metadata() -> anyhow::Result<()> {
 fn add_creates_each_named_markdown_artifact_type() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -388,7 +377,6 @@ fn add_creates_each_named_markdown_artifact_type() -> anyhow::Result<()> {
 fn add_creates_markdown_artifacts_in_nested_directories() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -419,7 +407,6 @@ fn add_creates_markdown_artifacts_in_nested_directories() -> anyhow::Result<()> 
 fn add_stamps_trace_revision_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -453,7 +440,6 @@ fn add_stamps_trace_revision_metadata() -> anyhow::Result<()> {
 fn add_keeps_revision_metadata_off_other_markdown_types() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -494,7 +480,6 @@ fn add_keeps_revision_metadata_off_other_markdown_types() -> anyhow::Result<()> 
 fn add_honors_explicit_trace_revision_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -532,7 +517,6 @@ fn add_honors_explicit_trace_revision_metadata() -> anyhow::Result<()> {
 fn add_creates_json_bin_with_top_level_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -568,7 +552,6 @@ fn add_creates_json_bin_with_top_level_metadata() -> anyhow::Result<()> {
 fn add_creates_json_artifacts_in_nested_directories() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -600,7 +583,6 @@ fn add_creates_json_artifacts_in_nested_directories() -> anyhow::Result<()> {
 fn add_creates_a_named_tmp_group_for_the_current_revision() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -639,7 +621,6 @@ fn add_creates_a_named_tmp_group_for_the_current_revision() -> anyhow::Result<()
 fn add_reuses_a_tmp_group_for_the_same_revision() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -675,7 +656,6 @@ fn add_reuses_a_tmp_group_for_the_same_revision() -> anyhow::Result<()> {
 fn add_separates_tmp_groups_by_name() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -714,7 +694,6 @@ fn add_separates_tmp_groups_by_name() -> anyhow::Result<()> {
 fn add_creates_a_new_tmp_group_for_a_new_revision() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args(["context", "create", "release"])
         .assert()

@@ -6,7 +6,6 @@ use serde_json::Value;
 fn status_json_describes_an_explicit_central_context() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
     env.command()
         .args([
             "context",
@@ -49,7 +48,6 @@ fn status_json_describes_an_explicit_central_context() -> anyhow::Result<()> {
 fn status_json_reports_an_unset_context() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
 
     let output = env
         .command()
