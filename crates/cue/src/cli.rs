@@ -81,9 +81,9 @@ pub enum Commands {
         /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
         #[arg(long)]
         context: Option<String>,
-        /// Filter by artifact type
+        /// Filter by artifact type; repeat to match any selected type
         #[arg(short = 't', long = "type")]
-        cue_type: Option<String>,
+        cue_types: Vec<String>,
         /// Output as JSON
         #[arg(short = 'j', long)]
         json: bool,

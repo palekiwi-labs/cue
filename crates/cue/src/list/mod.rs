@@ -116,7 +116,7 @@ pub struct CueFile {
 
 pub struct ListOptions {
     pub scope: Option<String>,
-    pub cue_type: Option<String>,
+    pub cue_types: Vec<String>,
     pub json: bool,
     pub frontmatter: bool,
     pub store_root: Option<std::path::PathBuf>,
@@ -126,7 +126,7 @@ pub struct ListOptions {
 pub fn list(root: &Path, opts: ListOptions) -> Result<Vec<(PathBuf, Option<serde_json::Value>)>> {
     let ListOptions {
         scope,
-        cue_type,
+        cue_types,
         frontmatter,
         store_root,
         filters,
@@ -149,7 +149,7 @@ pub fn list(root: &Path, opts: ListOptions) -> Result<Vec<(PathBuf, Option<serde
     // 4. Filter by supported artifact structure and requested type
     let valid_paths = paths
         .into_iter()
-        .filter(|path| is_valid_cue_file(path, &store_dir, cue_type.as_deref()));
+        .filter(|path| is_valid_cue_file(path, &store_dir, &cue_types));
 
     // 5. Parse frontmatter once (if needed), apply filters, carry value forward.
     let filtered: Vec<(PathBuf, Option<serde_json::Value>)> = valid_paths
@@ -179,7 +179,7 @@ fn resolve_central_scan_paths(store_dir: &Path, context: Option<&str>) -> Result
     collect_files(&scan_dir)
 }
 
-pub fn is_valid_cue_file(path: &Path, cue_path: &Path, cue_type: Option<&str>) -> bool {
+pub fn is_valid_cue_file(path: &Path, cue_path: &Path, cue_types: &[String]) -> bool {
     let Ok(rel_to_mem) = path.strip_prefix(cue_path) else {
         return false;
     };
@@ -199,8 +199,10 @@ pub fn is_valid_cue_file(path: &Path, cue_path: &Path, cue_type: Option<&str>) -
         return false;
     }
 
-    if let Some(requested) = cue_type
-        && category != requested
+    if !cue_types.is_empty()
+        && !cue_types
+            .iter()
+            .any(|requested| category == requested.as_str())
     {
         return false;
     }

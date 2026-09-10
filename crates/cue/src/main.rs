@@ -76,7 +76,7 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::List {
             context,
-            cue_type,
+            cue_types,
             json,
             frontmatter,
             filters,
@@ -85,7 +85,7 @@ fn main() -> anyhow::Result<()> {
                 &cwd,
                 commands::list::ListOptions {
                     scope: context,
-                    cue_type,
+                    cue_types,
                     json,
                     frontmatter,
                     store_root: store_root.map(std::path::Path::to_path_buf),

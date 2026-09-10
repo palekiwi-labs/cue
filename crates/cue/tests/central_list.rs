@@ -296,3 +296,53 @@ fn list_uses_the_branch_configured_active_context() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn list_matches_any_repeated_artifact_type() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    for (name, artifact_type) in [("steps", "plan"), ("ship", "task"), ("ideas", "note")] {
+        env.command()
+            .args([
+                "add",
+                name,
+                "body",
+                "--type",
+                artifact_type,
+                "--context",
+                "release",
+            ])
+            .assert()
+            .success();
+    }
+
+    let output = env
+        .command()
+        .args([
+            "list",
+            "--context",
+            "release",
+            "--type",
+            "plan",
+            "--type",
+            "task",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let artifacts: serde_json::Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(artifacts.as_array().map(Vec::len), Some(2));
+    assert_eq!(artifacts[0]["type"], "plan");
+    assert_eq!(artifacts[1]["type"], "task");
+
+    Ok(())
+}
