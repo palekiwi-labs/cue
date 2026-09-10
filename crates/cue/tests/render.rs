@@ -251,3 +251,64 @@ fn context_document_renders_as_an_entry() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn stdin_entries_render_at_the_marker_position() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    for (artifact_type, content) in [("spec", "Release scope"), ("plan", "Release steps")] {
+        env.command()
+            .args([
+                "add",
+                "index",
+                content,
+                "--type",
+                artifact_type,
+                "--context",
+                "release",
+            ])
+            .assert()
+            .success();
+    }
+
+    let context_dir = env.cue_store().join("acme/widgets/release");
+    let context_path = context_dir.join("context.md");
+    let spec_path = context_dir.join("spec/index.md");
+    let plan_path = context_dir.join("plan/index.md");
+    let stdout = env
+        .command()
+        .args([
+            "render",
+            "context.md",
+            "-",
+            "plan/index.md",
+            "--context",
+            "release",
+        ])
+        .write_stdin(format!("{}\n", spec_path.display()))
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let context = std::fs::read_to_string(&context_path)?;
+    let spec = std::fs::read_to_string(&spec_path)?;
+    let plan = std::fs::read_to_string(&plan_path)?;
+    assert_eq!(
+        String::from_utf8(stdout)?,
+        format!(
+            "<artifact path=\"{}\">\n{context}\n</artifact>\n\n<artifact path=\"{}\">\n{spec}\n</artifact>\n\n<artifact path=\"{}\">\n{plan}\n</artifact>\n\n",
+            context_path.display(),
+            spec_path.display(),
+            plan_path.display()
+        )
+    );
+
+    Ok(())
+}
