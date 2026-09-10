@@ -1,5 +1,5 @@
 use crate::git;
-use anyhow::{bail, Context, Result};
+use anyhow::{Context, Result, bail};
 use cuelib::store;
 use serde::{Deserialize, Serialize};
 use std::fmt::Write as _;
@@ -62,7 +62,8 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
     // 3. Resolve the context in the central store.
     let context = cuelib::head::resolve_active_context(root, scope_name.as_deref())?
         .context("No context selected; pass --context <context>")?;
-    let repository_dir = store::root(store_root.as_deref())?.join(store::repository_scope(root)?);
+    let store_root = store::root(store_root.as_deref())?;
+    let repository_dir = store_root.join(store::repository_scope(root)?);
     let context_dir = repository_dir.join(&context);
     if !context_dir.join("context.md").is_file() {
         bail!("Context does not exist: {context}");
@@ -71,7 +72,7 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
     if let Some(trace) = &entry.trace {
         entry.trace = Some(resolve_trace_reference(
             trace,
-            &context_dir,
+            &store_root,
             &repository_dir,
             &context,
         )?);
@@ -212,9 +213,9 @@ fn encode_markdown_path(path: &str) -> String {
 
 fn resolve_trace_reference(
     trace: &str,
-    repository_root: &Path,
-    store_dir: &Path,
-    scope: &str,
+    store_root: &Path,
+    repository_dir: &Path,
+    context: &str,
 ) -> Result<String> {
     let trace = trace.trim();
     if trace.is_empty() {
@@ -225,7 +226,7 @@ fn resolve_trace_reference(
     let candidate = if reference.is_absolute() {
         reference.to_path_buf()
     } else {
-        repository_root.join(reference)
+        store_root.join(reference)
     };
     let target = fs::canonicalize(&candidate)
         .with_context(|| format!("Trace reference does not exist: {trace}"))?;
@@ -233,22 +234,24 @@ fn resolve_trace_reference(
         bail!("Trace reference must target a file: {trace}");
     }
 
-    let canonical_store = fs::canonicalize(store_dir).with_context(|| {
+    let canonical_repository_dir = fs::canonicalize(repository_dir).with_context(|| {
         format!(
-            "Failed to resolve cue store directory {}",
-            store_dir.display()
+            "Failed to resolve cue repository directory {}",
+            repository_dir.display()
         )
     })?;
-    if !target.starts_with(&canonical_store) {
-        bail!("Trace reference resolves outside the cue store: {trace}");
+    if !target.starts_with(&canonical_repository_dir) {
+        bail!("Trace reference resolves outside this repository's scope: {trace}");
     }
 
-    let trace_root = canonical_store.join(scope).join("trace");
+    let trace_root = canonical_repository_dir.join(context).join("trace");
     let canonical_trace_root = fs::canonicalize(&trace_root).with_context(|| {
-        format!("Trace reference must target a trace artifact in scope '{scope}': {trace}")
+        format!("Trace reference must target a trace artifact in context '{context}': {trace}")
     })?;
     let relative = target.strip_prefix(&canonical_trace_root).map_err(|_| {
-        anyhow::anyhow!("Trace reference must target a trace artifact in scope '{scope}': {trace}")
+        anyhow::anyhow!(
+            "Trace reference must target a trace artifact in context '{context}': {trace}"
+        )
     })?;
 
     let mut normalized = String::from("trace");

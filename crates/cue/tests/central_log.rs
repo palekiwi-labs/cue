@@ -177,7 +177,7 @@ fn markdown_log_list_renders_trace_links() {
             "--title",
             "Captured evidence",
             "--trace",
-            "trace/evidence.md",
+            "acme/widgets/release/trace/evidence.md",
         ])
         .assert()
         .success();
@@ -187,6 +187,103 @@ fn markdown_log_list_renders_trace_links() {
         .assert()
         .success()
         .stdout(predicate::str::contains("[trace](trace/evidence.md)"));
+}
+
+#[test]
+fn log_add_rejects_context_relative_trace_references() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "add",
+            "evidence",
+            "Release evidence",
+            "--type",
+            "trace",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "log",
+            "add",
+            "--context",
+            "release",
+            "--title",
+            "Captured evidence",
+            "--trace",
+            "trace/evidence.md",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "Trace reference does not exist: trace/evidence.md",
+        ));
+}
+
+#[test]
+fn log_add_reports_non_trace_artifacts_in_context_vocabulary() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    let context_file = env.cue_store().join("acme/widgets/release/context.md");
+
+    env.command()
+        .args([
+            "log",
+            "add",
+            "--context",
+            "release",
+            "--title",
+            "Invalid trace",
+            "--trace",
+            context_file.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "must target a trace artifact in context 'release'",
+        ));
+}
+
+#[test]
+fn log_add_reports_traces_outside_the_repository_scope() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    let other_trace = env.cue_store().join("acme/other/release/trace/evidence.md");
+    std::fs::create_dir_all(other_trace.parent().unwrap()).unwrap();
+    std::fs::write(&other_trace, "evidence").unwrap();
+
+    env.command()
+        .args([
+            "log",
+            "add",
+            "--context",
+            "release",
+            "--title",
+            "Invalid trace",
+            "--trace",
+            other_trace.to_str().unwrap(),
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "resolves outside this repository's scope",
+        ));
 }
 
 #[test]
