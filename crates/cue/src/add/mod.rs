@@ -82,9 +82,6 @@ fn add_central_markdown(
     } = write;
     validate_filename(filename)?;
 
-    if Path::new(filename).components().count() != 1 {
-        bail!("Artifact names must not contain path separators: '{filename}'");
-    }
     let context_dir = central_context_dir(root, context, store_root)?;
 
     // A task is the only artifact that can be done, so it is the only type

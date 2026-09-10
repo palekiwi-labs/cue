@@ -385,6 +385,37 @@ fn add_creates_each_named_markdown_artifact_type() -> anyhow::Result<()> {
 }
 
 #[test]
+fn add_creates_markdown_artifacts_in_nested_directories() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "ideas/rollout",
+            "Rollout idea",
+            "--type",
+            "note",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    let path = env
+        .cue_store()
+        .join("acme/widgets/release/note/ideas/rollout.md");
+    assert!(std::fs::read_to_string(path)?.ends_with("Rollout idea"));
+
+    Ok(())
+}
+
+#[test]
 fn add_stamps_trace_revision_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
