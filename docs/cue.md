@@ -36,6 +36,31 @@ Scoped commands resolve their active context in this order:
 Agents should set `$CUE_CONTEXT` for child processes and sessions so they
 inherit the intended context without changing repository configuration.
 
+### Render artifacts
+
+`cue render` emits explicitly named files as `<artifact path="...">` blocks for
+session injection. Relative paths resolve inside the selected context:
+
+```
+cue render context.md spec/index.md plan/index.md --context release
+```
+
+Use `-` where newline-delimited paths from stdin should appear. This composes
+`cue list` filtering with rendering while preserving the order of explicit and
+piped entries:
+
+```
+cue list --context release --type task --filter 'status!=complete' \
+  | cue render context.md spec/index.md plan/index.md - --context release
+```
+
+Plain `cue list` output uses absolute paths, so an all-piped render does not
+need an active context:
+
+```
+cue list --context release --type task | cue render -
+```
+
 Run `cue --help` for the full command reference.
 
 > This page is a stub. Detailed usage and the artifact format will be

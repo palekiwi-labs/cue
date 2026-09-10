@@ -290,7 +290,7 @@ fn stdin_entries_render_at_the_marker_position() -> anyhow::Result<()> {
             "--context",
             "release",
         ])
-        .write_stdin(format!("{}\n", spec_path.display()))
+        .write_stdin(format!("\n  \n{}\n\t\n", spec_path.display()))
         .assert()
         .success()
         .get_output()

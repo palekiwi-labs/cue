@@ -105,7 +105,7 @@ pub enum Commands {
     },
     /// Render artifacts as framed blocks for injection into a session
     Render {
-        /// Artifact paths relative to the context directory
+        /// Artifact paths; use "-" to read newline-delimited paths from stdin
         #[arg(value_name = "ENTRY")]
         entries: Vec<String>,
         /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context

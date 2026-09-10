@@ -11,8 +11,11 @@ pub fn handle(
     let mut stdin_consumed = false;
     let mut expanded_entries = Vec::new();
     for entry in entries {
-        if entry != "-" || stdin_consumed {
+        if entry != "-" {
             expanded_entries.push(entry);
+            continue;
+        }
+        if stdin_consumed {
             continue;
         }
 
