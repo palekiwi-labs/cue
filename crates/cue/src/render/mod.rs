@@ -38,11 +38,27 @@ pub fn render(root: &Path, opts: RenderOptions) -> Result<String> {
         store_root,
     } = opts;
 
-    let context_dir = resolve_context_dir(root, scope_name.as_deref(), store_root.as_deref())?;
+    let entries = dedup(entries);
+    let context_dir = if entries.iter().any(|entry| Path::new(entry).is_relative()) {
+        Some(resolve_context_dir(
+            root,
+            scope_name.as_deref(),
+            store_root.as_deref(),
+        )?)
+    } else {
+        None
+    };
 
     let mut rendered = String::new();
-    for entry in dedup(entries) {
-        let path = context_dir.join(&entry);
+    for entry in entries {
+        let path = if Path::new(&entry).is_absolute() {
+            PathBuf::from(entry)
+        } else {
+            context_dir
+                .as_ref()
+                .expect("relative entries require a context directory")
+                .join(entry)
+        };
         let Ok(content) = std::fs::read_to_string(&path) else {
             continue;
         };

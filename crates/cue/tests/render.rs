@@ -312,3 +312,28 @@ fn stdin_entries_render_at_the_marker_position() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn absolute_stdin_entries_do_not_require_an_active_context() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    let path = env.cue_store().join("acme/widgets/release/context.md");
+    let content = std::fs::read_to_string(&path)?;
+    env.command()
+        .args(["render", "-"])
+        .write_stdin(format!("{}\n", path.display()))
+        .assert()
+        .success()
+        .stdout(format!(
+            "<artifact path=\"{}\">\n{content}\n</artifact>\n\n",
+            path.display()
+        ));
+
+    Ok(())
+}
