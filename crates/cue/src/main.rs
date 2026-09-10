@@ -93,6 +93,9 @@ fn main() -> anyhow::Result<()> {
                 },
             )?;
         }
+        Commands::Render { entries, context } => {
+            commands::render::handle(&cwd, entries, context, store_root)?;
+        }
         Commands::Log { command } => {
             commands::log::handle(&cwd, command, store_root)?;
         }

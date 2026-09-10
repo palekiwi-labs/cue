@@ -39,7 +39,7 @@ fn project_command_is_removed() {
 
 #[test]
 fn legacy_context_commands_are_removed() {
-    for command in ["init", "show", "profiles", "path"] {
+    for command in ["init", "show", "profiles", "path", "render"] {
         let env = helpers::TestEnv::new();
 
         env.command()

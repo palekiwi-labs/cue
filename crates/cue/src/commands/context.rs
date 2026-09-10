@@ -83,9 +83,6 @@ pub fn handle(
             handle_create(cwd, &name, options, store_root)
         }
         ContextCommands::List { json } => handle_list(cwd, json, store_root),
-        ContextCommands::Render { entries, context } => {
-            handle_render(cwd, entries, context, store_root)
-        }
         ContextCommands::Switch { slug, branch } => handle_switch(cwd, &slug, branch),
         ContextCommands::Unset { branch } => handle_unset(cwd, branch),
     }
@@ -114,24 +111,6 @@ fn target_branch(cwd: &Path, branch: Option<String>, action: &str) -> anyhow::Re
             )
         })?;
     Ok(branch)
-}
-
-fn handle_render(
-    cwd: &Path,
-    entries: Vec<String>,
-    context: Option<String>,
-    store_root: Option<&Path>,
-) -> anyhow::Result<()> {
-    let rendered = crate::render::render(
-        cwd,
-        crate::render::RenderOptions {
-            entries,
-            scope_name: context,
-            store_root: store_root.map(Path::to_path_buf),
-        },
-    )?;
-    print!("{rendered}");
-    Ok(())
 }
 
 fn handle_list(cwd: &Path, json: bool, store_root: Option<&Path>) -> anyhow::Result<()> {

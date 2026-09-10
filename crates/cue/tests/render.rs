@@ -26,7 +26,7 @@ fn render_wraps_a_named_artifact_with_its_absolute_path() -> anyhow::Result<()> 
 
     let stdout = env
         .command()
-        .args(["context", "render", "spec/index.md", "--context", "release"])
+        .args(["render", "spec/index.md", "--context", "release"])
         .assert()
         .success()
         .get_output()
@@ -73,7 +73,6 @@ fn multiple_entries_keep_argument_order() -> anyhow::Result<()> {
     let stdout = env
         .command()
         .args([
-            "context",
             "render",
             "spec/index.md",
             "plan/index.md",
@@ -114,13 +113,7 @@ fn missing_entry_is_skipped_silently() {
         .success();
 
     env.command()
-        .args([
-            "context",
-            "render",
-            "spec/missing.md",
-            "--context",
-            "release",
-        ])
+        .args(["render", "spec/missing.md", "--context", "release"])
         .assert()
         .success()
         .stdout("")
@@ -152,7 +145,6 @@ fn repeated_entry_is_emitted_once() -> anyhow::Result<()> {
     let stdout = env
         .command()
         .args([
-            "context",
             "render",
             "spec/index.md",
             "spec/index.md",
@@ -193,7 +185,7 @@ fn directory_entry_is_skipped() {
         .success();
 
     env.command()
-        .args(["context", "render", "spec", "--context", "release"])
+        .args(["render", "spec", "--context", "release"])
         .assert()
         .success()
         .stdout("")
@@ -207,7 +199,7 @@ fn render_requires_an_active_context() {
     env.command().arg("init").assert().success();
 
     env.command()
-        .args(["context", "render", "context.md"])
+        .args(["render", "context.md"])
         .assert()
         .failure()
         .stderr(predicate::str::contains(
@@ -222,7 +214,7 @@ fn render_rejects_a_nonexistent_context() {
     env.command().arg("init").assert().success();
 
     env.command()
-        .args(["context", "render", "context.md", "--context", "missing"])
+        .args(["render", "context.md", "--context", "missing"])
         .assert()
         .failure()
         .stderr(predicate::str::contains("Context does not exist: missing"));
@@ -240,7 +232,7 @@ fn context_document_renders_as_an_entry() -> anyhow::Result<()> {
 
     let stdout = env
         .command()
-        .args(["context", "render", "context.md", "--context", "release"])
+        .args(["render", "context.md", "--context", "release"])
         .assert()
         .success()
         .get_output()

@@ -103,6 +103,15 @@ pub enum Commands {
         #[arg(long = "filter", value_name = "EXPR", verbatim_doc_comment)]
         filters: Vec<Filter>,
     },
+    /// Render artifacts as framed blocks for injection into a session
+    Render {
+        /// Artifact paths relative to the context directory
+        #[arg(value_name = "ENTRY")]
+        entries: Vec<String>,
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
+        #[arg(long)]
+        context: Option<String>,
+    },
     /// Manage project log (add entries)
     Log {
         #[command(subcommand)]
@@ -145,15 +154,6 @@ pub enum ContextCommands {
         /// Output structured JSON instead of context slugs
         #[arg(long)]
         json: bool,
-    },
-    /// Concatenate context artifacts for injection into a session
-    Render {
-        /// Artifact paths relative to the context directory
-        #[arg(value_name = "ENTRY")]
-        entries: Vec<String>,
-        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
-        #[arg(long)]
-        context: Option<String>,
     },
     /// Associate a context with a Git branch
     Switch {
