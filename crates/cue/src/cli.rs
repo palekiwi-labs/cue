@@ -66,9 +66,6 @@ pub enum Commands {
         /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
         #[arg(long)]
         context: Option<String>,
-        /// Group name for tmp artifacts
-        #[arg(long, value_name = "NAME")]
-        group: Option<String>,
         /// Overwrite existing file
         #[arg(long)]
         force: bool,

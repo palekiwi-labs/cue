@@ -38,7 +38,6 @@ fn main() -> anyhow::Result<()> {
             cue_type,
             force,
             context,
-            group,
         } => {
             let resolved_content: Vec<u8> = if clipboard {
                 resolve_clipboard(&filename)?
@@ -67,7 +66,6 @@ fn main() -> anyhow::Result<()> {
                     force,
                     scope_name: context,
                     store_root: store_root.map(std::path::Path::to_path_buf),
-                    group,
                 },
             )?;
         }

@@ -69,7 +69,7 @@ impl TestEnv {
     }
 
     /// Advance the fixture repository to a new revision so tests can observe
-    /// revision-correlated behavior such as tmp grouping.
+    /// revision-correlated behavior such as tmp artifact paths.
     #[allow(dead_code)]
     pub fn commit_new_revision(&self, filename: &str) {
         commit_new_revision(self.root(), filename);

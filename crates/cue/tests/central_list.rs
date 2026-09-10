@@ -137,8 +137,6 @@ fn list_includes_tmp_as_a_supported_artifact_type() -> anyhow::Result<()> {
             "tmp",
             "--context",
             "release",
-            "--group",
-            "qa",
         ])
         .assert()
         .success();

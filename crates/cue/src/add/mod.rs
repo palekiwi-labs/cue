@@ -14,7 +14,6 @@ pub struct AddOptions {
     pub force: bool,
     pub scope_name: Option<String>,
     pub store_root: Option<PathBuf>,
-    pub group: Option<String>,
 }
 
 /// Shared inputs locating a central artifact write: the repository, the
@@ -37,7 +36,6 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
         force,
         scope_name,
         store_root,
-        group,
     } = opts;
 
     let write = CentralWrite {
@@ -49,9 +47,6 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
         store_root: store_root.as_deref(),
     };
 
-    if cue_type != "tmp" && group.is_some() {
-        bail!("--group is only valid for tmp artifacts");
-    }
     if matches!(
         cue_type.as_str(),
         "task" | "spec" | "plan" | "note" | "trace"
@@ -62,7 +57,7 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
         return add_central_bin(write, frontmatter);
     }
     if cue_type == "tmp" {
-        return add_central_tmp(write, frontmatter, group.as_deref());
+        return add_central_tmp(write, frontmatter);
     }
     unreachable!("artifact types are constrained by clap")
 }
@@ -181,11 +176,7 @@ fn add_central_bin(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> 
     Ok(file_path)
 }
 
-fn add_central_tmp(
-    write: CentralWrite<'_>,
-    metadata: Vec<(String, String)>,
-    group: Option<&str>,
-) -> Result<PathBuf> {
+fn add_central_tmp(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> Result<PathBuf> {
     let CentralWrite {
         root,
         filename,
@@ -197,33 +188,28 @@ fn add_central_tmp(
     if !metadata.is_empty() {
         bail!("tmp artifacts do not support metadata");
     }
-    let group = group.context("tmp artifacts require --group <name>")?;
-    cuelib::head::validate_slug(group).context("Invalid tmp group name")?;
     validate_filename(filename)?;
 
     let context_dir = central_context_dir(root, context, store_root)?;
     let commit_hash = git::get_short_head_hash(root)
         .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
     let tmp_dir = context_dir.join("tmp");
-    let suffix = format!("-{commit_hash}-{group}");
-    let existing_group = if tmp_dir.is_dir() {
-        fs::read_dir(&tmp_dir)?
-            .filter_map(Result::ok)
-            .filter(|entry| entry.path().is_dir())
-            .filter(|entry| entry.file_name().to_string_lossy().ends_with(&suffix))
-            .max_by_key(|entry| entry.file_name())
-            .map(|entry| entry.path())
-    } else {
-        None
-    };
-    let group_dir = match existing_group {
-        Some(path) => path,
-        None => {
-            let created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            tmp_dir.join(format!("{created_at}{suffix}"))
+    fs::create_dir_all(&tmp_dir)?;
+    let mut created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let artifact_dir = loop {
+        let candidate = tmp_dir.join(format!("{created_at}-{commit_hash}"));
+        match fs::create_dir(&candidate) {
+            Ok(()) => break candidate,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                created_at += 1;
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Failed to create {}", candidate.display()));
+            }
         }
     };
-    let file_path = group_dir.join(filename);
+    let file_path = artifact_dir.join(filename);
     write_new_file(&file_path, force, || Ok(content.to_vec()))?;
 
     Ok(file_path)

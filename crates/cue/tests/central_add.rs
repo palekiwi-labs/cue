@@ -580,7 +580,7 @@ fn add_creates_json_artifacts_in_nested_directories() -> anyhow::Result<()> {
 }
 
 #[test]
-fn add_creates_a_named_tmp_group_for_the_current_revision() -> anyhow::Result<()> {
+fn add_creates_a_revision_correlated_tmp_directory() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
     env.command()
@@ -597,20 +597,23 @@ fn add_creates_a_named_tmp_group_for_the_current_revision() -> anyhow::Result<()
             "tmp",
             "--context",
             "release",
-            "--group",
-            "qa",
         ])
         .assert()
         .success();
 
     let tmp_dir = env.cue_store().join("acme/widgets/release/tmp");
-    let groups = std::fs::read_dir(&tmp_dir)?.collect::<Result<Vec<_>, _>>()?;
-    assert_eq!(groups.len(), 1);
-    let group_name = groups[0].file_name();
-    let group_name = group_name.to_string_lossy();
-    assert!(group_name.ends_with("-qa"));
+    let directories = std::fs::read_dir(&tmp_dir)?.collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(directories.len(), 1);
+    let directory_name = directories[0].file_name();
+    let directory_name = directory_name.to_string_lossy();
+    let timestamp = directory_name
+        .strip_suffix(&format!("-{}", head_hash(env.root())?))
+        .expect("tmp directory should end with the current revision");
+    timestamp
+        .parse::<u128>()
+        .expect("tmp directory should start with a timestamp");
     assert_eq!(
-        std::fs::read_to_string(groups[0].path().join("reports/check.txt"))?,
+        std::fs::read_to_string(directories[0].path().join("reports/check.txt"))?,
         "check output"
     );
 
@@ -618,7 +621,7 @@ fn add_creates_a_named_tmp_group_for_the_current_revision() -> anyhow::Result<()
 }
 
 #[test]
-fn add_reuses_a_tmp_group_for_the_same_revision() -> anyhow::Result<()> {
+fn each_tmp_add_creates_a_fresh_directory() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
     env.command()
@@ -636,24 +639,34 @@ fn add_reuses_a_tmp_group_for_the_same_revision() -> anyhow::Result<()> {
                 "tmp",
                 "--context",
                 "release",
-                "--group",
-                "qa",
             ])
             .assert()
             .success();
     }
 
     let tmp_dir = env.cue_store().join("acme/widgets/release/tmp");
-    let groups = std::fs::read_dir(&tmp_dir)?.collect::<Result<Vec<_>, _>>()?;
-    assert_eq!(groups.len(), 1);
-    assert!(groups[0].path().join("first.txt").is_file());
-    assert!(groups[0].path().join("second.txt").is_file());
+    let directories = std::fs::read_dir(&tmp_dir)?.collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(directories.len(), 2);
+    assert_eq!(
+        directories
+            .iter()
+            .filter(|directory| directory.path().join("first.txt").is_file())
+            .count(),
+        1
+    );
+    assert_eq!(
+        directories
+            .iter()
+            .filter(|directory| directory.path().join("second.txt").is_file())
+            .count(),
+        1
+    );
 
     Ok(())
 }
 
 #[test]
-fn add_separates_tmp_groups_by_name() -> anyhow::Result<()> {
+fn add_rejects_removed_group_argument() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
     env.command()
@@ -661,39 +674,28 @@ fn add_separates_tmp_groups_by_name() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    for group in ["qa", "bench"] {
-        env.command()
-            .args([
-                "add",
-                "run.txt",
-                "output",
-                "--type",
-                "tmp",
-                "--context",
-                "release",
-                "--group",
-                group,
-            ])
-            .assert()
-            .success();
-    }
-
-    let tmp_dir = env.cue_store().join("acme/widgets/release/tmp");
-    let mut groups = std::fs::read_dir(&tmp_dir)?
-        .map(|entry| Ok(entry?.file_name().to_string_lossy().into_owned()))
-        .collect::<anyhow::Result<Vec<_>>>()?;
-    groups.sort();
-    assert_eq!(groups.len(), 2);
-    assert!(groups[0].ends_with("-bench"));
-    assert!(groups[1].ends_with("-qa"));
-
-    Ok(())
+    env.command()
+        .args([
+            "add",
+            "run.txt",
+            "output",
+            "--type",
+            "tmp",
+            "--context",
+            "release",
+            "--group",
+            "qa",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unexpected argument '--group'"));
 }
 
 #[test]
-fn add_creates_a_new_tmp_group_for_a_new_revision() -> anyhow::Result<()> {
+fn add_correlates_each_tmp_directory_with_its_revision() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
+    let first_hash = head_hash(env.root())?;
     env.command()
         .args(["context", "create", "release"])
         .assert()
@@ -708,14 +710,13 @@ fn add_creates_a_new_tmp_group_for_a_new_revision() -> anyhow::Result<()> {
             "tmp",
             "--context",
             "release",
-            "--group",
-            "qa",
         ])
         .assert()
         .success();
 
     env.commit_new_revision("change.txt");
 
+    let second_hash = head_hash(env.root())?;
     env.command()
         .args([
             "add",
@@ -725,33 +726,32 @@ fn add_creates_a_new_tmp_group_for_a_new_revision() -> anyhow::Result<()> {
             "tmp",
             "--context",
             "release",
-            "--group",
-            "qa",
         ])
         .assert()
         .success();
 
     let tmp_dir = env.cue_store().join("acme/widgets/release/tmp");
-    let groups = std::fs::read_dir(&tmp_dir)?.collect::<Result<Vec<_>, _>>()?;
-    assert_eq!(groups.len(), 2);
+    let directories = std::fs::read_dir(&tmp_dir)?.collect::<Result<Vec<_>, _>>()?;
+    assert_eq!(directories.len(), 2);
+    let first_dir = directories
+        .iter()
+        .find(|directory| directory.path().join("first.txt").is_file())
+        .expect("first tmp directory");
+    let second_dir = directories
+        .iter()
+        .find(|directory| directory.path().join("second.txt").is_file())
+        .expect("second tmp directory");
     assert!(
-        groups
-            .iter()
-            .all(|group| group.file_name().to_string_lossy().ends_with("-qa"))
+        first_dir
+            .file_name()
+            .to_string_lossy()
+            .ends_with(&format!("-{first_hash}"))
     );
-    assert_eq!(
-        groups
-            .iter()
-            .filter(|group| group.path().join("first.txt").is_file())
-            .count(),
-        1
-    );
-    assert_eq!(
-        groups
-            .iter()
-            .filter(|group| group.path().join("second.txt").is_file())
-            .count(),
-        1
+    assert!(
+        second_dir
+            .file_name()
+            .to_string_lossy()
+            .ends_with(&format!("-{second_hash}"))
     );
 
     Ok(())
