@@ -565,6 +565,38 @@ fn add_creates_json_bin_with_top_level_metadata() -> anyhow::Result<()> {
 }
 
 #[test]
+fn add_creates_json_artifacts_in_nested_directories() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "reports/readiness",
+            r#"{"ready":true}"#,
+            "--type",
+            "bin",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    let path = env
+        .cue_store()
+        .join("acme/widgets/release/bin/reports/readiness.json");
+    let content: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+    assert_eq!(content["ready"], true);
+
+    Ok(())
+}
+
+#[test]
 fn add_creates_a_named_tmp_group_for_the_current_revision() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();

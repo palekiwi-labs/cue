@@ -146,9 +146,6 @@ fn add_central_bin(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> 
         store_root,
     } = write;
     validate_filename(filename)?;
-    if Path::new(filename).components().count() != 1 {
-        bail!("Artifact names must not contain path separators: '{filename}'");
-    }
     let context_dir = central_context_dir(root, context, store_root)?;
     let filename = if Path::new(filename).extension().is_none() {
         format!("{filename}.json")
