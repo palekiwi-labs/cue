@@ -6,7 +6,7 @@ use serde_yaml::Value;
 fn context_create_writes_a_context_record_to_the_central_store() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
-    env.command().arg("init").assert().success();
+    assert!(!env.cue_store().join("acme/widgets").exists());
 
     env.command()
         .args(["context", "create", "data-model-spike"])

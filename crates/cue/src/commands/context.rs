@@ -178,13 +178,6 @@ fn handle_create(
 
     let repository_scope = store::repository_scope(cwd)?;
     let repository_dir = store::root(store_root)?.join(&repository_scope);
-    if !repository_dir.is_dir() {
-        anyhow::bail!(
-            "no cue store at {}; run `cue init` to create it",
-            repository_dir.display()
-        );
-    }
-
     let context_dir = repository_dir.join(name);
     let context_path = context_dir.join("context.md");
     if context_path.exists() {
@@ -201,7 +194,7 @@ fn handle_create(
         refs: (!options.refs.is_empty()).then_some(options.refs),
     };
     let frontmatter = serde_yaml::to_string(&metadata)?;
-    std::fs::create_dir(&context_dir)?;
+    std::fs::create_dir_all(&context_dir)?;
     std::fs::write(context_path, format!("---\n{frontmatter}---\n"))?;
 
     println!("Created {}/{}", repository_scope.display(), name);
