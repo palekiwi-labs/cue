@@ -337,3 +337,96 @@ fn absolute_stdin_entries_do_not_require_an_active_context() -> anyhow::Result<(
 
     Ok(())
 }
+
+#[test]
+fn filtered_list_output_pipes_into_render_after_named_anchors() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command().arg("init").assert().success();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    for (name, content, artifact_type) in [
+        ("index", "Release scope", "spec"),
+        ("index", "Release steps", "plan"),
+        ("ship", "Ship the release", "task"),
+    ] {
+        env.command()
+            .args([
+                "add",
+                name,
+                content,
+                "--type",
+                artifact_type,
+                "--context",
+                "release",
+            ])
+            .assert()
+            .success();
+    }
+    env.command()
+        .args([
+            "add",
+            "done",
+            "Already done",
+            "--type",
+            "task",
+            "--context",
+            "release",
+            "--frontmatter",
+            "status=complete",
+        ])
+        .assert()
+        .success();
+
+    let selected_tasks = env
+        .command()
+        .args([
+            "list",
+            "--context",
+            "release",
+            "--type",
+            "task",
+            "--filter",
+            "status!=complete",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let context_dir = env.cue_store().join("acme/widgets/release");
+    let expected_paths = [
+        context_dir.join("context.md"),
+        context_dir.join("spec/index.md"),
+        context_dir.join("plan/index.md"),
+        context_dir.join("task/ship.md"),
+    ];
+    let mut expected = String::new();
+    for path in expected_paths {
+        let content = std::fs::read_to_string(&path)?;
+        expected.push_str(&format!(
+            "<artifact path=\"{}\">\n{content}\n</artifact>\n\n",
+            path.display()
+        ));
+    }
+
+    env.command()
+        .args([
+            "render",
+            "context.md",
+            "spec/index.md",
+            "plan/index.md",
+            "-",
+            "--context",
+            "release",
+        ])
+        .write_stdin(selected_tasks)
+        .assert()
+        .success()
+        .stdout(expected);
+
+    Ok(())
+}
