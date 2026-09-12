@@ -1,3 +1,4 @@
+use crate::address;
 use crate::git;
 use anyhow::{Context, Result, bail};
 use cuelib::store;
@@ -76,6 +77,7 @@ fn add_central_markdown(
         store_root,
     } = write;
     validate_filename(filename)?;
+    validate_reference_fields(&frontmatter)?;
 
     let context_dir = central_context_dir(root, context, store_root)?;
 
@@ -271,12 +273,46 @@ fn coerce_scalar(v: &str) -> serde_yaml::Value {
     }
 }
 
+/// Structural fields whose value is a list by definition, regardless of how
+/// many values a caller supplied. `refs` is the only one: it names zero or
+/// more canonical addresses, so a single entry is a one-element list rather
+/// than a scalar, and a reader never has to handle two shapes.
+const LIST_VALUED_FIELDS: [&str; 1] = ["refs"];
+
+/// Structural fields that name at most one canonical address, so supplying
+/// them more than once is a caller error rather than a promotion to a list.
+const SINGLE_VALUED_REFERENCE_FIELDS: [&str; 1] = ["parent"];
+
+/// Validate the structural reference fields carried by an artifact.
+///
+/// `parent` and `refs` are structural: cue understands them, so it checks
+/// their shape and arity. This is not an exception to field-agnostic
+/// conventional-metadata encoding; it is what "structural" means.
+fn validate_reference_fields(fields: &[(String, String)]) -> Result<()> {
+    for field in SINGLE_VALUED_REFERENCE_FIELDS {
+        if fields.iter().filter(|(key, _)| key == field).count() > 1 {
+            bail!("Invalid {field}: {field} must be supplied at most once");
+        }
+    }
+    for (key, value) in fields {
+        if SINGLE_VALUED_REFERENCE_FIELDS.contains(&key.as_str())
+            || LIST_VALUED_FIELDS.contains(&key.as_str())
+        {
+            address::validate_reference(key, value)?;
+        }
+    }
+    Ok(())
+}
+
 /// Serialize frontmatter fields into a `---\n...\n---\n` byte block.
 ///
 /// A key supplied once becomes a scalar; a key repeated two or more times
 /// becomes a YAML Sequence of coerced scalars (in encounter order). Keys are
 /// emitted in first-seen order (`serde_yaml::Mapping` preserves insertion
-/// order). This is field-agnostic: the same rule applies to any key.
+/// order). This is field-agnostic for conventional metadata: the same rule
+/// applies to any key cue does not understand. The structural fields in
+/// `LIST_VALUED_FIELDS` are the exception, and always serialize as a
+/// Sequence.
 pub fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
     let mut map = serde_yaml::Mapping::new();
     for (k, v) in fields {
@@ -284,9 +320,14 @@ pub fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
         let elem = coerce_scalar(v);
         match map.get_mut(&key) {
             None => {
-                // First occurrence: store as a scalar. Its slot is fixed here
-                // and never moves, so first-seen key order is preserved.
-                map.insert(key, elem);
+                // First occurrence: store as a scalar, unless the field is a
+                // list by definition. Its slot is fixed here and never moves,
+                // so first-seen key order is preserved.
+                if LIST_VALUED_FIELDS.contains(&k.as_str()) {
+                    map.insert(key, serde_yaml::Value::Sequence(vec![elem]));
+                } else {
+                    map.insert(key, elem);
+                }
             }
             Some(existing) => {
                 // Second+ occurrence: promote the scalar to a Sequence and

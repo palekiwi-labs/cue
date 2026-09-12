@@ -756,3 +756,266 @@ fn add_correlates_each_tmp_directory_with_its_revision() -> anyhow::Result<()> {
 
     Ok(())
 }
+
+#[test]
+fn add_serializes_a_single_ref_as_a_list() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "requirements",
+            "Release requirements",
+            "--type",
+            "spec",
+            "--context",
+            "release",
+            "--frontmatter",
+            "refs=acme/widgets/release/task/publish.md",
+        ])
+        .assert()
+        .success();
+
+    let metadata = read_frontmatter(
+        &env.cue_store()
+            .join("acme/widgets/release/spec/requirements.md"),
+    )?;
+    assert_eq!(
+        metadata["refs"].as_sequence().map(Vec::as_slice),
+        Some(&[Value::String("acme/widgets/release/task/publish.md".into())][..]),
+        "a single ref must still serialize as a YAML list"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn add_serializes_repeated_refs_as_a_list() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "requirements",
+            "Release requirements",
+            "--type",
+            "spec",
+            "--context",
+            "release",
+            "--frontmatter",
+            "refs=acme/widgets/release/task/publish.md",
+            "--frontmatter",
+            "refs=acme/widgets/release/note/ideas/rollout.md",
+        ])
+        .assert()
+        .success();
+
+    let metadata = read_frontmatter(
+        &env.cue_store()
+            .join("acme/widgets/release/spec/requirements.md"),
+    )?;
+    assert_eq!(
+        metadata["refs"].as_sequence().map(Vec::as_slice),
+        Some(
+            &[
+                Value::String("acme/widgets/release/task/publish.md".into()),
+                Value::String("acme/widgets/release/note/ideas/rollout.md".into()),
+            ][..]
+        )
+    );
+
+    Ok(())
+}
+
+#[test]
+fn add_serializes_parent_as_a_scalar() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "rollout",
+            "Rollout plan",
+            "--type",
+            "plan",
+            "--context",
+            "release",
+            "--frontmatter",
+            "parent=acme/widgets/release/task/publish.md",
+        ])
+        .assert()
+        .success();
+
+    let metadata = read_frontmatter(&env.cue_store().join("acme/widgets/release/plan/rollout.md"))?;
+    assert_eq!(metadata["parent"], "acme/widgets/release/task/publish.md");
+
+    Ok(())
+}
+
+#[test]
+fn add_rejects_repeated_parent() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "rollout",
+            "Rollout plan",
+            "--type",
+            "plan",
+            "--context",
+            "release",
+            "--frontmatter",
+            "parent=acme/widgets/release/task/publish.md",
+            "--frontmatter",
+            "parent=acme/widgets/release/task/announce.md",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "parent must be supplied at most once",
+        ));
+
+    assert!(
+        !env.cue_store()
+            .join("acme/widgets/release/plan/rollout.md")
+            .exists()
+    );
+}
+
+#[test]
+fn add_rejects_non_canonical_parent_references() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    for invalid in [
+        "/home/operator/cue/acme/widgets/release/task/publish.md",
+        "~/cue/acme/widgets/release/task/publish.md",
+        "task/publish.md",
+    ] {
+        env.command()
+            .args([
+                "add",
+                "rollout",
+                "Rollout plan",
+                "--type",
+                "plan",
+                "--context",
+                "release",
+                "--frontmatter",
+                &format!("parent={invalid}"),
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("<org>/<repo>/<context>"));
+    }
+
+    assert!(
+        !env.cue_store()
+            .join("acme/widgets/release/plan/rollout.md")
+            .exists()
+    );
+}
+
+#[test]
+fn add_rejects_non_canonical_ref_references() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "requirements",
+            "Release requirements",
+            "--type",
+            "spec",
+            "--context",
+            "release",
+            "--frontmatter",
+            "refs=acme/widgets/release/task/publish.md",
+            "--frontmatter",
+            "refs=note/rollout.md",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "too short to be a canonical address",
+        ));
+
+    assert!(
+        !env.cue_store()
+            .join("acme/widgets/release/spec/requirements.md")
+            .exists()
+    );
+}
+
+#[test]
+fn add_accepts_nested_canonical_references() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "ideas/rollout",
+            "Rollout idea",
+            "--type",
+            "note",
+            "--context",
+            "release",
+            "--frontmatter",
+            "parent=acme/widgets/release",
+            "--frontmatter",
+            "refs=acme/widgets/release/note/ideas/canonical-addresses.md",
+        ])
+        .assert()
+        .success();
+
+    let metadata = read_frontmatter(
+        &env.cue_store()
+            .join("acme/widgets/release/note/ideas/rollout.md"),
+    )?;
+    assert_eq!(metadata["parent"], "acme/widgets/release");
+    assert_eq!(
+        metadata["refs"].as_sequence().map(Vec::as_slice),
+        Some(
+            &[Value::String(
+                "acme/widgets/release/note/ideas/canonical-addresses.md".into()
+            )][..]
+        )
+    );
+
+    Ok(())
+}

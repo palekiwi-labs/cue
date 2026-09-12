@@ -1,4 +1,5 @@
 mod add;
+mod address;
 mod cli;
 mod commands;
 mod git;
