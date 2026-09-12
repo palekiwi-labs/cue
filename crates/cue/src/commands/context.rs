@@ -174,8 +174,16 @@ fn handle_create(
 ) -> anyhow::Result<()> {
     cuelib::head::validate_slug(name)?;
 
+    let store_root = store::root(store_root)?;
+    if let Some(parent) = options.parent {
+        crate::address::validate_reference("parent", parent, &store_root)?;
+    }
+    for reference in options.refs {
+        crate::address::validate_reference("ref", reference, &store_root)?;
+    }
+
     let repository_scope = store::repository_scope(cwd)?;
-    let repository_dir = store::root(store_root)?.join(&repository_scope);
+    let repository_dir = store_root.join(&repository_scope);
     let context_dir = repository_dir.join(name);
     let context_path = context_dir.join("context.md");
     if context_path.exists() {

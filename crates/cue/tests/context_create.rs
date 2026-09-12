@@ -1,5 +1,6 @@
 mod helpers;
 
+use predicates::prelude::*;
 use serde_yaml::Value;
 
 #[test]
@@ -129,6 +130,17 @@ fn context_create_accepts_presentation_metadata() -> anyhow::Result<()> {
 fn context_create_accepts_relationship_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
+    for slug in ["parent", "reference"] {
+        env.command()
+            .args(["context", "create", slug])
+            .assert()
+            .success();
+    }
+    // A reference may cross into another repository scope, which has no
+    // `cue context create` path from this checkout.
+    let foreign = env.cue_store().join("other/project/context");
+    std::fs::create_dir_all(&foreign)?;
+    std::fs::write(foreign.join("context.md"), "---\nkind: work\n---\n")?;
 
     env.command()
         .args([
@@ -163,4 +175,42 @@ fn context_create_accepts_relationship_metadata() -> anyhow::Result<()> {
     );
 
     Ok(())
+}
+
+#[test]
+fn context_create_rejects_non_canonical_relationship_metadata() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "parent"])
+        .assert()
+        .success();
+
+    for invalid in [
+        "/home/operator/cue/acme/widgets/parent",
+        "~/cue/acme/widgets/parent",
+        "parent",
+        "acme/widgets/unknown",
+    ] {
+        env.command()
+            .args(["context", "create", "child", "--parent", invalid])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("<org>/<repo>/<context>"));
+        env.command()
+            .args([
+                "context",
+                "create",
+                "child",
+                "--parent",
+                "acme/widgets/parent",
+                "--ref",
+                invalid,
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("<org>/<repo>/<context>"));
+    }
+
+    assert!(!env.cue_store().join("acme/widgets/child").exists());
 }
