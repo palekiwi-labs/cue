@@ -186,7 +186,9 @@ fn markdown_log_list_renders_trace_links() {
         .args(["log", "list", "--context", "release", "--format", "md"])
         .assert()
         .success()
-        .stdout(predicate::str::contains("[trace](trace/evidence.md)"));
+        .stdout(predicate::str::contains(
+            "[trace](acme/widgets/release/trace/evidence.md)",
+        ));
 }
 
 #[test]
@@ -224,7 +226,7 @@ fn log_add_rejects_context_relative_trace_references() {
         .assert()
         .failure()
         .stderr(predicate::str::contains(
-            "Trace reference does not exist: trace/evidence.md",
+            "too short to be a canonical address",
         ));
 }
 
@@ -236,8 +238,6 @@ fn log_add_reports_non_trace_artifacts_in_context_vocabulary() {
         .args(["context", "create", "release"])
         .assert()
         .success();
-    let context_file = env.cue_store().join("acme/widgets/release/context.md");
-
     env.command()
         .args([
             "log",
@@ -247,7 +247,7 @@ fn log_add_reports_non_trace_artifacts_in_context_vocabulary() {
             "--title",
             "Invalid trace",
             "--trace",
-            context_file.to_str().unwrap(),
+            "acme/widgets/release/context.md",
         ])
         .assert()
         .failure()
@@ -264,9 +264,10 @@ fn log_add_reports_traces_outside_the_repository_scope() {
         .args(["context", "create", "release"])
         .assert()
         .success();
-    let other_trace = env.cue_store().join("acme/other/release/trace/evidence.md");
-    std::fs::create_dir_all(other_trace.parent().unwrap()).unwrap();
-    std::fs::write(&other_trace, "evidence").unwrap();
+    let other_context = env.cue_store().join("acme/other/release");
+    std::fs::create_dir_all(other_context.join("trace")).unwrap();
+    std::fs::write(other_context.join("context.md"), "---\nkind: work\n---\n").unwrap();
+    std::fs::write(other_context.join("trace/evidence.md"), "evidence").unwrap();
 
     env.command()
         .args([
@@ -277,7 +278,7 @@ fn log_add_reports_traces_outside_the_repository_scope() {
             "--title",
             "Invalid trace",
             "--trace",
-            other_trace.to_str().unwrap(),
+            "acme/other/release/trace/evidence.md",
         ])
         .assert()
         .failure()
@@ -410,6 +411,58 @@ fn log_add_requires_a_repository_revision() -> anyhow::Result<()> {
         .stderr(predicate::str::contains(
             "Failed to resolve current commit for log entry",
         ));
+
+    Ok(())
+}
+
+#[test]
+fn log_add_records_the_canonical_trace_address() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "add",
+            "handoff",
+            "Release evidence",
+            "--type",
+            "trace",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "log",
+            "add",
+            "--context",
+            "release",
+            "--title",
+            "Captured evidence",
+            "--trace",
+            "acme/widgets/release/trace/handoff.md",
+        ])
+        .assert()
+        .success();
+
+    let output = env
+        .command()
+        .args(["log", "list", "--context", "release"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let entries: serde_json::Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(
+        entries[0]["trace"], "acme/widgets/release/trace/handoff.md",
+        "a recorded trace reference must stay a canonical address"
+    );
 
     Ok(())
 }

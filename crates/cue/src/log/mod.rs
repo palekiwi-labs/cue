@@ -211,6 +211,12 @@ fn encode_markdown_path(path: &str) -> String {
     encoded
 }
 
+/// Verify that `trace` is a canonical address naming an existing trace
+/// artifact in this context, and return it unchanged.
+///
+/// The returned value is the address itself, never a path and never a
+/// shortened tail: a log entry is an artifact, so the reference it records is
+/// subject to the same canonical-address rule as any other.
 fn resolve_trace_reference(
     trace: &str,
     store_root: &Path,
@@ -218,16 +224,9 @@ fn resolve_trace_reference(
     context: &str,
 ) -> Result<String> {
     let trace = trace.trim();
-    if trace.is_empty() {
-        bail!("Trace reference cannot be empty.");
-    }
+    crate::address::validate_reference("--trace", trace, store_root)?;
 
-    let reference = Path::new(trace);
-    let candidate = if reference.is_absolute() {
-        reference.to_path_buf()
-    } else {
-        store_root.join(reference)
-    };
+    let candidate = store_root.join(trace);
     let target = fs::canonicalize(&candidate)
         .with_context(|| format!("Trace reference does not exist: {trace}"))?;
     if !target.is_file() {
@@ -248,21 +247,9 @@ fn resolve_trace_reference(
     let canonical_trace_root = fs::canonicalize(&trace_root).with_context(|| {
         format!("Trace reference must target a trace artifact in context '{context}': {trace}")
     })?;
-    let relative = target.strip_prefix(&canonical_trace_root).map_err(|_| {
-        anyhow::anyhow!(
-            "Trace reference must target a trace artifact in context '{context}': {trace}"
-        )
-    })?;
-
-    let mut normalized = String::from("trace");
-    for component in relative.components() {
-        let component = component
-            .as_os_str()
-            .to_str()
-            .context("Trace artifact path must be valid UTF-8")?;
-        normalized.push('/');
-        normalized.push_str(component);
+    if !target.starts_with(&canonical_trace_root) {
+        bail!("Trace reference must target a trace artifact in context '{context}': {trace}");
     }
 
-    Ok(normalized)
+    Ok(trace.to_string())
 }
