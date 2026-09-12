@@ -6,6 +6,12 @@ use serde_json::Value;
 fn context_list_json_reports_central_context_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
+    for slug in ["roadmap", "architecture"] {
+        env.command()
+            .args(["context", "create", slug])
+            .assert()
+            .success();
+    }
     env.command()
         .args([
             "context",
@@ -36,9 +42,18 @@ fn context_list_json_reports_central_context_metadata() -> anyhow::Result<()> {
         .stdout
         .clone();
     let contexts: Value = serde_json::from_slice(&output)?;
-    let context = &contexts[0];
+    // The referenced contexts must exist before they can be referenced, so
+    // they are listed alongside the one under test.
+    assert_eq!(contexts.as_array().map(Vec::len), Some(3));
+    let context = contexts
+        .as_array()
+        .and_then(|contexts| {
+            contexts
+                .iter()
+                .find(|context| context["context"] == "release")
+        })
+        .expect("release context should be listed");
 
-    assert_eq!(contexts.as_array().map(Vec::len), Some(1));
     assert_eq!(context["context"], "release");
     assert_eq!(context["scope"], "acme/widgets");
     assert_eq!(context["title"], "Release cue");
