@@ -6,16 +6,18 @@
 //! the sole writer of that metadata, so this is the only place the invariant
 //! can be enforced without a separate linter.
 //!
-//! Validation here is purely syntactic and touches no filesystem. Whether an
-//! address resolves to an existing artifact is a different question and is
-//! deliberately not asked.
+//! Validation happens in two layers. The first is syntactic and touches no
+//! filesystem. The second resolves the address prefix down to its context,
+//! because syntax alone cannot separate every partial form from a real
+//! address: a context address `<org>/<repo>/<context>` and a three-segment
+//! nested artifact tail such as `note/ideas/rollout.md` have exactly the
+//! same shape. One `stat` of `<store>/<org>/<repo>/<context>/context.md`
+//! tells them apart.
 //!
-//! Syntax alone cannot separate every partial form from a real address: a
-//! context address `<org>/<repo>/<context>` and a three-segment nested
-//! artifact tail such as `note/ideas/rollout.md` have the same shape. This
-//! catches the forms an agent actually produces by accident (an absolute
-//! path, a `~` path, a bare slug, `<type>/<name>`) and leaves the residual
-//! ambiguity to resolution.
+//! Validation stops at the context. The container an address names must
+//! already exist, or the address means nothing; the artifact inside it need
+//! not, so a reference may still be recorded before the file it points at is
+//! written.
 
 use anyhow::{Result, bail};
 
@@ -27,11 +29,22 @@ const CANONICAL_FORM: &str = "expected a canonical address \
 /// The shortest canonical address is a context: `<org>/<repo>/<context>`.
 const MIN_SEGMENTS: usize = 3;
 
-/// Validate that `value` has the shape of a canonical address.
+/// Validate that `value` is a canonical address naming a context that exists
+/// in the store.
 ///
 /// `field` names the input being validated (for example `parent` or
 /// `--trace`) and appears in the error message.
-pub fn validate_reference(field: &str, value: &str) -> Result<()> {
+pub fn validate_reference(field: &str, value: &str, store_root: &std::path::Path) -> Result<()> {
+    let segments = validate_shape(field, value)?;
+    let context = segments[..MIN_SEGMENTS].join("/");
+    if !store_root.join(&context).join("context.md").is_file() {
+        bail!("Invalid {field} '{value}': no context '{context}' in the store; {CANONICAL_FORM}");
+    }
+    Ok(())
+}
+
+/// Validate the syntax of a canonical address, returning its segments.
+fn validate_shape<'a>(field: &str, value: &'a str) -> Result<Vec<&'a str>> {
     if value.trim().is_empty() {
         bail!("Invalid {field} '{value}': must not be empty; {CANONICAL_FORM}");
     }
@@ -59,7 +72,7 @@ pub fn validate_reference(field: &str, value: &str) -> Result<()> {
     if segments.len() < MIN_SEGMENTS {
         bail!("Invalid {field} '{value}': too short to be a canonical address; {CANONICAL_FORM}");
     }
-    Ok(())
+    Ok(segments)
 }
 
 #[cfg(test)]
@@ -76,7 +89,7 @@ mod tests {
             "palekiwi-labs/cue/data-model-spike/task/reference-shape-validation.md",
         ] {
             assert!(
-                validate_reference("parent", valid).is_ok(),
+                validate_shape("parent", valid).is_ok(),
                 "'{valid}' should be a valid address"
             );
         }
@@ -85,9 +98,7 @@ mod tests {
     #[test]
     fn rejects_absolute_paths() {
         for invalid in ["/home/pl/cue/acme/widgets/release", "/acme/widgets/release"] {
-            let error = validate_reference("parent", invalid)
-                .unwrap_err()
-                .to_string();
+            let error = validate_shape("parent", invalid).unwrap_err().to_string();
             assert!(
                 error.contains("absolute paths are not addresses"),
                 "'{invalid}' should be rejected as absolute, got: {error}"
@@ -97,7 +108,7 @@ mod tests {
 
     #[test]
     fn rejects_home_relative_paths() {
-        let error = validate_reference("parent", "~/cue/acme/widgets/release")
+        let error = validate_shape("parent", "~/cue/acme/widgets/release")
             .unwrap_err()
             .to_string();
         assert!(
@@ -109,9 +120,7 @@ mod tests {
     #[test]
     fn rejects_partial_addresses() {
         for invalid in ["trace/evidence.md", "release", "plan/index.md"] {
-            let error = validate_reference("parent", invalid)
-                .unwrap_err()
-                .to_string();
+            let error = validate_shape("parent", invalid).unwrap_err().to_string();
             assert!(
                 error.contains("too short to be a canonical address"),
                 "'{invalid}' should be rejected as too short, got: {error}"
@@ -122,18 +131,14 @@ mod tests {
     #[test]
     fn rejects_empty_and_relative_segments() {
         for invalid in ["acme//widgets/release", "acme/ /release"] {
-            let error = validate_reference("parent", invalid)
-                .unwrap_err()
-                .to_string();
+            let error = validate_shape("parent", invalid).unwrap_err().to_string();
             assert!(
                 error.contains("empty path segments are not allowed"),
                 "'{invalid}' should be rejected for an empty segment, got: {error}"
             );
         }
         for invalid in ["acme/../widgets/release", "./acme/widgets/release"] {
-            let error = validate_reference("parent", invalid)
-                .unwrap_err()
-                .to_string();
+            let error = validate_shape("parent", invalid).unwrap_err().to_string();
             assert!(
                 error.contains("relative path components are not allowed"),
                 "'{invalid}' should be rejected for a relative component, got: {error}"
@@ -144,9 +149,7 @@ mod tests {
     #[test]
     fn rejects_empty_input() {
         for invalid in ["", "   "] {
-            let error = validate_reference("--trace", invalid)
-                .unwrap_err()
-                .to_string();
+            let error = validate_shape("--trace", invalid).unwrap_err().to_string();
             assert!(
                 error.contains("must not be empty"),
                 "'{invalid}' should be rejected as empty, got: {error}"
@@ -157,9 +160,7 @@ mod tests {
     #[test]
     fn every_error_names_the_canonical_form() {
         for invalid in ["", "~/cue/a/b/c", "/a/b/c", "a//b/c", "a/../b/c", "release"] {
-            let error = validate_reference("parent", invalid)
-                .unwrap_err()
-                .to_string();
+            let error = validate_shape("parent", invalid).unwrap_err().to_string();
             assert!(
                 error.contains("<org>/<repo>/<context>"),
                 "'{invalid}' error should name the canonical form, got: {error}"

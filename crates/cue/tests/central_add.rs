@@ -970,6 +970,45 @@ fn add_rejects_non_canonical_ref_references() {
             "too short to be a canonical address",
         ));
 
+    // A nested artifact tail is the same shape as a context address, so only
+    // the store can tell them apart.
+    env.command()
+        .args([
+            "add",
+            "requirements",
+            "Release requirements",
+            "--type",
+            "spec",
+            "--context",
+            "release",
+            "--frontmatter",
+            "refs=note/ideas/rollout.md",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "no context 'note/ideas/rollout.md' in the store",
+        ));
+
+    // An address naming a context that does not exist is equally unusable.
+    env.command()
+        .args([
+            "add",
+            "requirements",
+            "Release requirements",
+            "--type",
+            "spec",
+            "--context",
+            "release",
+            "--frontmatter",
+            "refs=acme/widgets/unknown/task/publish.md",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "no context 'acme/widgets/unknown' in the store",
+        ));
+
     assert!(
         !env.cue_store()
             .join("acme/widgets/release/spec/requirements.md")

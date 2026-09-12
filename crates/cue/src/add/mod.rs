@@ -77,7 +77,7 @@ fn add_central_markdown(
         store_root,
     } = write;
     validate_filename(filename)?;
-    validate_reference_fields(&frontmatter)?;
+    validate_reference_fields(&frontmatter, &store::root(store_root)?)?;
 
     let context_dir = central_context_dir(root, context, store_root)?;
 
@@ -288,7 +288,7 @@ const SINGLE_VALUED_REFERENCE_FIELDS: [&str; 1] = ["parent"];
 /// `parent` and `refs` are structural: cue understands them, so it checks
 /// their shape and arity. This is not an exception to field-agnostic
 /// conventional-metadata encoding; it is what "structural" means.
-fn validate_reference_fields(fields: &[(String, String)]) -> Result<()> {
+fn validate_reference_fields(fields: &[(String, String)], store_root: &Path) -> Result<()> {
     for field in SINGLE_VALUED_REFERENCE_FIELDS {
         if fields.iter().filter(|(key, _)| key == field).count() > 1 {
             bail!("Invalid {field}: {field} must be supplied at most once");
@@ -298,7 +298,7 @@ fn validate_reference_fields(fields: &[(String, String)]) -> Result<()> {
         if SINGLE_VALUED_REFERENCE_FIELDS.contains(&key.as_str())
             || LIST_VALUED_FIELDS.contains(&key.as_str())
         {
-            address::validate_reference(key, value)?;
+            address::validate_reference(key, value, store_root)?;
         }
     }
     Ok(())
