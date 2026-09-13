@@ -1,4 +1,3 @@
-use crate::git;
 use anyhow::{Context, Result, bail};
 use cuelib::store;
 use serde::{Deserialize, Serialize};
@@ -23,7 +22,6 @@ pub struct LogEntry {
 #[derive(Deserialize, Serialize)]
 pub struct StoredLogEntry {
     pub timestamp: u64,
-    pub commit_hash: String,
     pub title: String,
     pub trace: Option<String>,
     pub found: Vec<String>,
@@ -52,14 +50,9 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
         bail!("Title must be 120 characters or fewer.");
     }
 
-    // 2. Gather Git context
-    let mut hash =
-        git::get_short_head_hash(root).context("Failed to resolve current commit for log entry")?;
-    if git::is_working_tree_dirty(root).unwrap_or(false) {
-        hash.push_str("-dirty");
-    }
-
-    // 3. Resolve the context in the central store.
+    // 2. Resolve the context in the central store. A log entry is a memory
+    // and communication event, not a revision-correlated artifact, so no
+    // repository revision is read or stamped here.
     let context = cuelib::head::resolve_active_context(root, scope_name.as_deref())?
         .context("No context selected; pass --context <context>")?;
     let store_root = store::root(store_root.as_deref())?;
@@ -78,7 +71,7 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
         )?);
     }
 
-    // 4. Create one collision-safe JSON file for the entry. Nanosecond
+    // 3. Create one collision-safe JSON file for the entry. Nanosecond
     // timestamps sort chronologically by filename.
     let log_dir = context_dir.join("log");
     fs::create_dir_all(&log_dir)?;
@@ -97,7 +90,6 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
         };
         let stored = StoredLogEntry {
             timestamp,
-            commit_hash: hash,
             title: entry.title.trim().to_owned(),
             trace: entry.trace,
             found: entry.found,
@@ -159,13 +151,7 @@ pub fn render_markdown(entries: &[StoredLogEntry]) -> String {
     let mut markdown = String::new();
 
     for entry in entries {
-        writeln!(
-            &mut markdown,
-            "## [{}] {}",
-            entry.commit_hash,
-            entry.title.trim()
-        )
-        .unwrap();
+        writeln!(&mut markdown, "## {}", entry.title.trim()).unwrap();
 
         if let Some(trace) = &entry.trace {
             writeln!(&mut markdown, "\n[trace]({})", encode_markdown_path(trace)).unwrap();

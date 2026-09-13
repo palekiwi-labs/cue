@@ -34,18 +34,19 @@ fn log_add_writes_a_structured_json_entry() -> anyhow::Result<()> {
     let timestamp = entry["timestamp"]
         .as_u64()
         .expect("timestamp should be an integer");
-    let expected_hash = std::process::Command::new("git")
-        .args(["rev-parse", "--short", "HEAD"])
-        .current_dir(env.root())
-        .output()?;
-    let mut expected_hash = String::from_utf8(expected_hash.stdout)?.trim().to_owned();
-    expected_hash.push_str("-dirty");
 
     assert_eq!(
         path.file_name().and_then(|value| value.to_str()),
         Some(format!("{timestamp:020}.json").as_str())
     );
-    assert_eq!(entry["commit_hash"], expected_hash);
+    assert!(
+        entry.get("commit_hash").is_none(),
+        "a log entry must not be stamped with a revision"
+    );
+    assert!(
+        entry.get("repo_id").is_none(),
+        "a log entry must not be stamped with a repository identity"
+    );
     assert_eq!(entry["title"], "Validated release");
     assert!(entry["trace"].is_null());
     assert_eq!(entry["found"], serde_json::json!(["Smoke test passed"]));
@@ -86,12 +87,22 @@ fn log_list_outputs_entries_in_chronological_order() -> anyhow::Result<()> {
     assert_eq!(entries[0]["title"], "First discovery");
     assert_eq!(entries[1]["title"], "Second discovery");
     assert!(entries[0]["timestamp"].as_u64() < entries[1]["timestamp"].as_u64());
+    for entry in entries.as_array().expect("entries should be an array") {
+        assert!(
+            entry.get("commit_hash").is_none(),
+            "listed entries must not carry a revision stamp"
+        );
+        assert!(
+            entry.get("repo_id").is_none(),
+            "listed entries must not carry a repository identity"
+        );
+    }
 
     Ok(())
 }
 
 #[test]
-fn log_list_renders_markdown_in_chronological_order() -> anyhow::Result<()> {
+fn log_list_renders_markdown_titles_without_revision_stamps() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
     env.command()
@@ -118,34 +129,13 @@ fn log_list_renders_markdown_in_chronological_order() -> anyhow::Result<()> {
             .success();
     }
 
-    let json = env
-        .command()
-        .args(["log", "list", "--context", "release"])
-        .assert()
-        .success()
-        .get_output()
-        .stdout
-        .clone();
-    let entries: serde_json::Value = serde_json::from_slice(&json)?;
-    let first_hash = entries[0]["commit_hash"].as_str().unwrap();
-    let second_hash = entries[1]["commit_hash"].as_str().unwrap();
-
     env.command()
-        .args([
-            "log",
-            "list",
-            "--context",
-            "release",
-            "--format",
-            "md",
-        ])
+        .args(["log", "list", "--context", "release", "--format", "md"])
         .assert()
         .success()
-        .stdout(format!(
-            "## [{first_hash}] First discovery\n\n- **Found:** First fact\n\n## [{second_hash}] Second discovery\n\n- **Found:** Second fact\n\n"
-        ));
-
-    Ok(())
+        .stdout(
+            "## First discovery\n\n- **Found:** First fact\n\n## Second discovery\n\n- **Found:** Second fact\n\n",
+        );
 }
 
 #[test]
@@ -384,7 +374,7 @@ fn log_list_requires_an_active_context() {
 }
 
 #[test]
-fn log_add_requires_a_repository_revision() -> anyhow::Result<()> {
+fn log_add_succeeds_without_a_repository_revision() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     let init = std::process::Command::new("git")
         .args(["init", "-b", "main"])
@@ -407,10 +397,20 @@ fn log_add_requires_a_repository_revision() -> anyhow::Result<()> {
             "Validated release",
         ])
         .assert()
-        .failure()
-        .stderr(predicate::str::contains(
-            "Failed to resolve current commit for log entry",
-        ));
+        .success();
+
+    let output = env
+        .command()
+        .args(["log", "list", "--context", "release"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let entries: serde_json::Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(entries.as_array().map(Vec::len), Some(1));
+    assert_eq!(entries[0]["title"], "Validated release");
 
     Ok(())
 }
