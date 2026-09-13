@@ -27,6 +27,7 @@ pub fn handle(
                 "{}",
                 json!({
                     "context": null,
+                    "address": null,
                     "store": store_root.display().to_string(),
                     "scope": scope.display().to_string(),
                 })
@@ -38,6 +39,11 @@ pub fn handle(
         }
         return Ok(());
     };
+    // A bare slug identifies a context only to someone who already knows the
+    // repository. The canonical address is the form that survives being
+    // copied out of this repository, so it is emitted alongside the slug
+    // rather than left for a caller to concatenate.
+    let address = format!("{}/{}", scope.display(), context);
     let context_path = store_root.join(&scope).join(&context).join("context.md");
     let frontmatter = extract_frontmatter_yaml(&context_path).with_context(|| {
         format!(
@@ -53,6 +59,7 @@ pub fn handle(
             "{}",
             json!({
                 "context": context,
+                "address": address,
                 "title": metadata.title,
                 "kind": metadata.kind,
                 "mode": metadata.mode,
@@ -63,6 +70,7 @@ pub fn handle(
         );
     } else {
         println!("active context: {context}");
+        println!("  address: {address}");
         if let Some(title) = metadata.title {
             println!("  title: {title}");
         }
