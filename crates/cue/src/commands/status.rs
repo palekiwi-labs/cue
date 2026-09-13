@@ -1,78 +1,80 @@
-use crate::config::Config;
 use anyhow::{Context, Result};
 use cuelib::artifact::extract_frontmatter_yaml;
-use cuelib::head;
-use cuelib::store;
+use cuelib::{head, store};
 use serde::Deserialize;
 use serde_json::json;
 use std::path::Path;
 
-/// Frontmatter fields read from the task card for display.
-#[derive(Deserialize, Default)]
-struct StatusFm {
+#[derive(Deserialize)]
+struct ContextMetadata {
     title: Option<String>,
-    status: Option<String>,
+    kind: String,
+    mode: Option<String>,
+    parent: Option<String>,
 }
 
-pub fn handle(cwd: &Path, task: Option<String>, json: bool) -> Result<()> {
-    let store_root = store::main_worktree_root(cwd).context("Not in a git repository")?;
-    let config = Config::load(&store_root)?;
-    let resolved = store::open(cwd, &config)?;
-
-    let scope = head::resolve_scope(&resolved.head_dir, task.as_deref())?;
-
-    match scope.slug.as_str() {
-        "master" => {
-            if json {
-                let out = json!({
-                    "context": "master",
-                    "global": true,
-                    "provenance": scope.provenance.as_str(),
-                    "store": resolved.store_dir.display().to_string(),
-                });
-                println!("{}", out);
-            } else {
-                println!(
-                    "active context: master (global) {}",
-                    scope.provenance.label()
-                );
-                println!("  store: {}", resolved.store_dir.display());
-            }
+pub fn handle(
+    cwd: &Path,
+    context: Option<String>,
+    json_output: bool,
+    store_root: Option<&Path>,
+) -> Result<()> {
+    let store_root = store::root(store_root)?;
+    let scope = store::repository_scope(cwd)?;
+    let Some(context) = head::resolve_active_context(cwd, context.as_deref())? else {
+        if json_output {
+            println!(
+                "{}",
+                json!({
+                    "context": null,
+                    "store": store_root.display().to_string(),
+                    "scope": scope.display().to_string(),
+                })
+            );
+        } else {
+            println!("active context: unset");
+            println!("  store: {}", store_root.display());
+            println!("  scope: {}", scope.display());
         }
-        s => {
-            // Attempt to read task card for title/status
-            let task_card = resolved
-                .store_dir
-                .join("master")
-                .join("task")
-                .join(format!("{}.md", s));
-            let fm = extract_frontmatter_yaml(&task_card)
-                .and_then(|yaml| serde_yaml::from_str::<StatusFm>(&yaml).ok())
-                .unwrap_or_default();
-            let (title, status) = (fm.title, fm.status);
+        return Ok(());
+    };
+    let context_path = store_root.join(&scope).join(&context).join("context.md");
+    let frontmatter = extract_frontmatter_yaml(&context_path).with_context(|| {
+        format!(
+            "could not read context metadata at {}",
+            context_path.display()
+        )
+    })?;
+    let metadata: ContextMetadata = serde_yaml::from_str(&frontmatter)
+        .with_context(|| format!("invalid context metadata at {}", context_path.display()))?;
 
-            if json {
-                let out = json!({
-                    "context": s,
-                    "global": false,
-                    "provenance": scope.provenance.as_str(),
-                    "store": resolved.store_dir.display().to_string(),
-                    "title": title,
-                    "status": status,
-                });
-                println!("{}", out);
-            } else {
-                println!("active task: {} {}", s, scope.provenance.label());
-                if let Some(t) = title {
-                    println!("  title: {}", t);
-                }
-                if let Some(st) = status {
-                    println!("  status: {}", st);
-                }
-                println!("  context: {}/{}/", config.dir_name, s);
-                println!("  store: {}", resolved.store_dir.display());
-            }
+    if json_output {
+        println!(
+            "{}",
+            json!({
+                "context": context,
+                "title": metadata.title,
+                "kind": metadata.kind,
+                "mode": metadata.mode,
+                "parent": metadata.parent,
+                "store": store_root.display().to_string(),
+                "scope": scope.display().to_string(),
+            })
+        );
+    } else {
+        println!("active context: {context}");
+        if let Some(title) = metadata.title {
+            println!("  title: {title}");
         }
+        println!("  kind: {}", metadata.kind);
+        if let Some(mode) = metadata.mode {
+            println!("  mode: {mode}");
+        }
+        if let Some(parent) = metadata.parent {
+            println!("  parent: {parent}");
+        }
+        println!("  store: {}", store_root.display());
+        println!("  scope: {}", scope.display());
     }
 
     Ok(())

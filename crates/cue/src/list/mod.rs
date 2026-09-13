@@ -1,10 +1,11 @@
-use crate::config::Config;
 use anyhow::Result;
 use cuelib::artifact::{collect_files, extract_frontmatter_yaml};
 use cuelib::store;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
+
+const SUPPORTED_ARTIFACT_TYPES: &[&str] = &["task", "spec", "plan", "note", "trace", "bin", "tmp"];
 
 // ── Frontmatter filter ───────────────────────────────────────────────────────
 
@@ -82,8 +83,15 @@ fn evaluate_filter(filter: &Filter, fm: &serde_json::Value) -> bool {
     }
 }
 
-/// Parse frontmatter from `path` into a JSON value, or `Null` if absent/malformed.
-fn parse_frontmatter(path: &Path) -> serde_json::Value {
+/// Parse queryable artifact metadata, or `Null` if absent or malformed.
+fn parse_metadata(path: &Path) -> serde_json::Value {
+    if path.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("bin")) {
+        return std::fs::File::open(path)
+            .ok()
+            .and_then(|file| serde_json::from_reader(file).ok())
+            .unwrap_or(serde_json::Value::Null);
+    }
+
     extract_frontmatter_yaml(path)
         .and_then(|yaml| serde_yaml::from_str(&yaml).ok())
         .unwrap_or(serde_json::Value::Null)
@@ -99,36 +107,28 @@ fn apply_filters(fm: &serde_json::Value, filters: &[Filter]) -> bool {
 pub struct CueFile {
     pub path: String,
     pub name: String,
-    pub branch: String,
-    pub category: String,
-    pub hash: Option<String>,
-    pub commit_hash: Option<String>,
-    pub commit_timestamp: u64,
+    pub context: String,
+    #[serde(rename = "type")]
+    pub cue_type: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub frontmatter: Option<serde_json::Value>,
 }
 
 pub struct ListOptions {
     pub scope: Option<String>,
-    pub all: bool,
-    pub cue_type: Option<String>,
-    pub include_gitignored: bool,
+    pub cue_types: Vec<String>,
     pub json: bool,
     pub frontmatter: bool,
+    pub store_root: Option<std::path::PathBuf>,
     pub filters: Vec<Filter>,
 }
 
-pub fn list(
-    root: &Path,
-    config: &Config,
-    opts: ListOptions,
-) -> Result<Vec<(PathBuf, Option<serde_json::Value>)>> {
+pub fn list(root: &Path, opts: ListOptions) -> Result<Vec<(PathBuf, Option<serde_json::Value>)>> {
     let ListOptions {
         scope,
-        all,
-        cue_type,
-        include_gitignored,
+        cue_types,
         frontmatter,
+        store_root,
         filters,
         ..
     } = opts;
@@ -136,31 +136,26 @@ pub fn list(
     // Parse frontmatter once when either filtering or outputting it requires it.
     let need_frontmatter = frontmatter || !filters.is_empty();
 
-    // 1. Open store
-    let resolved = store::open(root, config)?;
+    // 1. Resolve the current repository's directory in the central store.
+    let store_dir = store::root(store_root.as_deref())?.join(store::repository_scope(root)?);
 
     // 2. Determine scan directory/directories
-    let mut paths = resolve_scan_paths(&resolved.head_dir, &resolved.store_dir, all, scope)?;
+    let active_context = cuelib::head::resolve_active_context(root, scope.as_deref())?;
+    let mut paths = resolve_central_scan_paths(&store_dir, active_context.as_deref())?;
 
     // 3. Sort
     paths.sort();
 
-    // 4. Filter by structure (type, gitignored)
-    let valid_paths = paths.into_iter().filter(|path| {
-        is_valid_cue_file(
-            path,
-            &resolved.store_dir,
-            cue_type.as_deref(),
-            include_gitignored,
-            &config.ignored_types,
-        )
-    });
+    // 4. Filter by supported artifact structure and requested type
+    let valid_paths = paths
+        .into_iter()
+        .filter(|path| is_valid_cue_file(path, &store_dir, &cue_types));
 
     // 5. Parse frontmatter once (if needed), apply filters, carry value forward.
     let filtered: Vec<(PathBuf, Option<serde_json::Value>)> = valid_paths
         .filter_map(|path| {
             let fm_val = if need_frontmatter {
-                let fm = parse_frontmatter(&path);
+                let fm = parse_metadata(&path);
                 if !apply_filters(&fm, &filters) {
                     return None;
                 }
@@ -175,33 +170,16 @@ pub fn list(
     Ok(filtered)
 }
 
-pub fn resolve_scan_paths(
-    head_dir: &Path,
-    store_dir: &Path,
-    all: bool,
-    scope: Option<String>,
-) -> Result<Vec<PathBuf>> {
-    if all {
-        collect_files(store_dir)
+fn resolve_central_scan_paths(store_dir: &Path, context: Option<&str>) -> Result<Vec<PathBuf>> {
+    let scan_dir = if let Some(context) = context {
+        store_dir.join(context)
     } else {
-        let scope = cuelib::head::resolve_scope(head_dir, scope.as_deref())?;
-        let scan_dir = store_dir.join(&scope);
-
-        if scan_dir.exists() {
-            collect_files(&scan_dir)
-        } else {
-            Ok(Vec::new())
-        }
-    }
+        store_dir.to_path_buf()
+    };
+    collect_files(&scan_dir)
 }
 
-pub fn is_valid_cue_file(
-    path: &Path,
-    cue_path: &Path,
-    cue_type: Option<&str>,
-    include_gitignored: bool,
-    ignored_types: &[String],
-) -> bool {
+pub fn is_valid_cue_file(path: &Path, cue_path: &Path, cue_types: &[String]) -> bool {
     let Ok(rel_to_mem) = path.strip_prefix(cue_path) else {
         return false;
     };
@@ -217,11 +195,15 @@ pub fn is_valid_cue_file(
 
     let category = category_comp.as_os_str().to_string_lossy();
 
-    if let Some(requested) = cue_type {
-        if category != requested {
-            return false;
-        }
-    } else if !include_gitignored && ignored_types.iter().any(|t| t == category.as_ref()) {
+    if !SUPPORTED_ARTIFACT_TYPES.contains(&category.as_ref()) {
+        return false;
+    }
+
+    if !cue_types.is_empty()
+        && !cue_types
+            .iter()
+            .any(|requested| category == requested.as_str())
+    {
         return false;
     }
 
@@ -232,63 +214,28 @@ pub fn to_cue_file(path: &Path, cue_path: &Path) -> Option<CueFile> {
     let rel_to_mem = path.strip_prefix(cue_path).ok()?;
     let mut components = rel_to_mem.components();
 
-    let branch = components
+    let context = components
         .next()?
         .as_os_str()
         .to_string_lossy()
         .into_owned();
-    let category = components
+    let cue_type = components
         .next()?
         .as_os_str()
         .to_string_lossy()
         .into_owned();
+    let name = components
+        .collect::<PathBuf>()
+        .to_string_lossy()
+        .into_owned();
 
-    let rel_path = path.to_string_lossy().to_string();
-
-    let mut cue_file = CueFile {
-        path: rel_path,
-        name: String::new(),
-        branch: branch.clone(),
-        category: category.clone(),
-        hash: None,
-        commit_hash: None,
-        commit_timestamp: 0,
+    Some(CueFile {
+        path: path.to_string_lossy().into_owned(),
+        name,
+        context,
+        cue_type,
         frontmatter: None,
-    };
-
-    // Detect pinned artifacts structurally: any category with depth >= 4
-    // where the 3rd component parses as <timestamp>-<hash>.
-    let comp_count = rel_to_mem.components().count();
-    if comp_count >= 4 {
-        let mut comps = rel_to_mem.components();
-        comps.next(); // branch
-        comps.next(); // category
-        if let Some(ts_hash_dir) = comps.next() {
-            let ts_hash_str = ts_hash_dir.as_os_str().to_string_lossy();
-            if let Some((ts_str, hash_str)) = ts_hash_str.split_once('-')
-                && let Ok(ts) = ts_str.parse::<u64>()
-            {
-                cue_file.commit_timestamp = ts;
-                cue_file.hash = Some(hash_str.to_string());
-                cue_file.commit_hash = Some(hash_str.to_string());
-
-                // name is relative to the ts-hash dir
-                let prefix = cue_path.join(&branch).join(&category).join(ts_hash_dir);
-                if let Ok(rel_name) = path.strip_prefix(&prefix) {
-                    cue_file.name = rel_name.to_string_lossy().to_string();
-                }
-                return Some(cue_file);
-            }
-        }
-    }
-
-    // Flat artifact: name is relative to the category dir
-    let prefix = cue_path.join(&branch).join(&category);
-    if let Ok(rel_name) = path.strip_prefix(&prefix) {
-        cue_file.name = rel_name.to_string_lossy().to_string();
-    }
-
-    Some(cue_file)
+    })
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

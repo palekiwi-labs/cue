@@ -19,29 +19,21 @@ pub struct Cli {
     #[arg(short = 'C', long = "dir", value_name = "PATH", global = true)]
     pub dir: Option<std::path::PathBuf>,
 
+    /// Root of the central cue store; overrides $CUE_STORE
+    #[arg(long, value_name = "PATH", global = true)]
+    pub store: Option<std::path::PathBuf>,
+
     #[command(subcommand)]
     pub command: Commands,
 }
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Initialize agent artifacts directory structure
-    Init,
-    /// Switch the active task context
-    #[command(arg_required_else_help = false)]
-    Switch {
-        /// Task slug or path to a task card file; omit to restore the
-        /// task associated with the current branch
-        target: Option<String>,
-        /// Output structured JSON instead of human-readable text
-        #[arg(long)]
-        json: bool,
-    },
-    /// Print the active task context
+    /// Print the active context
     Status {
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
+        #[arg(long)]
+        context: Option<String>,
         /// Output structured JSON instead of human-readable text
         #[arg(long)]
         json: bool,
@@ -63,15 +55,17 @@ pub enum Commands {
         /// Frontmatter fields to prepend to the artifact (repeatable, KEY=VALUE format)
         #[arg(short = 'f', long = "frontmatter", value_name = "KEY=VALUE", value_parser = parse_frontmatter_field)]
         frontmatter: Vec<(String, String)>,
-        /// Type of artifact (must be in configured artifact_types)
-        #[arg(short = 't', long = "type", default_value = "spec")]
+        /// Type of artifact
+        #[arg(
+            short = 't',
+            long = "type",
+            default_value = "spec",
+            value_parser = ["task", "spec", "plan", "note", "trace", "bin", "tmp"]
+        )]
         cue_type: String,
-        /// Save artifact at the root of the type directory, not under a <timestamp>-<hash> subdir
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
         #[arg(long)]
-        root: bool,
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
+        context: Option<String>,
         /// Overwrite existing file
         #[arg(long)]
         force: bool,
@@ -79,18 +73,12 @@ pub enum Commands {
 
     /// List artifacts for a scope
     List {
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task", conflicts_with = "all")]
-        task: Option<String>,
-        /// List files for all branches
-        #[arg(short = 'a', long)]
-        all: bool,
-        /// Filter by artifact type
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
+        #[arg(long)]
+        context: Option<String>,
+        /// Filter by artifact type; repeat to match any selected type
         #[arg(short = 't', long = "type")]
-        cue_type: Option<String>,
-        /// Include ignored artifact types (e.g. tmp)
-        #[arg(short = 'i', long)]
-        include_gitignored: bool,
+        cue_types: Vec<String>,
         /// Output as JSON
         #[arg(short = 'j', long)]
         json: bool,
@@ -110,6 +98,15 @@ pub enum Commands {
         #[arg(long = "filter", value_name = "EXPR", verbatim_doc_comment)]
         filters: Vec<Filter>,
     },
+    /// Render artifacts as framed blocks for injection into a session
+    Render {
+        /// Artifact paths; use "-" to read newline-delimited paths from stdin
+        #[arg(value_name = "ENTRY")]
+        entries: Vec<String>,
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
+        #[arg(long)]
+        context: Option<String>,
+    },
     /// Manage project log (add entries)
     Log {
         #[command(subcommand)]
@@ -120,65 +117,124 @@ pub enum Commands {
         #[command(subcommand)]
         command: ContextCommands,
     },
-    /// Manage cue configuration
-    Config {
-        #[command(subcommand)]
-        command: ConfigCommands,
-    },
-    /// Manage registered projects in the project store
-    Project {
-        #[command(subcommand)]
-        command: ProjectCommands,
-    },
-}
-
-#[derive(Subcommand)]
-pub enum ConfigCommands {
-    /// Show the resolved configuration as JSON
-    Show,
 }
 
 #[derive(Subcommand)]
 pub enum ContextCommands {
-    /// Create context.json, auto-populated from existing spec/ files
-    Init {
-        /// Overwrite existing context.json
+    /// Create a context in the repository's central store
+    Create {
+        /// Immutable context slug
+        name: String,
+        /// Presentation name
         #[arg(long)]
-        force: bool,
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
+        title: Option<String>,
+        /// What ends this context
+        #[arg(long, value_enum, default_value = "work")]
+        kind: ContextKind,
+        /// Advisory session mode
+        #[arg(long, value_enum)]
+        mode: Option<ContextMode>,
+        /// One-line listing description
+        #[arg(long)]
+        description: Option<String>,
+        /// Canonical address of the parent context
+        #[arg(long)]
+        parent: Option<String>,
+        /// Canonical address of a related context or artifact
+        #[arg(long = "ref")]
+        refs: Vec<String>,
     },
-    /// Print raw context.json
-    Show {
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
+    /// List contexts in the current repository scope
+    List {
+        /// Output structured JSON instead of context slugs
+        #[arg(long)]
+        json: bool,
     },
-    /// List available profile names
-    Profiles {
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
+    /// Add a context to the operator's working set
+    Pin {
+        /// Context slug in the current repository scope, or a full
+        /// '<org>/<repo>/<slug>' address
+        context: String,
     },
-    /// Expand and stream context to stdout
-    Render {
-        /// Profile name to render
-        #[arg(short = 'p', long)]
-        profile: Option<String>,
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
+    /// Remove a context from the operator's working set
+    Unpin {
+        /// Context slug in the current repository scope, or a full
+        /// '<org>/<repo>/<slug>' address
+        context: String,
     },
-    /// Print absolute path to context.json
-    Path {
-        /// Show paths for all branches
-        #[arg(short = 'a', long)]
-        all: bool,
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
+    /// List the pinned contexts in the operator's working set
+    Pins {
+        /// Breadth to query: the current repository scope, or every scope
+        #[arg(long, value_enum, default_value = "repo")]
+        scope: QueryScope,
     },
+    /// Associate a context with a Git branch
+    Switch {
+        /// Context slug to associate with the branch
+        slug: String,
+        /// Branch to configure; defaults to the current branch
+        #[arg(long)]
+        branch: Option<String>,
+    },
+    /// Remove a context association from a Git branch
+    Unset {
+        /// Branch to configure; defaults to the current branch
+        #[arg(long)]
+        branch: Option<String>,
+    },
+}
+
+/// The breadth a collection query looks over, as opposed to `--store`, which
+/// selects which physical store is looked at. Scope changes where a query
+/// looks, never what metadata it filters on.
+///
+/// Shared vocabulary rather than a global flag: each query that offers
+/// repository/store breadth opts in with its own `--scope` argument.
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum QueryScope {
+    /// The repository scope derived from the origin remote of the current
+    /// directory, or of the directory selected with `-C`
+    Repo,
+    /// Every repository scope in the selected store; requires no repository
+    Store,
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum ContextKind {
+    Work,
+    Coord,
+    Reference,
+}
+
+impl ContextKind {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Work => "work",
+            Self::Coord => "coord",
+            Self::Reference => "reference",
+        }
+    }
+}
+
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum ContextMode {
+    Research,
+    Design,
+    Build,
+    Review,
+    Learn,
+}
+
+impl ContextMode {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Research => "research",
+            Self::Design => "design",
+            Self::Build => "build",
+            Self::Review => "review",
+            Self::Learn => "learn",
+        }
+    }
 }
 
 #[derive(Subcommand)]
@@ -188,7 +244,7 @@ pub enum LogCommands {
         /// Entry title (required unless --file is used)
         #[arg(long)]
         title: Option<String>,
-        /// Repository-relative or absolute reference to a trace artifact
+        /// Canonical address of a trace artifact in this context
         #[arg(long)]
         trace: Option<String>,
         /// Findings (can be repeated)
@@ -203,35 +259,26 @@ pub enum LogCommands {
         /// Read entry data from a JSON file
         #[arg(long, conflicts_with_all = &["title", "trace", "found", "decided", "open"])]
         file: Option<String>,
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
-        #[arg(long = "task")]
-        task: Option<String>,
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
+        #[arg(long)]
+        context: Option<String>,
     },
     /// List log entries
     List {
-        /// Set task scope; overrides $CUE_TASK and .cue/HEAD
+        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
         #[arg(long)]
-        task: Option<String>,
+        context: Option<String>,
+        /// Output format
+        #[arg(long, value_enum, default_value = "json")]
+        format: LogFormat,
+        /// Keep only the newest N entries
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
     },
 }
 
-#[derive(Subcommand)]
-pub enum ProjectCommands {
-    /// Register a path in the project store (defaults to cwd)
-    Add {
-        /// Path to register (defaults to current directory)
-        #[arg(long)]
-        path: Option<String>,
-    },
-    /// Remove a path or key from the project store
-    Remove {
-        /// Path to remove (defaults to current directory)
-        #[arg(long, conflicts_with = "key")]
-        path: Option<String>,
-        /// Remove all paths for this project key
-        #[arg(long, conflicts_with = "path")]
-        key: Option<String>,
-    },
-    /// List all registered projects
-    List,
+#[derive(Clone, Copy, clap::ValueEnum)]
+pub enum LogFormat {
+    Json,
+    Md,
 }

@@ -1,21 +1,13 @@
-use crate::cli::LogCommands;
-use crate::config::Config;
+use crate::cli::{LogCommands, LogFormat};
 use crate::git;
 use crate::log::{self, LogAddOptions, LogEntry};
 use anyhow::{Context, Result};
-use cuelib::store;
 use std::fs;
 use std::path::Path;
 
-pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
+pub fn handle(cwd: &Path, command: LogCommands, store_root: Option<&Path>) -> Result<()> {
     // 1. Verify git repo
     git::run_git(["rev-parse", "--git-dir"], cwd).context("Not in a git repository")?;
-
-    // 2. Derive store owner
-    let store_root = store::main_worktree_root(cwd)?;
-
-    // 3. Load config
-    let config = Config::load(&store_root)?;
 
     match command {
         LogCommands::Add {
@@ -25,7 +17,7 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
             decided,
             open,
             file,
-            task,
+            context,
         } => {
             let entry = if let Some(path) = file {
                 let content = fs::read_to_string(&path)
@@ -47,29 +39,29 @@ pub fn handle(cwd: &Path, command: LogCommands) -> Result<()> {
 
             let log_file_path = log::add_entry(
                 cwd,
-                &config,
                 LogAddOptions {
                     entry,
-                    scope_name: task,
+                    scope_name: context,
+                    store_root: store_root.map(Path::to_path_buf),
                 },
             )?;
             let rel_path = log_file_path.strip_prefix(cwd).unwrap_or(&log_file_path);
-            eprintln!("✓ Logged");
+            eprintln!("Logged");
             println!("{}", rel_path.display());
         }
-        LogCommands::List { task } => {
-            let resolved = store::open(cwd, &config)?;
-            let scope = cuelib::head::resolve_scope(&resolved.head_dir, task.as_deref())?;
-
-            let log_file_path = resolved.store_dir.join(&scope).join("log.md");
-
-            match fs::read_to_string(&log_file_path) {
-                Ok(content) => print!("{}", content),
-                Err(e) if e.kind() == std::io::ErrorKind::NotFound => {} // Silently exit
-                Err(e) => {
-                    return Err(e)
-                        .with_context(|| format!("Failed to read {}", log_file_path.display()));
-                }
+        LogCommands::List {
+            context,
+            format,
+            limit,
+        } => {
+            let entries = log::list_entries(cwd, context.as_deref(), store_root)?;
+            let start = limit
+                .map(|limit| entries.len().saturating_sub(limit))
+                .unwrap_or(0);
+            let entries = &entries[start..];
+            match format {
+                LogFormat::Json => println!("{}", serde_json::to_string_pretty(entries)?),
+                LogFormat::Md => print!("{}", log::render_markdown(entries)),
             }
         }
     }

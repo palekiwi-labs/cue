@@ -1,98 +1,241 @@
-use crate::config::Config;
+use crate::address;
 use crate::git;
 use anyhow::{Context, Result, bail};
 use cuelib::store;
 use std::fs;
 use std::io::Cursor;
 use std::path::{Component, Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub struct AddOptions {
     pub filename: String,
     pub content: Vec<u8>,
     pub frontmatter: Vec<(String, String)>,
     pub cue_type: String,
-    pub save_at_root: bool,
     pub force: bool,
     pub scope_name: Option<String>,
+    pub store_root: Option<PathBuf>,
 }
 
-pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
+/// Shared inputs locating a central artifact write: the repository, the
+/// requested file, and the store-root/context resolution inputs.
+struct CentralWrite<'a> {
+    root: &'a Path,
+    filename: &'a str,
+    content: &'a [u8],
+    force: bool,
+    context: Option<&'a str>,
+    store_root: Option<&'a Path>,
+}
+
+pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
     let AddOptions {
         filename,
         content,
         frontmatter,
         cue_type,
-        save_at_root,
         force,
         scope_name,
+        store_root,
     } = opts;
 
-    // 1. Open store
-    let resolved = store::open(root, config)?;
-
-    // 2. Validate artifact type
-    if !config.artifact_types.contains(&cue_type) {
-        bail!(
-            "Unknown artifact type '{}'. Valid types: {}",
-            cue_type,
-            config.artifact_types.join(", ")
-        );
-    }
-
-    // 3. Resolve scope (HEAD read from head_dir)
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir, scope_name.as_deref())?;
-    if scope.trim().is_empty() {
-        bail!("Scope name cannot be empty.");
-    }
-
-    // 4. Resolve destination directory (artifact write into store_dir)
-    let type_dir = resolved.store_dir.join(&scope).join(&cue_type);
-    let dest_dir = if save_at_root {
-        type_dir
-    } else {
-        let ts = git::get_head_timestamp(root)?;
-        let hash = git::get_short_head_hash(root)
-            .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
-        type_dir.join(format!("{}-{}", ts, hash))
+    let write = CentralWrite {
+        root,
+        filename: &filename,
+        content: &content,
+        force,
+        context: scope_name.as_deref(),
+        store_root: store_root.as_deref(),
     };
 
-    // 5. Validate filename for path traversal
-    validate_filename(&filename)?;
+    if matches!(
+        cue_type.as_str(),
+        "task" | "spec" | "plan" | "note" | "trace"
+    ) {
+        return add_central_markdown(write, frontmatter, &cue_type);
+    }
+    if cue_type == "bin" {
+        return add_central_bin(write, frontmatter);
+    }
+    if cue_type == "tmp" {
+        return add_central_tmp(write, frontmatter);
+    }
+    unreachable!("artifact types are constrained by clap")
+}
 
-    // 5b. Normalize markdown filenames: a slug-like filename for a
-    // markdown artifact type gets `.md` appended so it satisfies the
-    // contract expected by the board reader (`read_artifacts`). A
-    // filename is slug-like when it has no extension, or when its
-    // extension does not look like a real one (`looks_like_extension`)
-    // — `Path::extension` splits at the last dot, so versioned slugs
-    // such as `v0.2.0-notes` would otherwise masquerade as extensioned
-    // files and stay board-invisible. Genuine payload extensions
-    // (`.txt`, `.png`, `.md`) and non-markdown types pass through.
-    let has_real_extension = Path::new(&filename)
-        .extension()
-        .and_then(|ext| ext.to_str())
-        .is_some_and(looks_like_extension);
-    let filename =
-        if !has_real_extension && cuelib::artifact::MARKDOWN_TYPES.contains(&cue_type.as_str()) {
-            format!("{filename}.md")
-        } else {
-            filename
-        };
+fn add_central_markdown(
+    write: CentralWrite<'_>,
+    mut frontmatter: Vec<(String, String)>,
+    cue_type: &str,
+) -> Result<PathBuf> {
+    let CentralWrite {
+        root,
+        filename,
+        content,
+        force,
+        context,
+        store_root,
+    } = write;
+    validate_filename(filename)?;
+    validate_reference_fields(&frontmatter, &store::root(store_root)?)?;
 
-    // 6a. Reject reserved slugs for task cards.
+    let context_dir = central_context_dir(root, context, store_root)?;
+
+    // A task is the only artifact that can be done, so it is the only type
+    // given lifecycle defaults. A new task is untriaged (`inbox`) and
+    // unranked (`normal`) until an operator decides otherwise; stamping both
+    // keeps every task filterable on status and priority without forcing a
+    // caller to supply them.
     if cue_type == "task" {
-        let stem = Path::new(&filename)
-            .file_stem()
-            .and_then(|s| s.to_str())
-            .unwrap_or("");
-        if stem == "master" {
-            bail!("'master' is a reserved slug and cannot be used as a task filename.");
+        for (key, default) in [("status", "inbox"), ("priority", "normal")] {
+            if !frontmatter.iter().any(|(existing, _)| existing == key) {
+                frontmatter.push((key.into(), default.into()));
+            }
         }
     }
+    // A trace is an artifact *about* a revision, so it is the only markdown
+    // type carrying revision correlation. Both fields are stamped from the
+    // current repository, but an explicit value wins: a coordination context
+    // records evidence about a revision of some other repository.
+    if cue_type == "trace" {
+        if !frontmatter.iter().any(|(key, _)| key == "repo_id") {
+            let scope = store::repository_scope(root)?;
+            frontmatter.push(("repo_id".into(), scope.to_string_lossy().into_owned()));
+        }
+        if !frontmatter.iter().any(|(key, _)| key == "commit_hash") {
+            let hash = git::get_short_head_hash(root)
+                .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
+            frontmatter.push(("commit_hash".into(), hash));
+        }
+        // Hashes made only of decimal digits must remain strings rather than
+        // being coerced into YAML numbers by the field-agnostic encoder.
+        if let Some((_, hash)) = frontmatter.iter_mut().find(|(key, _)| key == "commit_hash") {
+            *hash = format!("'{}'", hash.replace('\'', "''"));
+        }
+    }
+    if !frontmatter.iter().any(|(key, _)| key == "created_at") {
+        let created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+        frontmatter.push(("created_at".into(), created_at.to_string()));
+    }
 
-    let file_path = dest_dir.join(&filename);
+    let filename = if Path::new(filename).extension().is_none() {
+        format!("{filename}.md")
+    } else {
+        filename.to_string()
+    };
+    let file_path = context_dir.join(cue_type).join(filename);
+    write_new_file(&file_path, force, || {
+        let mut final_content = build_frontmatter_bytes(&frontmatter)?;
+        final_content.extend_from_slice(content);
+        Ok(final_content)
+    })?;
 
-    // 7. Check if exists
+    Ok(file_path)
+}
+
+fn add_central_bin(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> Result<PathBuf> {
+    let CentralWrite {
+        root,
+        filename,
+        content,
+        force,
+        context,
+        store_root,
+    } = write;
+    validate_filename(filename)?;
+    let context_dir = central_context_dir(root, context, store_root)?;
+    let filename = if Path::new(filename).extension().is_none() {
+        format!("{filename}.json")
+    } else {
+        filename.to_string()
+    };
+    let file_path = context_dir.join("bin").join(filename);
+
+    write_new_file(&file_path, force, || {
+        let value: serde_json::Value =
+            serde_json::from_slice(content).context("Bin content must be valid JSON")?;
+        let serde_json::Value::Object(mut object) = value else {
+            bail!("Bin content must be a JSON object");
+        };
+        for (key, raw_value) in metadata {
+            let value = serde_json::to_value(coerce_scalar(&raw_value))?;
+            match object.get_mut(&key) {
+                Some(serde_json::Value::Array(values)) => values.push(value),
+                Some(existing) => {
+                    let first = std::mem::take(existing);
+                    *existing = serde_json::Value::Array(vec![first, value]);
+                }
+                None => {
+                    object.insert(key, value);
+                }
+            }
+        }
+        let mut bytes = serde_json::to_vec_pretty(&object)?;
+        bytes.push(b'\n');
+        Ok(bytes)
+    })?;
+
+    Ok(file_path)
+}
+
+fn add_central_tmp(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> Result<PathBuf> {
+    let CentralWrite {
+        root,
+        filename,
+        content,
+        force,
+        context,
+        store_root,
+    } = write;
+    if !metadata.is_empty() {
+        bail!("tmp artifacts do not support metadata");
+    }
+    validate_filename(filename)?;
+
+    let context_dir = central_context_dir(root, context, store_root)?;
+    let commit_hash = git::get_short_head_hash(root)
+        .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
+    let tmp_dir = context_dir.join("tmp");
+    fs::create_dir_all(&tmp_dir)?;
+    let mut created_at = SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos();
+    let artifact_dir = loop {
+        let candidate = tmp_dir.join(format!("{created_at}-{commit_hash}"));
+        match fs::create_dir(&candidate) {
+            Ok(()) => break candidate,
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+                created_at += 1;
+            }
+            Err(error) => {
+                return Err(error)
+                    .with_context(|| format!("Failed to create {}", candidate.display()));
+            }
+        }
+    };
+    let file_path = artifact_dir.join(filename);
+    write_new_file(&file_path, force, || Ok(content.to_vec()))?;
+
+    Ok(file_path)
+}
+
+fn central_context_dir(
+    root: &Path,
+    context: Option<&str>,
+    store_root: Option<&Path>,
+) -> Result<PathBuf> {
+    let context = cuelib::head::resolve_active_context(root, context)?
+        .context("No context selected; pass --context <context>")?;
+    let repository_dir = store::root(store_root)?.join(store::repository_scope(root)?);
+    let context_dir = repository_dir.join(&context);
+    if !context_dir.join("context.md").is_file() {
+        bail!("Context does not exist: {context}");
+    }
+    Ok(context_dir)
+}
+
+fn write_new_file<F>(file_path: &Path, force: bool, content: F) -> Result<()>
+where
+    F: FnOnce() -> Result<Vec<u8>>,
+{
     if file_path.exists() && !force {
         bail!(
             "File exists: {}. Use --force to overwrite.",
@@ -100,26 +243,10 @@ pub fn add(root: &Path, config: &Config, opts: AddOptions) -> Result<PathBuf> {
         );
     }
 
-    // 8. Create parent dirs
-    if let Some(parent) = file_path.parent() {
-        fs::create_dir_all(parent)
-            .with_context(|| format!("Failed to create directory {}", parent.display()))?;
-    }
-
-    // 9. Assemble final content (prepend frontmatter if provided)
-    let final_content = if frontmatter.is_empty() {
-        content
-    } else {
-        let mut fm = build_frontmatter_bytes(&frontmatter)?;
-        fm.extend_from_slice(&content);
-        fm
-    };
-
-    // 10. Write file
-    fs::write(&file_path, final_content)
+    fs::create_dir_all(file_path.parent().expect("artifact path has a parent"))?;
+    fs::write(file_path, content()?)
         .with_context(|| format!("Failed to write to {}", file_path.display()))?;
-
-    Ok(file_path)
+    Ok(())
 }
 
 /// Coerce a raw frontmatter string into a YAML scalar value.
@@ -146,12 +273,46 @@ fn coerce_scalar(v: &str) -> serde_yaml::Value {
     }
 }
 
+/// Structural fields whose value is a list by definition, regardless of how
+/// many values a caller supplied. `refs` is the only one: it names zero or
+/// more canonical addresses, so a single entry is a one-element list rather
+/// than a scalar, and a reader never has to handle two shapes.
+const LIST_VALUED_FIELDS: [&str; 1] = ["refs"];
+
+/// Structural fields that name at most one canonical address, so supplying
+/// them more than once is a caller error rather than a promotion to a list.
+const SINGLE_VALUED_REFERENCE_FIELDS: [&str; 1] = ["parent"];
+
+/// Validate the structural reference fields carried by an artifact.
+///
+/// `parent` and `refs` are structural: cue understands them, so it checks
+/// their shape and arity. This is not an exception to field-agnostic
+/// conventional-metadata encoding; it is what "structural" means.
+fn validate_reference_fields(fields: &[(String, String)], store_root: &Path) -> Result<()> {
+    for field in SINGLE_VALUED_REFERENCE_FIELDS {
+        if fields.iter().filter(|(key, _)| key == field).count() > 1 {
+            bail!("Invalid {field}: {field} must be supplied at most once");
+        }
+    }
+    for (key, value) in fields {
+        if SINGLE_VALUED_REFERENCE_FIELDS.contains(&key.as_str())
+            || LIST_VALUED_FIELDS.contains(&key.as_str())
+        {
+            address::validate_reference(key, value, store_root)?;
+        }
+    }
+    Ok(())
+}
+
 /// Serialize frontmatter fields into a `---\n...\n---\n` byte block.
 ///
 /// A key supplied once becomes a scalar; a key repeated two or more times
 /// becomes a YAML Sequence of coerced scalars (in encounter order). Keys are
 /// emitted in first-seen order (`serde_yaml::Mapping` preserves insertion
-/// order). This is field-agnostic: the same rule applies to any key.
+/// order). This is field-agnostic for conventional metadata: the same rule
+/// applies to any key cue does not understand. The structural fields in
+/// `LIST_VALUED_FIELDS` are the exception, and always serialize as a
+/// Sequence.
 pub fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
     let mut map = serde_yaml::Mapping::new();
     for (k, v) in fields {
@@ -159,9 +320,14 @@ pub fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
         let elem = coerce_scalar(v);
         match map.get_mut(&key) {
             None => {
-                // First occurrence: store as a scalar. Its slot is fixed here
-                // and never moves, so first-seen key order is preserved.
-                map.insert(key, elem);
+                // First occurrence: store as a scalar, unless the field is a
+                // list by definition. Its slot is fixed here and never moves,
+                // so first-seen key order is preserved.
+                if LIST_VALUED_FIELDS.contains(&k.as_str()) {
+                    map.insert(key, serde_yaml::Value::Sequence(vec![elem]));
+                } else {
+                    map.insert(key, elem);
+                }
             }
             Some(existing) => {
                 // Second+ occurrence: promote the scalar to a Sequence and
@@ -188,27 +354,6 @@ pub fn build_frontmatter_bytes(fields: &[(String, String)]) -> Result<Vec<u8>> {
     out.extend_from_slice(yaml_str.as_bytes());
     out.extend_from_slice(b"---\n");
     Ok(out)
-}
-
-/// Maximum length of a dot segment still considered a file extension.
-const MAX_EXTENSION_LEN: usize = 8;
-
-/// Returns `true` if `ext` looks like a real file extension rather
-/// than the tail of a dotted slug.
-///
-/// `Path::extension` splits at the last dot, so it happily reports
-/// `0-notes` for `v0.2.0-notes` and `2` for `v1.2`. Those are slugs,
-/// not filenames, and must still be normalized to `.md`. A dot
-/// segment counts as an extension only when it starts with an ASCII
-/// letter, is entirely ASCII alphanumeric, and is short.
-///
-/// Known residual: a slug whose tail happens to look like an
-/// extension (`spec.v2`) passes through unnormalized.
-fn looks_like_extension(ext: &str) -> bool {
-    !ext.is_empty()
-        && ext.len() <= MAX_EXTENSION_LEN
-        && ext.starts_with(|c: char| c.is_ascii_alphabetic())
-        && ext.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 /// Validate a caller-supplied artifact filename.
@@ -308,50 +453,6 @@ pub fn resolve_clipboard(filename: &str) -> anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn real_extensions_are_recognized() {
-        for ext in [
-            "md", "MD", "txt", "log", "sh", "png", "jpeg", "yaml", "rs", "json",
-        ] {
-            assert!(
-                looks_like_extension(ext),
-                "'{ext}' should count as a file extension"
-            );
-        }
-    }
-
-    #[test]
-    fn dotted_slug_tails_are_not_extensions() {
-        // Tails produced by `Path::extension` on versioned or dated
-        // slugs: digit-leading, hyphenated, empty, or implausibly long.
-        for ext in [
-            "",
-            "0-notes",
-            "2",
-            "30-standup",
-            "0",
-            "v2-draft",
-            "verylongextension",
-        ] {
-            assert!(
-                !looks_like_extension(ext),
-                "'{ext}' should not count as a file extension"
-            );
-        }
-    }
-
-    #[test]
-    fn extension_of_versioned_slug_is_rejected() {
-        // Guards the exact reported case end to end at the predicate
-        // level: `v0.2.0-notes` must be treated as extensionless.
-        let ext = Path::new("v0.2.0-notes")
-            .extension()
-            .and_then(|e| e.to_str())
-            .expect("Path::extension reports a tail for dotted slugs");
-        assert_eq!(ext, "0-notes");
-        assert!(!looks_like_extension(ext));
-    }
 
     #[test]
     fn validate_filename_accepts_valid_inputs() {
