@@ -82,7 +82,7 @@ pub fn handle(
             };
             handle_create(cwd, &name, options, store_root)
         }
-        ContextCommands::List { json } => handle_list(cwd, json, store_root),
+        ContextCommands::List { json, scope } => handle_list(cwd, json, scope, store_root),
         ContextCommands::Pin { context } => handle_pin(cwd, &context, store_root),
         ContextCommands::Unpin { context } => handle_unpin(cwd, &context, store_root),
         ContextCommands::Pins { scope } => handle_pins(cwd, scope, store_root),
@@ -220,18 +220,8 @@ fn handle_pins(cwd: &Path, scope: QueryScope, store_root: Option<&Path>) -> anyh
         QueryScope::Store => {
             // Joining the scope directories and the filename is what yields an
             // address, so only entries with that shape are pins.
-            for org in read_state_dir(&pins_dir)? {
-                if !org.is_dir() {
-                    continue;
-                }
-                let org_name = state_entry_name(&org)?;
-                for repo in read_state_dir(&org)? {
-                    if !repo.is_dir() {
-                        continue;
-                    }
-                    let repo_name = state_entry_name(&repo)?;
-                    collect_scope_pins(&repo, &format!("{org_name}/{repo_name}"), &mut addresses)?;
-                }
+            for (scope, scope_dir) in scope_dirs(&pins_dir)? {
+                collect_scope_pins(&scope_dir, &scope, &mut addresses)?;
             }
         }
         QueryScope::Repo => {
@@ -255,27 +245,52 @@ fn collect_scope_pins(
     scope: &str,
     addresses: &mut Vec<String>,
 ) -> anyhow::Result<()> {
-    for marker in read_state_dir(scope_dir)? {
+    for marker in read_optional_dir(scope_dir)? {
         if !marker.is_file() {
             continue;
         }
-        addresses.push(format!("{scope}/{}", state_entry_name(&marker)?));
+        addresses.push(format!("{scope}/{}", entry_name(&marker)?));
     }
     Ok(())
 }
 
-/// Read a pin state directory, treating a missing one as empty.
+/// Every `<org>/<repo>` scope directory directly below `root`, paired with the
+/// `<org>/<repo>` prefix its contents address.
 ///
-/// A missing pins directory is an empty working set rather than an error, and
-/// scope directories left behind by the last unpin in a scope are retained
-/// rather than pruned, so an empty read is the ordinary case.
-fn read_state_dir(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+/// Joining the two directory levels is what yields an address, so entries
+/// without that shape are skipped rather than failing the walk. What counts as
+/// a scope at a given root is the caller's concern: this walks shape only.
+fn scope_dirs(root: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
+    let mut scopes = Vec::new();
+    for org in read_optional_dir(root)? {
+        if !org.is_dir() {
+            continue;
+        }
+        let org_name = entry_name(&org)?.to_string();
+        for repo in read_optional_dir(&org)? {
+            if !repo.is_dir() {
+                continue;
+            }
+            let scope = format!("{org_name}/{}", entry_name(&repo)?);
+            scopes.push((scope, repo));
+        }
+    }
+    Ok(scopes)
+}
+
+/// Read a directory, treating a missing one as empty.
+///
+/// Absence is the ordinary case for both callers: a store may hold no pin
+/// state at all, scope directories left behind by the last unpin in a scope
+/// are retained rather than pruned, and a repository scope holding no context
+/// has no directory.
+fn read_optional_dir(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     let entries = match std::fs::read_dir(dir) {
         Ok(entries) => entries,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => {
             return Err(error)
-                .with_context(|| format!("could not read pin state at {}", dir.display()));
+                .with_context(|| format!("could not read directory at {}", dir.display()));
         }
     };
     let mut paths = Vec::new();
@@ -285,16 +300,11 @@ fn read_state_dir(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
     Ok(paths)
 }
 
-fn state_entry_name(entry: &Path) -> anyhow::Result<&str> {
+fn entry_name(entry: &Path) -> anyhow::Result<&str> {
     entry
         .file_name()
         .and_then(|name| name.to_str())
-        .with_context(|| {
-            format!(
-                "pin state entry name is not valid UTF-8: {}",
-                entry.display()
-            )
-        })
+        .with_context(|| format!("store entry name is not valid UTF-8: {}", entry.display()))
 }
 
 fn handle_switch(cwd: &Path, slug: &str, branch: Option<String>) -> anyhow::Result<()> {
@@ -322,55 +332,92 @@ fn target_branch(cwd: &Path, branch: Option<String>, action: &str) -> anyhow::Re
     Ok(branch)
 }
 
-fn handle_list(cwd: &Path, json: bool, store_root: Option<&Path>) -> anyhow::Result<()> {
-    let scope = store::repository_scope(cwd)?;
-    let repository_dir = store::root(store_root)?.join(&scope);
-
+/// List contexts at the requested breadth.
+///
+/// The repository scope is resolved only for `QueryScope::Repo`, so the
+/// whole-store view works from anywhere, including outside a repository.
+fn handle_list(
+    cwd: &Path,
+    json: bool,
+    scope: QueryScope,
+    store_root: Option<&Path>,
+) -> anyhow::Result<()> {
+    let store_root = store::root(store_root)?;
     let mut contexts = Vec::new();
-    if repository_dir.is_dir() {
-        for entry in std::fs::read_dir(&repository_dir)? {
-            let context_dir = entry?.path();
-            let context_path = context_dir.join("context.md");
-            if !context_path.is_file() {
-                continue;
+    match scope {
+        QueryScope::Store => {
+            for (scope, scope_dir) in scope_dirs(&store_root)? {
+                // Directly below the store root, a dot-named directory is
+                // store-internal state such as `.state`, never a repository
+                // scope: an origin-derived scope cannot be dot-named.
+                if scope.starts_with('.') {
+                    continue;
+                }
+                collect_scope_contexts(&scope_dir, &scope, &mut contexts)?;
             }
-            let context = context_dir
-                .file_name()
-                .and_then(|name| name.to_str())
-                .context("context directory name is not valid UTF-8")?
-                .to_string();
-            let frontmatter = extract_frontmatter_yaml(&context_path).with_context(|| {
-                format!(
-                    "could not read context metadata at {}",
-                    context_path.display()
-                )
-            })?;
-            let metadata: StoredContextMetadata =
-                serde_yaml::from_str(&frontmatter).with_context(|| {
-                    format!("invalid context metadata at {}", context_path.display())
-                })?;
-            contexts.push(ContextListEntry {
-                context,
-                scope: scope.display().to_string(),
-                title: metadata.title,
-                kind: metadata.kind,
-                mode: metadata.mode,
-                description: metadata.description,
-                created_at: metadata.created_at,
-                parent: metadata.parent,
-                refs: metadata.refs,
-                path: context_path,
-            });
+        }
+        QueryScope::Repo => {
+            let scope = scope_prefix(cwd)?;
+            collect_scope_contexts(&store_root.join(&scope), &scope, &mut contexts)?;
         }
     }
-    contexts.sort_by(|left, right| left.context.cmp(&right.context));
+
+    // Ordering by canonical address is deterministic and stable; there is no
+    // recency or operator-chosen ordering. Within one scope this is ordering
+    // by slug, so the default view is unchanged.
+    contexts
+        .sort_by(|left, right| (&left.scope, &left.context).cmp(&(&right.scope, &right.context)));
 
     if json {
         println!("{}", serde_json::to_string_pretty(&contexts)?);
-    } else {
-        for context in contexts {
-            println!("{}", context.context);
+        return Ok(());
+    }
+    for context in contexts {
+        match scope {
+            // A bare slug identifies a context only within one scope, and is
+            // what `cue context switch` accepts.
+            QueryScope::Repo => println!("{}", context.context),
+            QueryScope::Store => println!("{}/{}", context.scope, context.context),
         }
+    }
+    Ok(())
+}
+
+/// Append the contexts held directly in one `<org>/<repo>` directory.
+///
+/// A context is a directory containing `context.md`; anything else in a scope
+/// directory is skipped rather than failing the listing.
+fn collect_scope_contexts(
+    scope_dir: &Path,
+    scope: &str,
+    contexts: &mut Vec<ContextListEntry>,
+) -> anyhow::Result<()> {
+    for context_dir in read_optional_dir(scope_dir)? {
+        let context_path = context_dir.join("context.md");
+        if !context_path.is_file() {
+            continue;
+        }
+        let context = entry_name(&context_dir)?.to_string();
+        let frontmatter = extract_frontmatter_yaml(&context_path).with_context(|| {
+            format!(
+                "could not read context metadata at {}",
+                context_path.display()
+            )
+        })?;
+        let metadata: StoredContextMetadata = serde_yaml::from_str(&frontmatter)
+            .with_context(|| format!("invalid context metadata at {}", context_path.display()))?;
+        contexts.push(ContextListEntry {
+            context,
+            scope: scope.to_string(),
+            title: metadata.title,
+            kind: metadata.kind,
+            mode: metadata.mode,
+            description: metadata.description,
+            created_at: metadata.created_at,
+            parent: metadata.parent,
+            refs: metadata.refs,
+            path: context_path,
+        });
     }
     Ok(())
 }

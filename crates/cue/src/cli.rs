@@ -144,11 +144,14 @@ pub enum ContextCommands {
         #[arg(long = "ref")]
         refs: Vec<String>,
     },
-    /// List contexts in the current repository scope
+    /// List contexts in the current repository scope, or in every scope
     List {
         /// Output structured JSON instead of context slugs
         #[arg(long)]
         json: bool,
+        /// Breadth to query: the current repository scope, or every scope
+        #[arg(long, value_enum, default_value = "repo")]
+        scope: QueryScope,
     },
     /// Add a context to the operator's working set
     Pin {
