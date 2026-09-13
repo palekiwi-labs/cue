@@ -149,6 +149,9 @@ pub enum ContextCommands {
         /// Output structured JSON instead of context slugs
         #[arg(long)]
         json: bool,
+        /// List only the pinned working set
+        #[arg(long)]
+        pinned: bool,
         /// Breadth to query: the current repository scope, or every scope
         #[arg(long, value_enum, default_value = "repo")]
         scope: QueryScope,

@@ -33,6 +33,16 @@ fn plant_log_entry(context_dir: &Path, timestamp: u64) {
     .expect("Failed to write log entry");
 }
 
+/// Plant a context whose metadata cannot be parsed, so any listing that
+/// enumerates it fails. `kind` and `created_at` are required, so omitting
+/// them is enough.
+fn plant_unreadable_context(scope_dir: &Path, slug: &str) {
+    let context_dir = scope_dir.join(slug);
+    std::fs::create_dir_all(&context_dir).expect("Failed to create context dir");
+    std::fs::write(context_dir.join("context.md"), "---\ntitle: broken\n---\n")
+        .expect("Failed to write context.md");
+}
+
 /// Run a JSON listing and hand back its contexts as an array.
 fn list_json(env: &helpers::TestEnv, args: &[&str]) -> anyhow::Result<Vec<Value>> {
     let output = env
@@ -995,4 +1005,365 @@ fn context_list_sort_recency_ignores_names_that_are_not_log_entries() -> anyhow:
         .stdout("beta\nalpha\ngamma\n");
 
     Ok(())
+}
+
+/// The working set is a set of contexts, so listing it reports the same rows
+/// the unnarrowed listing reports, in the same canonical order.
+#[test]
+fn context_list_pinned_reports_only_the_working_set() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for slug in ["alpha", "beta", "zeta"] {
+        env.command()
+            .args(["context", "create", slug])
+            .assert()
+            .success();
+    }
+    for slug in ["zeta", "alpha"] {
+        env.command()
+            .args(["context", "pin", slug])
+            .assert()
+            .success();
+    }
+
+    env.command()
+        .args(["context", "list", "--pinned"])
+        .assert()
+        .success()
+        .stdout("alpha\nzeta\n");
+}
+
+/// Pin state is held per scope, so whole-store breadth reports the working
+/// set across every scope. A bare slug stops identifying a context once the
+/// query spans scopes, so those lines are canonical addresses, exactly as an
+/// unnarrowed whole-store listing prints them.
+#[test]
+fn context_list_pinned_scope_store_prints_canonical_addresses() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    let other = env.root().join("other-repo");
+    setup_scope_repo(&other, "https://github.com/other/project.git");
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+    env.command()
+        .args(["-C"])
+        .arg(&other)
+        .args(["context", "create", "roadmap"])
+        .assert()
+        .success();
+    env.command()
+        .args(["context", "pin", "alpha"])
+        .assert()
+        .success();
+    env.command()
+        .args(["context", "pin", "other/project/roadmap"])
+        .assert()
+        .success();
+
+    env.command()
+        .args(["context", "list", "--pinned", "--scope", "store"])
+        .assert()
+        .success()
+        .stdout("acme/widgets/alpha\nother/project/roadmap\n");
+
+    // The default breadth sees only this repository's pins.
+    env.command()
+        .args(["context", "list", "--pinned"])
+        .assert()
+        .success()
+        .stdout("alpha\n");
+}
+
+/// A pin outlives the context it names, and a context that does not exist has
+/// no row to report. Such a pin is skipped rather than reported as an empty
+/// row, and it keeps its place in the working set: `pins` is what answers
+/// what is pinned, including pins a listing cannot render.
+#[test]
+fn context_list_pinned_skips_pins_without_a_context() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+    for context in ["alpha", "ghost", "other/project/roadmap"] {
+        env.command()
+            .args(["context", "pin", context])
+            .assert()
+            .success();
+    }
+
+    env.command()
+        .args(["context", "list", "--pinned", "--scope", "store"])
+        .assert()
+        .success()
+        .stdout("acme/widgets/alpha\n");
+
+    env.command()
+        .args(["context", "pins", "--scope", "store"])
+        .assert()
+        .success()
+        .stdout("acme/widgets/alpha\nacme/widgets/ghost\nother/project/roadmap\n");
+}
+
+/// `--pinned` selects what is enumerated rather than narrowing an enumerated
+/// listing. A context that cannot be read is fatal to a listing that visits
+/// it, so a store holding one proves the narrowed listing never visits the
+/// contexts outside the working set.
+#[test]
+fn context_list_pinned_reads_only_pinned_contexts() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+    env.command()
+        .args(["context", "pin", "alpha"])
+        .assert()
+        .success();
+    plant_unreadable_context(&env.cue_store().join("acme/widgets"), "broken");
+
+    for args in [
+        vec!["context", "list"],
+        vec!["context", "list", "--json"],
+        vec!["context", "list", "--scope", "store"],
+    ] {
+        env.command().args(&args).assert().failure();
+    }
+
+    env.command()
+        .args(["context", "list", "--pinned"])
+        .assert()
+        .success()
+        .stdout("alpha\n");
+
+    env.command()
+        .args(["context", "list", "--pinned", "--scope", "store"])
+        .assert()
+        .success()
+        .stdout("acme/widgets/alpha\n");
+}
+
+/// The same pushdown holds for the per-context log scan that JSON and recency
+/// ordering perform: a log outside the working set is never listed, so a log
+/// that cannot be read is fatal only to the listing that visits it.
+#[test]
+fn context_list_pinned_reads_only_pinned_logs() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for slug in ["alpha", "noisy"] {
+        env.command()
+            .args(["context", "create", slug])
+            .assert()
+            .success();
+    }
+    env.command()
+        .args(["context", "pin", "alpha"])
+        .assert()
+        .success();
+    // A regular file where the log directory belongs: reading it as a
+    // directory fails with something other than "not found".
+    std::fs::write(env.cue_store().join("acme/widgets/noisy/log"), "")?;
+
+    env.command()
+        .args(["context", "list", "--json"])
+        .assert()
+        .failure();
+    env.command()
+        .args(["context", "list", "--sort", "recency"])
+        .assert()
+        .failure();
+
+    let contexts = list_json(&env, &["context", "list", "--pinned", "--json"])?;
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(contexts[0]["context"], "alpha");
+
+    env.command()
+        .args(["context", "list", "--pinned", "--sort", "recency"])
+        .assert()
+        .success()
+        .stdout("alpha\n");
+
+    Ok(())
+}
+
+/// The narrowed listing carries the full row shape, so a client renders the
+/// working set from one query. Narrowing is a selection, so it adds no field
+/// and removes none.
+#[test]
+fn context_list_pinned_json_reports_full_rows() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args([
+            "context",
+            "create",
+            "release",
+            "--title",
+            "Release cue",
+            "--kind",
+            "coord",
+            "--mode",
+            "build",
+            "--description",
+            "Coordinate the release",
+        ])
+        .assert()
+        .success();
+    env.command()
+        .args(["context", "pin", "release"])
+        .assert()
+        .success();
+    plant_log_entry(
+        &env.cue_store().join("acme/widgets/release"),
+        1_700_000_000_000_000_000,
+    );
+
+    let contexts = list_json(&env, &["context", "list", "--pinned", "--json"])?;
+    assert_eq!(contexts.len(), 1);
+    let context = &contexts[0];
+
+    assert_eq!(context["context"], "release");
+    assert_eq!(context["scope"], "acme/widgets");
+    assert_eq!(context["title"], "Release cue");
+    assert_eq!(context["kind"], "coord");
+    assert_eq!(context["mode"], "build");
+    assert_eq!(context["description"], "Coordinate the release");
+    assert_eq!(context["last_logged_at"], 1_700_000_000_u64);
+    assert_eq!(
+        context["path"],
+        Value::from(
+            env.cue_store()
+                .join("acme/widgets/release/context.md")
+                .to_str()
+                .expect("store path should be valid UTF-8")
+        )
+    );
+
+    let mut fields: Vec<&str> = context
+        .as_object()
+        .expect("a context should be an object")
+        .keys()
+        .map(String::as_str)
+        .collect();
+    fields.sort_unstable();
+    assert_eq!(
+        fields,
+        [
+            "context",
+            "created_at",
+            "description",
+            "kind",
+            "last_logged_at",
+            "mode",
+            "parent",
+            "path",
+            "refs",
+            "scope",
+            "title",
+        ]
+    );
+
+    Ok(())
+}
+
+/// Narrowing to the working set is independent of ordering and truncation, so
+/// the three compose. The excluded context is the most recently active one,
+/// so it would lead the listing if narrowing were not applied first.
+#[test]
+fn context_list_pinned_composes_with_sort_and_limit() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for slug in ["alpha", "beta", "gamma", "zeta"] {
+        env.command()
+            .args(["context", "create", slug])
+            .assert()
+            .success();
+    }
+    for slug in ["alpha", "beta", "zeta"] {
+        env.command()
+            .args(["context", "pin", slug])
+            .assert()
+            .success();
+    }
+    let scope_dir = env.cue_store().join("acme/widgets");
+    plant_log_entry(&scope_dir.join("alpha"), 300);
+    plant_log_entry(&scope_dir.join("beta"), 200);
+    plant_log_entry(&scope_dir.join("zeta"), 100);
+    plant_log_entry(&scope_dir.join("gamma"), 400);
+
+    env.command()
+        .args(["context", "list", "--pinned", "--sort", "recency"])
+        .assert()
+        .success()
+        .stdout("alpha\nbeta\nzeta\n");
+
+    env.command()
+        .args([
+            "context", "list", "--pinned", "--sort", "recency", "--limit", "2",
+        ])
+        .assert()
+        .success()
+        .stdout("alpha\nbeta\n");
+}
+
+/// An empty working set is an empty listing rather than an error, in both
+/// output forms, including when the store holds no pin state at all.
+#[test]
+fn context_list_pinned_succeeds_with_no_pins() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+    assert!(!env.cue_store().join(".state").exists());
+
+    env.command()
+        .args(["context", "list", "--pinned"])
+        .assert()
+        .success()
+        .stdout("");
+
+    env.command()
+        .args(["context", "list", "--pinned", "--json"])
+        .assert()
+        .success()
+        .stdout("[]\n");
+}
+
+/// Whole-store breadth resolves no repository scope, so the working set is
+/// listable from anywhere, including outside a Git repository. The default
+/// breadth still requires an origin remote.
+#[test]
+fn context_list_pinned_scope_store_needs_no_repository_scope() {
+    let env = helpers::TestEnv::new();
+    let other = env.root().join("other-repo");
+    setup_scope_repo(&other, "https://github.com/other/project.git");
+    env.command()
+        .args(["-C"])
+        .arg(&other)
+        .args(["context", "create", "roadmap"])
+        .assert()
+        .success();
+    env.command()
+        .args(["-C"])
+        .arg(&other)
+        .args(["context", "pin", "roadmap"])
+        .assert()
+        .success();
+
+    env.command()
+        .args(["context", "list", "--pinned", "--scope", "store"])
+        .assert()
+        .success()
+        .stdout("other/project/roadmap\n");
+
+    env.command()
+        .args(["context", "list", "--pinned"])
+        .assert()
+        .failure();
 }

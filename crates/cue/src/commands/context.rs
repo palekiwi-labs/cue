@@ -100,10 +100,11 @@ pub fn handle(
         }
         ContextCommands::List {
             json,
+            pinned,
             scope,
             sort,
             limit,
-        } => handle_list(cwd, json, scope, sort, limit, store_root),
+        } => handle_list(cwd, json, pinned, scope, sort, limit, store_root),
         ContextCommands::Pin { context } => handle_pin(cwd, &context, store_root),
         ContextCommands::Unpin { context } => handle_unpin(cwd, &context, store_root),
         ContextCommands::Pins { scope } => handle_pins(cwd, scope, store_root),
@@ -115,8 +116,8 @@ pub fn handle(
 /// Pin state lives outside every context, under the store root, as a directory
 /// of zero-byte marker files at `<store>/.state/pins/<org>/<repo>/<slug>`. It
 /// is operator state rather than metadata describing a context.
-fn pins_dir(store_root: Option<&Path>) -> anyhow::Result<PathBuf> {
-    Ok(store::root(store_root)?.join(".state").join("pins"))
+fn pins_dir(store_root: &Path) -> PathBuf {
+    store_root.join(".state").join("pins")
 }
 
 /// The accepted pin argument forms, quoted back in every error so the message
@@ -184,7 +185,7 @@ fn scope_prefix(cwd: &Path) -> anyhow::Result<String> {
 
 fn handle_pin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow::Result<()> {
     let address = resolve_pin_address(cwd, context)?;
-    let marker = pins_dir(store_root)?.join(&address);
+    let marker = pins_dir(&store::root(store_root)?).join(&address);
     let scope_dir = marker
         .parent()
         .context("pin marker path has no scope directory")?;
@@ -212,7 +213,7 @@ fn handle_pin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow::R
 
 fn handle_unpin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow::Result<()> {
     let address = resolve_pin_address(cwd, context)?;
-    let marker = pins_dir(store_root)?.join(&address);
+    let marker = pins_dir(&store::root(store_root)?).join(&address);
 
     // An unlink is atomic; an absent marker is already the desired state. The
     // emptied scope directory is deliberately left in place, because pruning
@@ -235,21 +236,11 @@ fn handle_unpin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow:
 /// The repository scope is resolved only for `QueryScope::Repo`, so the
 /// whole-store view works from anywhere, including outside a repository.
 fn handle_pins(cwd: &Path, scope: QueryScope, store_root: Option<&Path>) -> anyhow::Result<()> {
-    let pins_dir = pins_dir(store_root)?;
-    let mut addresses = Vec::new();
-    match scope {
-        QueryScope::Store => {
-            // Joining the scope directories and the filename is what yields an
-            // address, so only entries with that shape are pins.
-            for (scope, scope_dir) in scope_dirs(&pins_dir)? {
-                collect_scope_pins(&scope_dir, &scope, &mut addresses)?;
-            }
-        }
-        QueryScope::Repo => {
-            let scope = scope_prefix(cwd)?;
-            collect_scope_pins(&pins_dir.join(&scope), &scope, &mut addresses)?;
-        }
-    }
+    let pins_dir = pins_dir(&store::root(store_root)?);
+    let mut addresses: Vec<String> = read_pins(cwd, scope, &pins_dir)?
+        .into_iter()
+        .map(|(scope, context)| format!("{scope}/{context}"))
+        .collect();
 
     // Alphabetical order by canonical address is deterministic and stable;
     // there is no recency or operator-chosen ordering.
@@ -260,17 +251,46 @@ fn handle_pins(cwd: &Path, scope: QueryScope, store_root: Option<&Path>) -> anyh
     Ok(())
 }
 
+/// The pinned working set at the requested breadth, as `(scope, context)`
+/// pairs in directory order.
+///
+/// Reading pin state costs one directory listing per scope and opens nothing,
+/// because a pin is a name rather than a document. The repository scope is
+/// resolved only for `QueryScope::Repo`, so the whole-store view works from
+/// anywhere, including outside a repository.
+fn read_pins(
+    cwd: &Path,
+    scope: QueryScope,
+    pins_dir: &Path,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let mut pins = Vec::new();
+    match scope {
+        QueryScope::Store => {
+            // Joining the scope directories and the filename is what yields an
+            // address, so only entries with that shape are pins.
+            for (scope, scope_dir) in scope_dirs(pins_dir)? {
+                collect_scope_pins(&scope_dir, &scope, &mut pins)?;
+            }
+        }
+        QueryScope::Repo => {
+            let scope = scope_prefix(cwd)?;
+            collect_scope_pins(&pins_dir.join(&scope), &scope, &mut pins)?;
+        }
+    }
+    Ok(pins)
+}
+
 /// Append the pins held directly in one `<org>/<repo>` directory.
 fn collect_scope_pins(
     scope_dir: &Path,
     scope: &str,
-    addresses: &mut Vec<String>,
+    pins: &mut Vec<(String, String)>,
 ) -> anyhow::Result<()> {
     for marker in read_optional_dir(scope_dir)? {
         if !marker.is_file() {
             continue;
         }
-        addresses.push(format!("{scope}/{}", entry_name(&marker)?));
+        pins.push((scope.to_string(), entry_name(&marker)?.to_string()));
     }
     Ok(())
 }
@@ -357,9 +377,17 @@ fn target_branch(cwd: &Path, branch: Option<String>, action: &str) -> anyhow::Re
 ///
 /// The repository scope is resolved only for `QueryScope::Repo`, so the
 /// whole-store view works from anywhere, including outside a repository.
+///
+/// `pinned` selects what is enumerated rather than narrowing what was
+/// enumerated. Pin state is a flat directory of markers so that the working
+/// set is answerable in one directory listing; enumerating every context in
+/// the store and discarding the unpinned ones would spend the cost that
+/// design exists to avoid, and grows with the store rather than with the
+/// working set.
 fn handle_list(
     cwd: &Path,
     json: bool,
+    pinned: bool,
     scope: QueryScope,
     sort: Option<ContextSort>,
     limit: Option<usize>,
@@ -367,21 +395,27 @@ fn handle_list(
 ) -> anyhow::Result<()> {
     let store_root = store::root(store_root)?;
     let mut contexts = Vec::new();
-    match scope {
-        QueryScope::Store => {
-            for (scope, scope_dir) in scope_dirs(&store_root)? {
-                // Directly below the store root, a dot-named directory is
-                // store-internal state such as `.state`, never a repository
-                // scope: an origin-derived scope cannot be dot-named.
-                if scope.starts_with('.') {
-                    continue;
+    if pinned {
+        let pins = read_pins(cwd, scope, &pins_dir(&store_root))?;
+        collect_pinned_contexts(&store_root, &pins, &mut contexts)?;
+    } else {
+        match scope {
+            QueryScope::Store => {
+                for (scope, scope_dir) in scope_dirs(&store_root)? {
+                    // Directly below the store root, a dot-named directory is
+                    // store-internal state such as `.state`, never a
+                    // repository scope: an origin-derived scope cannot be
+                    // dot-named.
+                    if scope.starts_with('.') {
+                        continue;
+                    }
+                    collect_scope_contexts(&scope_dir, &scope, &mut contexts)?;
                 }
-                collect_scope_contexts(&scope_dir, &scope, &mut contexts)?;
             }
-        }
-        QueryScope::Repo => {
-            let scope = scope_prefix(cwd)?;
-            collect_scope_contexts(&store_root.join(&scope), &scope, &mut contexts)?;
+            QueryScope::Repo => {
+                let scope = scope_prefix(cwd)?;
+                collect_scope_contexts(&store_root.join(&scope), &scope, &mut contexts)?;
+            }
         }
     }
 
@@ -458,34 +492,67 @@ fn collect_scope_contexts(
     contexts: &mut Vec<ContextListEntry>,
 ) -> anyhow::Result<()> {
     for context_dir in read_optional_dir(scope_dir)? {
-        let context_path = context_dir.join("context.md");
-        if !context_path.is_file() {
-            continue;
-        }
         let context = entry_name(&context_dir)?.to_string();
-        let frontmatter = extract_frontmatter_yaml(&context_path).with_context(|| {
-            format!(
-                "could not read context metadata at {}",
-                context_path.display()
-            )
-        })?;
-        let metadata: StoredContextMetadata = serde_yaml::from_str(&frontmatter)
-            .with_context(|| format!("invalid context metadata at {}", context_path.display()))?;
-        contexts.push(ContextListEntry {
-            context,
-            scope: scope.to_string(),
-            title: metadata.title,
-            kind: metadata.kind,
-            mode: metadata.mode,
-            description: metadata.description,
-            created_at: metadata.created_at,
-            parent: metadata.parent,
-            refs: metadata.refs,
-            last_logged_nanos: None,
-            path: context_path,
-        });
+        if let Some(entry) = read_context_entry(&context_dir, scope, &context)? {
+            contexts.push(entry);
+        }
     }
     Ok(())
+}
+
+/// Append the contexts the working set names, resolving each pin by address.
+///
+/// A pin is a name, and the context it names may never have existed or may
+/// have been deleted since. Such a pin has no row to report, so it is skipped:
+/// the working set keeps it, and `cue context pins` is what reports it.
+fn collect_pinned_contexts(
+    store_root: &Path,
+    pins: &[(String, String)],
+    contexts: &mut Vec<ContextListEntry>,
+) -> anyhow::Result<()> {
+    for (scope, context) in pins {
+        // Resolution is direct concatenation onto the store root, which is
+        // what makes narrowing to the working set cost one read per pin.
+        let context_dir = store_root.join(scope).join(context);
+        if let Some(entry) = read_context_entry(&context_dir, scope, context)? {
+            contexts.push(entry);
+        }
+    }
+    Ok(())
+}
+
+/// Read one context directory into a listing row, or `None` when it holds no
+/// `context.md` and so is not a context at all.
+fn read_context_entry(
+    context_dir: &Path,
+    scope: &str,
+    context: &str,
+) -> anyhow::Result<Option<ContextListEntry>> {
+    let context_path = context_dir.join("context.md");
+    if !context_path.is_file() {
+        return Ok(None);
+    }
+    let frontmatter = extract_frontmatter_yaml(&context_path).with_context(|| {
+        format!(
+            "could not read context metadata at {}",
+            context_path.display()
+        )
+    })?;
+    let metadata: StoredContextMetadata = serde_yaml::from_str(&frontmatter)
+        .with_context(|| format!("invalid context metadata at {}", context_path.display()))?;
+    Ok(Some(ContextListEntry {
+        context: context.to_string(),
+        scope: scope.to_string(),
+        title: metadata.title,
+        kind: metadata.kind,
+        mode: metadata.mode,
+        description: metadata.description,
+        created_at: metadata.created_at,
+        parent: metadata.parent,
+        refs: metadata.refs,
+        last_logged_nanos: None,
+        path: context_path,
+    }))
 }
 
 fn handle_create(
