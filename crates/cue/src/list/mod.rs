@@ -115,7 +115,10 @@ pub struct CueFile {
 }
 
 pub struct ListOptions {
-    pub scope: Option<String>,
+    /// The active-context override, narrowing the listing to one context.
+    /// Not a query scope: scope is the repository/store breadth a collection
+    /// query looks over, and this listing does not offer one yet.
+    pub context: Option<String>,
     pub cue_types: Vec<String>,
     pub json: bool,
     pub frontmatter: bool,
@@ -125,7 +128,7 @@ pub struct ListOptions {
 
 pub fn list(root: &Path, opts: ListOptions) -> Result<Vec<(PathBuf, Option<serde_json::Value>)>> {
     let ListOptions {
-        scope,
+        context,
         cue_types,
         frontmatter,
         store_root,
@@ -140,7 +143,7 @@ pub fn list(root: &Path, opts: ListOptions) -> Result<Vec<(PathBuf, Option<serde
     let store_dir = store::root(store_root.as_deref())?.join(store::repository_scope(root)?);
 
     // 2. Determine scan directory/directories
-    let active_context = cuelib::head::resolve_active_context(root, scope.as_deref())?;
+    let active_context = cuelib::head::resolve_active_context(root, context.as_deref())?;
     let mut paths = resolve_central_scan_paths(&store_dir, active_context.as_deref())?;
 
     // 3. Sort

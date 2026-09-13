@@ -65,7 +65,7 @@ fn main() -> anyhow::Result<()> {
                     frontmatter,
                     cue_type,
                     force,
-                    scope_name: context,
+                    context,
                     store_root: store_root.map(std::path::Path::to_path_buf),
                 },
             )?;
@@ -80,7 +80,7 @@ fn main() -> anyhow::Result<()> {
             commands::list::handle(
                 &cwd,
                 commands::list::ListOptions {
-                    scope: context,
+                    context,
                     cue_types,
                     json,
                     frontmatter,

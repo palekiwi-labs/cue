@@ -41,7 +41,7 @@ pub fn handle(cwd: &Path, command: LogCommands, store_root: Option<&Path>) -> Re
                 cwd,
                 LogAddOptions {
                     entry,
-                    scope_name: context,
+                    context,
                     store_root: store_root.map(Path::to_path_buf),
                 },
             )?;

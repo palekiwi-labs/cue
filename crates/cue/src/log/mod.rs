@@ -31,14 +31,14 @@ pub struct StoredLogEntry {
 
 pub struct LogAddOptions {
     pub entry: LogEntry,
-    pub scope_name: Option<String>,
+    pub context: Option<String>,
     pub store_root: Option<PathBuf>,
 }
 
 pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
     let LogAddOptions {
         mut entry,
-        scope_name,
+        context,
         store_root,
     } = opts;
 
@@ -53,7 +53,7 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
     // 2. Resolve the context in the central store. A log entry is a memory
     // and communication event, not a revision-correlated artifact, so no
     // repository revision is read or stamped here.
-    let context = cuelib::head::resolve_active_context(root, scope_name.as_deref())?
+    let context = cuelib::head::resolve_active_context(root, context.as_deref())?
         .context("No context selected; pass --context <context>")?;
     let store_root = store::root(store_root.as_deref())?;
     let repository_dir = store_root.join(store::repository_scope(root)?);
@@ -106,10 +106,10 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
 
 pub fn list_entries(
     root: &Path,
-    scope_name: Option<&str>,
+    context: Option<&str>,
     store_root: Option<&Path>,
 ) -> Result<Vec<StoredLogEntry>> {
-    let context = cuelib::head::resolve_active_context(root, scope_name)?
+    let context = cuelib::head::resolve_active_context(root, context)?
         .context("No context selected; pass --context <context>")?;
     let context_dir = store::root(store_root)?
         .join(store::repository_scope(root)?)

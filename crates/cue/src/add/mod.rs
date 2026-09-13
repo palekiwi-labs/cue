@@ -13,7 +13,7 @@ pub struct AddOptions {
     pub frontmatter: Vec<(String, String)>,
     pub cue_type: String,
     pub force: bool,
-    pub scope_name: Option<String>,
+    pub context: Option<String>,
     pub store_root: Option<PathBuf>,
 }
 
@@ -35,7 +35,7 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
         frontmatter,
         cue_type,
         force,
-        scope_name,
+        context,
         store_root,
     } = opts;
 
@@ -44,7 +44,7 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
         filename: &filename,
         content: &content,
         force,
-        context: scope_name.as_deref(),
+        context: context.as_deref(),
         store_root: store_root.as_deref(),
     };
 

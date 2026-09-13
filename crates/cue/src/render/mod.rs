@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 
 pub struct RenderOptions {
     pub entries: Vec<String>,
-    pub scope_name: Option<String>,
+    pub context: Option<String>,
     pub store_root: Option<PathBuf>,
 }
 
@@ -12,10 +12,10 @@ pub struct RenderOptions {
 /// an existing one, matching `cue log list`.
 fn resolve_context_dir(
     root: &Path,
-    scope_name: Option<&str>,
+    context: Option<&str>,
     store_root: Option<&Path>,
 ) -> Result<PathBuf> {
-    let context = cuelib::head::resolve_active_context(root, scope_name)?
+    let context = cuelib::head::resolve_active_context(root, context)?
         .context("No context selected; pass --context <context>")?;
     let context_dir = store::root(store_root)?
         .join(store::repository_scope(root)?)
@@ -34,7 +34,7 @@ fn resolve_context_dir(
 pub fn render(root: &Path, opts: RenderOptions) -> Result<String> {
     let RenderOptions {
         entries,
-        scope_name,
+        context,
         store_root,
     } = opts;
 
@@ -42,7 +42,7 @@ pub fn render(root: &Path, opts: RenderOptions) -> Result<String> {
     let context_dir = if entries.iter().any(|entry| Path::new(entry).is_relative()) {
         Some(resolve_context_dir(
             root,
-            scope_name.as_deref(),
+            context.as_deref(),
             store_root.as_deref(),
         )?)
     } else {

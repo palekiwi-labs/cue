@@ -32,7 +32,7 @@ pub fn handle(
         cwd,
         crate::render::RenderOptions {
             entries: expanded_entries,
-            scope_name: context,
+            context,
             store_root: store_root.map(Path::to_path_buf),
         },
     )?;
