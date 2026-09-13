@@ -54,7 +54,23 @@ struct ContextListEntry {
     created_at: u64,
     parent: Option<String>,
     refs: Vec<String>,
+    /// Populated for JSON output or recency sorting. Preserve nanoseconds for
+    /// ordering, but expose whole Unix seconds (or null) in JSON.
+    #[serde(rename = "last_logged_at", serialize_with = "serialize_seconds")]
+    last_logged_nanos: Option<u64>,
     path: PathBuf,
+}
+
+/// Report a nanosecond log stamp as whole Unix seconds.
+///
+/// `None` is written as null rather than omitted.
+fn serialize_seconds<S: serde::Serializer>(
+    nanos: &Option<u64>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    nanos
+        .map(|nanos| nanos / 1_000_000_000)
+        .serialize(serializer)
 }
 
 pub fn handle(
@@ -376,8 +392,21 @@ fn handle_list(
     contexts
         .sort_by(|left, right| (&left.scope, &left.context).cmp(&(&right.scope, &right.context)));
 
-    if sort == Some(ContextSort::Recency) {
-        sort_by_recency(&mut contexts)?;
+    // Scan filenames once per context when needed for ordering or JSON.
+    // Plain default listing does not scan log directories.
+    let recency = sort == Some(ContextSort::Recency);
+    if recency || json {
+        read_log_activity(&mut contexts)?;
+    }
+
+    if recency {
+        // A context with no log entry has no activity to order by and sorts
+        // last, which `None` compares as under the reversed key. The sort is
+        // stable and the input is already in canonical address order, so
+        // contexts sharing a stamp keep that order. The key is the nanosecond
+        // stamp rather than the second that is reported, so entries written
+        // within one second stay in the order they happened.
+        contexts.sort_by_key(|context| std::cmp::Reverse(context.last_logged_nanos));
     }
 
     // Truncation is applied to the finished order, so a limit selects the
@@ -403,28 +432,19 @@ fn handle_list(
     Ok(())
 }
 
-/// Reorder a canonically ordered listing by latest log activity, newest
-/// first.
+/// Record each context's latest log activity, as the nanosecond stamp of its
+/// newest log entry.
 ///
-/// Every timestamp is read before anything is reordered, so a log directory
-/// that cannot be listed fails rather than silently ordering a context as if it
-/// had no activity. A context with no log entry has no activity to order by
-/// and sorts last, which `None` compares as under the reversed comparison.
-/// The sort is stable and the input is already in canonical address order, so
-/// contexts sharing a timestamp keep that order.
-fn sort_by_recency(contexts: &mut Vec<ContextListEntry>) -> anyhow::Result<()> {
-    let mut decorated = Vec::with_capacity(contexts.len());
-    for context in std::mem::take(contexts) {
-        let context_dir = context
-            .path
-            .parent()
-            .with_context(|| format!("context path has no directory: {}", context.path.display()))?
-            .to_path_buf();
-        decorated.push((crate::log::latest_timestamp(&context_dir)?, context));
+/// Log filenames are scanned before the listing is ordered or written out, so a log
+/// directory that cannot be listed fails rather than silently leaving a
+/// context standing as one with no activity.
+fn read_log_activity(contexts: &mut [ContextListEntry]) -> anyhow::Result<()> {
+    for context in contexts {
+        let context_dir = context.path.parent().with_context(|| {
+            format!("context path has no directory: {}", context.path.display())
+        })?;
+        context.last_logged_nanos = crate::log::latest_timestamp(context_dir)?;
     }
-
-    decorated.sort_by(|(left, _), (right, _)| right.cmp(left));
-    contexts.extend(decorated.into_iter().map(|(_, context)| context));
     Ok(())
 }
 
@@ -461,6 +481,7 @@ fn collect_scope_contexts(
             created_at: metadata.created_at,
             parent: metadata.parent,
             refs: metadata.refs,
+            last_logged_nanos: None,
             path: context_path,
         });
     }

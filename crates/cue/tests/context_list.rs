@@ -33,6 +33,23 @@ fn plant_log_entry(context_dir: &Path, timestamp: u64) {
     .expect("Failed to write log entry");
 }
 
+/// Run a JSON listing and hand back its contexts as an array.
+fn list_json(env: &helpers::TestEnv, args: &[&str]) -> anyhow::Result<Vec<Value>> {
+    let output = env
+        .command()
+        .args(args)
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let contexts: Value = serde_json::from_slice(&output)?;
+    Ok(contexts
+        .as_array()
+        .expect("contexts should be an array")
+        .clone())
+}
+
 #[test]
 fn context_list_json_reports_central_context_metadata() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
@@ -678,9 +695,9 @@ fn context_list_scope_store_sorts_and_limits_outside_a_repository() {
         .stdout("other/project/roadmap\n");
 }
 
-/// Selection changes which contexts are reported and in what order; it does
-/// not change what a reported context looks like. Recency metadata in JSON is
-/// a separate design question, so no field is added here.
+/// A reported context carries the same fields whatever selection produced
+/// it, `last_logged_at` among them: it describes the context, not the
+/// ordering that was asked for.
 #[test]
 fn context_list_json_fields_are_unchanged_by_selection() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
@@ -694,41 +711,212 @@ fn context_list_json_fields_are_unchanged_by_selection() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let output = env
-        .command()
-        .args([
+    for args in [
+        vec!["context", "list", "--json"],
+        vec![
             "context", "list", "--sort", "recency", "--limit", "1", "--json",
-        ])
+        ],
+    ] {
+        let contexts = list_json(&env, &args)?;
+        let mut fields: Vec<&str> = contexts[0]
+            .as_object()
+            .expect("a context should be an object")
+            .keys()
+            .map(String::as_str)
+            .collect();
+        fields.sort_unstable();
+
+        assert_eq!(
+            fields,
+            [
+                "context",
+                "created_at",
+                "description",
+                "kind",
+                "last_logged_at",
+                "mode",
+                "parent",
+                "path",
+                "refs",
+                "scope",
+                "title",
+            ]
+        );
+    }
+
+    Ok(())
+}
+
+/// Log activity is reported in whole Unix seconds. Entries are named for the
+/// nanosecond they were written at, so the reported value is that stamp
+/// truncated to a second: nanosecond precision exists to order entries, and
+/// is not what a reader is handed.
+#[test]
+fn context_list_json_reports_last_logged_at_in_seconds() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+    plant_log_entry(
+        &env.cue_store().join("acme/widgets/alpha"),
+        1_700_000_000_987_654_321,
+    );
+
+    for args in [
+        vec!["context", "list", "--json"],
+        vec!["context", "list", "--sort", "recency", "--json"],
+    ] {
+        let contexts = list_json(&env, &args)?;
+        assert_eq!(contexts[0]["last_logged_at"], 1_700_000_000_u64);
+    }
+
+    Ok(())
+}
+
+/// The newest entry is what is reported, not the first or the last one the
+/// directory listing happened to hand back.
+#[test]
+fn context_list_json_reports_the_newest_log_entry() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+    let context_dir = env.cue_store().join("acme/widgets/alpha");
+    for timestamp in [
+        1_700_000_000_000_000_000,
+        1_800_000_000_000_000_000,
+        1_600_000_000_000_000_000,
+    ] {
+        plant_log_entry(&context_dir, timestamp);
+    }
+
+    let contexts = list_json(&env, &["context", "list", "--json"])?;
+    assert_eq!(contexts[0]["last_logged_at"], 1_800_000_000_u64);
+
+    Ok(())
+}
+
+/// A context with no log entry has no activity to report. The field is still
+/// present and holds null, so a reader distinguishes "never logged" from
+/// "logged at some second" without treating a missing key as a third case.
+#[test]
+fn context_list_json_reports_null_last_logged_at_without_logs() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+
+    let contexts = list_json(&env, &["context", "list", "--json"])?;
+    let context = contexts[0]
+        .as_object()
+        .expect("a context should be an object");
+
+    assert_eq!(context.get("last_logged_at"), Some(&Value::Null));
+
+    Ok(())
+}
+
+/// The reported second is not what orders a recency listing. Two contexts
+/// logged within the same second are ordered by the nanosecond stamps their
+/// entries are named for, while both report that same second.
+#[test]
+fn context_list_sort_recency_orders_within_one_reported_second() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for slug in ["alpha", "zeta"] {
+        env.command()
+            .args(["context", "create", slug])
+            .assert()
+            .success();
+    }
+    plant_log_entry(
+        &env.cue_store().join("acme/widgets/alpha"),
+        1_700_000_000_000_000_100,
+    );
+    plant_log_entry(
+        &env.cue_store().join("acme/widgets/zeta"),
+        1_700_000_000_900_000_000,
+    );
+
+    env.command()
+        .args(["context", "list", "--sort", "recency"])
         .assert()
         .success()
-        .get_output()
-        .stdout
-        .clone();
-    let contexts: Value = serde_json::from_slice(&output)?;
-    let context = &contexts.as_array().expect("contexts should be an array")[0];
-    let mut fields: Vec<&str> = context
-        .as_object()
-        .expect("a context should be an object")
-        .keys()
-        .map(String::as_str)
-        .collect();
-    fields.sort_unstable();
+        .stdout("zeta\nalpha\n");
 
-    assert_eq!(
-        fields,
-        [
-            "context",
-            "created_at",
-            "description",
-            "kind",
-            "mode",
-            "parent",
-            "path",
-            "refs",
-            "scope",
-            "title",
-        ]
+    let contexts = list_json(&env, &["context", "list", "--sort", "recency", "--json"])?;
+    assert_eq!(contexts[0]["context"], "zeta");
+    assert_eq!(contexts[0]["last_logged_at"], 1_700_000_000_u64);
+    assert_eq!(contexts[1]["context"], "alpha");
+    assert_eq!(contexts[1]["last_logged_at"], 1_700_000_000_u64);
+
+    Ok(())
+}
+
+/// Activity is read per context, so widening the query reports each context's
+/// own log rather than the scope's newest.
+#[test]
+fn context_list_scope_store_json_reports_last_logged_at_per_context() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    let other = env.root().join("other-repo");
+    setup_scope_repo(&other, "https://github.com/other/project.git");
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+    env.command()
+        .args(["-C"])
+        .arg(&other)
+        .args(["context", "create", "roadmap"])
+        .assert()
+        .success();
+    plant_log_entry(
+        &env.cue_store().join("other/project/roadmap"),
+        1_700_000_000_000_000_000,
     );
+
+    let contexts = list_json(&env, &["context", "list", "--scope", "store", "--json"])?;
+    assert_eq!(contexts[0]["context"], "alpha");
+    assert_eq!(contexts[0]["last_logged_at"], Value::Null);
+    assert_eq!(contexts[1]["context"], "roadmap");
+    assert_eq!(contexts[1]["last_logged_at"], 1_700_000_000_u64);
+
+    Ok(())
+}
+
+/// The plain listing reports no activity, so it reads no log and a log path
+/// that cannot be listed cannot affect it. JSON does read every log, so the
+/// same store is an error there rather than a listing that reports a context
+/// as never logged because its log could not be read.
+#[test]
+fn context_list_json_fails_when_a_log_cannot_be_read() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+    // A regular file where the log directory belongs: reading it as a
+    // directory fails with something other than "not found".
+    std::fs::write(env.cue_store().join("acme/widgets/alpha/log"), "")?;
+
+    env.command()
+        .args(["context", "list"])
+        .assert()
+        .success()
+        .stdout("alpha\n");
+
+    env.command()
+        .args(["context", "list", "--json"])
+        .assert()
+        .failure();
 
     Ok(())
 }
