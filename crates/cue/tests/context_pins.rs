@@ -168,10 +168,30 @@ fn context_pins_lists_the_current_scope_as_canonical_addresses_in_order() {
         .stdout("acme/widgets/alpha\nacme/widgets/middle\nacme/widgets/zeta\n");
 }
 
-/// `--all` widens the same shape to the whole store, so no consumer branches
-/// on which view produced a line.
+/// `--scope repo` is the default, so naming it explicitly must not change
+/// what is listed.
 #[test]
-fn context_pins_all_lists_every_scope_in_order() {
+fn context_pins_scope_repo_matches_the_default_view() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for context in ["zeta", "alpha", "other/project/roadmap"] {
+        env.command()
+            .args(["context", "pin", context])
+            .assert()
+            .success();
+    }
+
+    env.command()
+        .args(["context", "pins", "--scope", "repo"])
+        .assert()
+        .success()
+        .stdout("acme/widgets/alpha\nacme/widgets/zeta\n");
+}
+
+/// `--scope store` widens the same shape to the whole store, so no consumer
+/// branches on which view produced a line.
+#[test]
+fn context_pins_scope_store_lists_every_scope_in_order() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
     for context in [
@@ -187,12 +207,45 @@ fn context_pins_all_lists_every_scope_in_order() {
     }
 
     env.command()
-        .args(["context", "pins", "--all"])
+        .args(["context", "pins", "--scope", "store"])
         .assert()
         .success()
         .stdout(
             "abacus/tools/build\nacme/widgets/alpha\nacme/widgets/zeta\nother/project/roadmap\n",
         );
+}
+
+/// Scope is a closed vocabulary of `repo|store`; anything else is rejected
+/// rather than silently widened or narrowed.
+#[test]
+fn context_pins_rejects_an_unknown_scope_value() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+
+    for invalid in ["", "all", "Repo", "global", "repository"] {
+        env.command()
+            .args(["context", "pins", "--scope", invalid])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("repo"))
+            .stderr(predicate::str::contains("store"));
+    }
+
+    assert!(!env.cue_store().join(".state").exists());
+}
+
+/// `--all` is replaced by `--scope store` with no compatibility alias, so the
+/// old flag must fail rather than keep working.
+#[test]
+fn context_pins_rejects_the_removed_all_flag() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+
+    env.command()
+        .args(["context", "pins", "--all"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("--all"));
 }
 
 /// A missing pins directory is an empty working set, not an error.
@@ -209,7 +262,7 @@ fn context_pins_succeeds_with_no_output_when_pin_state_is_missing() {
         .stdout("");
 
     env.command()
-        .args(["context", "pins", "--all"])
+        .args(["context", "pins", "--scope", "store"])
         .assert()
         .success()
         .stdout("");
@@ -234,7 +287,7 @@ fn context_pins_skips_empty_scope_directories() {
     assert!(env.cue_store().join(".state/pins/other/project").is_dir());
 
     env.command()
-        .args(["context", "pins", "--all"])
+        .args(["context", "pins", "--scope", "store"])
         .assert()
         .success()
         .stdout("acme/widgets/release\n");
@@ -279,7 +332,7 @@ fn context_pins_retains_pins_for_contexts_that_do_not_exist() {
 /// so the whole-store view walks `<org>/<repo>/<slug>` and ignores anything
 /// that does not have that shape rather than failing on it.
 #[test]
-fn context_pins_all_ignores_entries_that_are_not_scope_directories() -> anyhow::Result<()> {
+fn context_pins_scope_store_ignores_entries_that_are_not_scope_directories() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
     env.command()
@@ -291,7 +344,7 @@ fn context_pins_all_ignores_entries_that_are_not_scope_directories() -> anyhow::
     std::fs::write(pins.join("acme/stray"), "")?;
 
     env.command()
-        .args(["context", "pins", "--all"])
+        .args(["context", "pins", "--scope", "store"])
         .assert()
         .success()
         .stdout("acme/widgets/release\n");
@@ -505,7 +558,7 @@ fn context_pin_by_address_needs_no_repository_scope() {
         .success();
 
     env.command()
-        .args(["context", "pins", "--all"])
+        .args(["context", "pins", "--scope", "store"])
         .assert()
         .success()
         .stdout("other/project/roadmap\n");

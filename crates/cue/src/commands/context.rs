@@ -1,4 +1,4 @@
-use crate::cli::ContextCommands;
+use crate::cli::{ContextCommands, QueryScope};
 use anyhow::Context as _;
 use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::store;
@@ -85,7 +85,7 @@ pub fn handle(
         ContextCommands::List { json } => handle_list(cwd, json, store_root),
         ContextCommands::Pin { context } => handle_pin(cwd, &context, store_root),
         ContextCommands::Unpin { context } => handle_unpin(cwd, &context, store_root),
-        ContextCommands::Pins { all } => handle_pins(cwd, all, store_root),
+        ContextCommands::Pins { scope } => handle_pins(cwd, scope, store_root),
         ContextCommands::Switch { slug, branch } => handle_switch(cwd, &slug, branch),
         ContextCommands::Unset { branch } => handle_unset(cwd, branch),
     }
@@ -209,28 +209,35 @@ fn handle_unpin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow:
     Ok(())
 }
 
-fn handle_pins(cwd: &Path, all: bool, store_root: Option<&Path>) -> anyhow::Result<()> {
+/// List the working set at the requested breadth.
+///
+/// The repository scope is resolved only for `QueryScope::Repo`, so the
+/// whole-store view works from anywhere, including outside a repository.
+fn handle_pins(cwd: &Path, scope: QueryScope, store_root: Option<&Path>) -> anyhow::Result<()> {
     let pins_dir = pins_dir(store_root)?;
     let mut addresses = Vec::new();
-    if all {
-        // Joining the scope directories and the filename is what yields an
-        // address, so only entries with that shape are pins.
-        for org in read_state_dir(&pins_dir)? {
-            if !org.is_dir() {
-                continue;
-            }
-            let org_name = state_entry_name(&org)?;
-            for repo in read_state_dir(&org)? {
-                if !repo.is_dir() {
+    match scope {
+        QueryScope::Store => {
+            // Joining the scope directories and the filename is what yields an
+            // address, so only entries with that shape are pins.
+            for org in read_state_dir(&pins_dir)? {
+                if !org.is_dir() {
                     continue;
                 }
-                let repo_name = state_entry_name(&repo)?;
-                collect_scope_pins(&repo, &format!("{org_name}/{repo_name}"), &mut addresses)?;
+                let org_name = state_entry_name(&org)?;
+                for repo in read_state_dir(&org)? {
+                    if !repo.is_dir() {
+                        continue;
+                    }
+                    let repo_name = state_entry_name(&repo)?;
+                    collect_scope_pins(&repo, &format!("{org_name}/{repo_name}"), &mut addresses)?;
+                }
             }
         }
-    } else {
-        let scope = scope_prefix(cwd)?;
-        collect_scope_pins(&pins_dir.join(&scope), &scope, &mut addresses)?;
+        QueryScope::Repo => {
+            let scope = scope_prefix(cwd)?;
+            collect_scope_pins(&pins_dir.join(&scope), &scope, &mut addresses)?;
+        }
     }
 
     // Alphabetical order by canonical address is deterministic and stable;

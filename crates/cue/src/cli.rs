@@ -164,10 +164,9 @@ pub enum ContextCommands {
     },
     /// List the pinned contexts in the operator's working set
     Pins {
-        /// List pins across the whole store instead of the current
-        /// repository scope
-        #[arg(long)]
-        all: bool,
+        /// Breadth to query: the current repository scope, or every scope
+        #[arg(long, value_enum, default_value = "repo")]
+        scope: QueryScope,
     },
     /// Associate a context with a Git branch
     Switch {
@@ -183,6 +182,21 @@ pub enum ContextCommands {
         #[arg(long)]
         branch: Option<String>,
     },
+}
+
+/// The breadth a collection query looks over, as opposed to `--store`, which
+/// selects which physical store is looked at. Scope changes where a query
+/// looks, never what metadata it filters on.
+///
+/// Shared vocabulary rather than a global flag: each query that offers
+/// repository/store breadth opts in with its own `--scope` argument.
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum QueryScope {
+    /// The repository scope derived from the origin remote of the current
+    /// directory, or of the directory selected with `-C`
+    Repo,
+    /// Every repository scope in the selected store; requires no repository
+    Store,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]
