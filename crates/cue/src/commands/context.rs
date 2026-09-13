@@ -83,9 +83,211 @@ pub fn handle(
             handle_create(cwd, &name, options, store_root)
         }
         ContextCommands::List { json } => handle_list(cwd, json, store_root),
+        ContextCommands::Pin { context } => handle_pin(cwd, &context, store_root),
+        ContextCommands::Unpin { context } => handle_unpin(cwd, &context, store_root),
+        ContextCommands::Pins { all } => handle_pins(cwd, all, store_root),
         ContextCommands::Switch { slug, branch } => handle_switch(cwd, &slug, branch),
         ContextCommands::Unset { branch } => handle_unset(cwd, branch),
     }
+}
+
+/// Pin state lives outside every context, under the store root, as a directory
+/// of zero-byte marker files at `<store>/.state/pins/<org>/<repo>/<slug>`. It
+/// is operator state rather than metadata describing a context.
+fn pins_dir(store_root: Option<&Path>) -> anyhow::Result<PathBuf> {
+    Ok(store::root(store_root)?.join(".state").join("pins"))
+}
+
+/// The accepted pin argument forms, quoted back in every error so the message
+/// names the shape that was expected.
+const PIN_FORM: &str = "expected a context slug in the current repository scope \
+     or a canonical '<org>/<repo>/<slug>' address";
+
+/// Resolve a pin argument to a canonical context address.
+///
+/// Resolution is shape-only. A pin names a context that may not exist yet and
+/// may outlive the context it names, so no store lookup is performed. The
+/// repository scope is resolved only for the bare-slug form, so the address
+/// form pins a context from anywhere.
+fn resolve_pin_address(cwd: &Path, value: &str) -> anyhow::Result<String> {
+    // Checked on the whole value rather than per segment, matching
+    // `address::validate_shape`: `~` is a shell and path convention, and a
+    // value leading with it is a path being passed where an address belongs.
+    if value.starts_with('~') {
+        anyhow::bail!(
+            "Invalid context '{value}': home-relative paths are not addresses; {PIN_FORM}"
+        );
+    }
+
+    let segments: Vec<&str> = value.split('/').collect();
+    let address = match segments.as_slice() {
+        [slug] => {
+            validate_pin_segment(value, slug)?;
+            format!("{}/{slug}", scope_prefix(cwd)?)
+        }
+        [org, repo, slug] => {
+            for segment in [org, repo, slug] {
+                validate_pin_segment(value, segment)?;
+            }
+            format!("{org}/{repo}/{slug}")
+        }
+        _ => anyhow::bail!("Invalid context '{value}': {PIN_FORM}"),
+    };
+    Ok(address)
+}
+
+/// Each address segment must be a single, safe path segment: a pin argument
+/// becomes a filesystem path under the store's state directory.
+///
+/// Path semantics alone are too permissive here, because a pin is also
+/// printed back as a line of `pins` output. A line break would split one
+/// address across two lines, and a whitespace-only segment would print as a
+/// gap that names nothing, so both are rejected on top of the path rules. An
+/// ordinary internal space is left alone: it is a character of the slug.
+fn validate_pin_segment(value: &str, segment: &str) -> anyhow::Result<()> {
+    let invalid = || anyhow::anyhow!("Invalid context '{value}': {PIN_FORM}");
+    if segment.contains(['\n', '\r']) || segment.trim().is_empty() {
+        return Err(invalid());
+    }
+    cuelib::head::validate_slug(segment).map_err(|_| invalid())
+}
+
+/// The current repository scope, as the `<org>/<repo>` prefix of an address.
+fn scope_prefix(cwd: &Path) -> anyhow::Result<String> {
+    let scope = store::repository_scope(cwd)?;
+    Ok(scope
+        .to_str()
+        .context("repository scope is not valid UTF-8")?
+        .to_string())
+}
+
+fn handle_pin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow::Result<()> {
+    let address = resolve_pin_address(cwd, context)?;
+    let marker = pins_dir(store_root)?.join(&address);
+    let scope_dir = marker
+        .parent()
+        .context("pin marker path has no scope directory")?;
+    std::fs::create_dir_all(scope_dir)
+        .with_context(|| format!("could not create pin state at {}", scope_dir.display()))?;
+
+    // An exclusive create is atomic, and treating an existing marker as
+    // success makes the pin idempotent without a read-modify-write.
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker)
+    {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("could not pin context at {}", marker.display()));
+        }
+    }
+
+    println!("pinned {address}");
+    Ok(())
+}
+
+fn handle_unpin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow::Result<()> {
+    let address = resolve_pin_address(cwd, context)?;
+    let marker = pins_dir(store_root)?.join(&address);
+
+    // An unlink is atomic; an absent marker is already the desired state. The
+    // emptied scope directory is deliberately left in place, because pruning
+    // would reintroduce a write race.
+    match std::fs::remove_file(&marker) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("could not unpin context at {}", marker.display()));
+        }
+    }
+
+    println!("unpinned {address}");
+    Ok(())
+}
+
+fn handle_pins(cwd: &Path, all: bool, store_root: Option<&Path>) -> anyhow::Result<()> {
+    let pins_dir = pins_dir(store_root)?;
+    let mut addresses = Vec::new();
+    if all {
+        // Joining the scope directories and the filename is what yields an
+        // address, so only entries with that shape are pins.
+        for org in read_state_dir(&pins_dir)? {
+            if !org.is_dir() {
+                continue;
+            }
+            let org_name = state_entry_name(&org)?;
+            for repo in read_state_dir(&org)? {
+                if !repo.is_dir() {
+                    continue;
+                }
+                let repo_name = state_entry_name(&repo)?;
+                collect_scope_pins(&repo, &format!("{org_name}/{repo_name}"), &mut addresses)?;
+            }
+        }
+    } else {
+        let scope = scope_prefix(cwd)?;
+        collect_scope_pins(&pins_dir.join(&scope), &scope, &mut addresses)?;
+    }
+
+    // Alphabetical order by canonical address is deterministic and stable;
+    // there is no recency or operator-chosen ordering.
+    addresses.sort();
+    for address in addresses {
+        println!("{address}");
+    }
+    Ok(())
+}
+
+/// Append the pins held directly in one `<org>/<repo>` directory.
+fn collect_scope_pins(
+    scope_dir: &Path,
+    scope: &str,
+    addresses: &mut Vec<String>,
+) -> anyhow::Result<()> {
+    for marker in read_state_dir(scope_dir)? {
+        if !marker.is_file() {
+            continue;
+        }
+        addresses.push(format!("{scope}/{}", state_entry_name(&marker)?));
+    }
+    Ok(())
+}
+
+/// Read a pin state directory, treating a missing one as empty.
+///
+/// A missing pins directory is an empty working set rather than an error, and
+/// scope directories left behind by the last unpin in a scope are retained
+/// rather than pruned, so an empty read is the ordinary case.
+fn read_state_dir(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("could not read pin state at {}", dir.display()));
+        }
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        paths.push(entry?.path());
+    }
+    Ok(paths)
+}
+
+fn state_entry_name(entry: &Path) -> anyhow::Result<&str> {
+    entry
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| {
+            format!(
+                "pin state entry name is not valid UTF-8: {}",
+                entry.display()
+            )
+        })
 }
 
 fn handle_switch(cwd: &Path, slug: &str, branch: Option<String>) -> anyhow::Result<()> {

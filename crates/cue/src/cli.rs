@@ -150,6 +150,25 @@ pub enum ContextCommands {
         #[arg(long)]
         json: bool,
     },
+    /// Add a context to the operator's working set
+    Pin {
+        /// Context slug in the current repository scope, or a full
+        /// '<org>/<repo>/<slug>' address
+        context: String,
+    },
+    /// Remove a context from the operator's working set
+    Unpin {
+        /// Context slug in the current repository scope, or a full
+        /// '<org>/<repo>/<slug>' address
+        context: String,
+    },
+    /// List the pinned contexts in the operator's working set
+    Pins {
+        /// List pins across the whole store instead of the current
+        /// repository scope
+        #[arg(long)]
+        all: bool,
+    },
     /// Associate a context with a Git branch
     Switch {
         /// Context slug to associate with the branch
