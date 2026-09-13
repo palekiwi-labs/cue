@@ -152,6 +152,12 @@ pub enum ContextCommands {
         /// Breadth to query: the current repository scope, or every scope
         #[arg(long, value_enum, default_value = "repo")]
         scope: QueryScope,
+        /// Order by latest log activity instead of canonical address
+        #[arg(long, value_enum)]
+        sort: Option<ContextSort>,
+        /// Keep only the first N contexts of the resulting order
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
     },
     /// Add a context to the operator's working set
     Pin {
@@ -200,6 +206,17 @@ pub enum QueryScope {
     Repo,
     /// Every repository scope in the selected store; requires no repository
     Store,
+}
+
+/// The orderings a context listing can be asked for, beyond the canonical
+/// address order it uses when no ordering is requested.
+///
+/// Recency is the only member: it is the one ordering that cannot be derived
+/// from what a listing already reads, because it reads each context's log.
+#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
+pub enum ContextSort {
+    /// Newest log entry first; contexts with no log entry last
+    Recency,
 }
 
 #[derive(Clone, Copy, clap::ValueEnum)]

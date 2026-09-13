@@ -1,4 +1,4 @@
-use crate::cli::{ContextCommands, QueryScope};
+use crate::cli::{ContextCommands, ContextSort, QueryScope};
 use anyhow::Context as _;
 use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::store;
@@ -82,7 +82,12 @@ pub fn handle(
             };
             handle_create(cwd, &name, options, store_root)
         }
-        ContextCommands::List { json, scope } => handle_list(cwd, json, scope, store_root),
+        ContextCommands::List {
+            json,
+            scope,
+            sort,
+            limit,
+        } => handle_list(cwd, json, scope, sort, limit, store_root),
         ContextCommands::Pin { context } => handle_pin(cwd, &context, store_root),
         ContextCommands::Unpin { context } => handle_unpin(cwd, &context, store_root),
         ContextCommands::Pins { scope } => handle_pins(cwd, scope, store_root),
@@ -340,6 +345,8 @@ fn handle_list(
     cwd: &Path,
     json: bool,
     scope: QueryScope,
+    sort: Option<ContextSort>,
+    limit: Option<usize>,
     store_root: Option<&Path>,
 ) -> anyhow::Result<()> {
     let store_root = store::root(store_root)?;
@@ -362,11 +369,24 @@ fn handle_list(
         }
     }
 
-    // Ordering by canonical address is deterministic and stable; there is no
-    // recency or operator-chosen ordering. Within one scope this is ordering
-    // by slug, so the default view is unchanged.
+    // Ordering by canonical address is deterministic and stable. Within one
+    // scope this is ordering by slug, so the default view is unchanged. It is
+    // also the tiebreak any requested ordering falls back on, so it is
+    // established first.
     contexts
         .sort_by(|left, right| (&left.scope, &left.context).cmp(&(&right.scope, &right.context)));
+
+    if sort == Some(ContextSort::Recency) {
+        sort_by_recency(&mut contexts)?;
+    }
+
+    // Truncation is applied to the finished order, so a limit selects the
+    // leading rows of what was asked for rather than an arbitrary subset that
+    // is then ordered. A limit of zero selects nothing, which is a listing of
+    // no contexts and not an error.
+    if let Some(limit) = limit {
+        contexts.truncate(limit);
+    }
 
     if json {
         println!("{}", serde_json::to_string_pretty(&contexts)?);
@@ -380,6 +400,31 @@ fn handle_list(
             QueryScope::Store => println!("{}/{}", context.scope, context.context),
         }
     }
+    Ok(())
+}
+
+/// Reorder a canonically ordered listing by latest log activity, newest
+/// first.
+///
+/// Every timestamp is read before anything is reordered, so a log directory
+/// that cannot be listed fails rather than silently ordering a context as if it
+/// had no activity. A context with no log entry has no activity to order by
+/// and sorts last, which `None` compares as under the reversed comparison.
+/// The sort is stable and the input is already in canonical address order, so
+/// contexts sharing a timestamp keep that order.
+fn sort_by_recency(contexts: &mut Vec<ContextListEntry>) -> anyhow::Result<()> {
+    let mut decorated = Vec::with_capacity(contexts.len());
+    for context in std::mem::take(contexts) {
+        let context_dir = context
+            .path
+            .parent()
+            .with_context(|| format!("context path has no directory: {}", context.path.display()))?
+            .to_path_buf();
+        decorated.push((crate::log::latest_timestamp(&context_dir)?, context));
+    }
+
+    decorated.sort_by(|(left, _), (right, _)| right.cmp(left));
+    contexts.extend(decorated.into_iter().map(|(_, context)| context));
     Ok(())
 }
 

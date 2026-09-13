@@ -147,6 +147,64 @@ pub fn list_entries(
         .collect()
 }
 
+/// The newest entry timestamp in a context's log, or `None` when the log
+/// holds no entry.
+///
+/// Read from entry filenames rather than entry contents: an entry is named
+/// for the timestamp it records, so the newest is known from one directory
+/// listing without opening a file. The scan visits every directory entry,
+/// but its cost does not depend on log body sizes. Corrupt JSON contents do
+/// not affect ordering.
+///
+/// Anything that is not an entry is not activity: a name that is not exactly
+/// a stamp is ignored, as is a directory wearing an entry's name, and a
+/// missing log directory is a log with no entries. Any other failure to read
+/// the directory is reported, so a log that cannot be listed is never
+/// mistaken for a context with nothing in it.
+pub fn latest_timestamp(context_dir: &Path) -> Result<Option<u64>> {
+    let log_dir = context_dir.join("log");
+    let entries = match fs::read_dir(&log_dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("Failed to read log directory {}", log_dir.display()));
+        }
+    };
+
+    let mut latest = None;
+    for entry in entries {
+        let entry =
+            entry.with_context(|| format!("Failed to read log directory {}", log_dir.display()))?;
+        let file_type = entry
+            .file_type()
+            .with_context(|| format!("Failed to read log entry {}", entry.path().display()))?;
+        if !file_type.is_file() {
+            continue;
+        }
+        if let Some(timestamp) = entry_timestamp(&entry.file_name()) {
+            latest = latest.max(Some(timestamp));
+        }
+    }
+
+    Ok(latest)
+}
+
+/// The timestamp a log entry's filename records, or `None` when the name is
+/// not one an entry is written under.
+///
+/// `add_entry` writes `{timestamp:020}.json`, so only that exact shape is an
+/// entry. Twenty digits is the width of `u64::MAX`, and a name that is wider,
+/// shorter, or not all ASCII digits is something else that happens to share
+/// the directory.
+fn entry_timestamp(file_name: &std::ffi::OsStr) -> Option<u64> {
+    let stamp = file_name.to_str()?.strip_suffix(".json")?;
+    if stamp.len() != 20 || !stamp.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    stamp.parse().ok()
+}
+
 pub fn render_markdown(entries: &[StoredLogEntry]) -> String {
     let mut markdown = String::new();
 
