@@ -55,7 +55,7 @@ fn add_creates_a_task_inside_an_explicit_context() -> anyhow::Result<()> {
         .expect("task should contain YAML frontmatter");
     let metadata: Value = serde_yaml::from_str(frontmatter)?;
 
-    assert_eq!(metadata["status"], "inbox");
+    assert_eq!(metadata["status"], "open");
     assert_eq!(metadata["priority"], "normal");
     assert!(metadata["created_at"].as_u64().is_some());
     assert!(metadata.get("kind").is_none());

@@ -82,12 +82,13 @@ fn add_central_markdown(
     let context_dir = central_context_dir(root, context, store_root)?;
 
     // A task is the only artifact that can be done, so it is the only type
-    // given lifecycle defaults. A new task is untriaged (`inbox`) and
-    // unranked (`normal`) until an operator decides otherwise; stamping both
-    // keeps every task filterable on status and priority without forcing a
-    // caller to supply them.
+    // given lifecycle defaults. A task is created deliberately with a defined
+    // goal, so it starts `open` rather than awaiting triage, and unranked
+    // (`normal`) until an operator decides otherwise; stamping both keeps
+    // every task filterable on status and priority without forcing a caller
+    // to supply them.
     if cue_type == "task" {
-        for (key, default) in [("status", "inbox"), ("priority", "normal")] {
+        for (key, default) in [("status", "open"), ("priority", "normal")] {
             if !frontmatter.iter().any(|(existing, _)| existing == key) {
                 frontmatter.push((key.into(), default.into()));
             }
