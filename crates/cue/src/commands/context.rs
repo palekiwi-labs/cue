@@ -163,19 +163,11 @@ fn resolve_pin_address(cwd: &Path, value: &str) -> anyhow::Result<String> {
 }
 
 /// Each address segment must be a single, safe path segment: a pin argument
-/// becomes a filesystem path under the store's state directory.
-///
-/// Path semantics alone are too permissive here, because a pin is also
-/// printed back as a line of `pins` output. A line break would split one
-/// address across two lines, and a whitespace-only segment would print as a
-/// gap that names nothing, so both are rejected on top of the path rules. An
-/// ordinary internal space is left alone: it is a character of the slug.
+/// becomes a filesystem path under the store's state directory, and is also
+/// printed back as a line of `pins` output.
 fn validate_pin_segment(value: &str, segment: &str) -> anyhow::Result<()> {
-    let invalid = || anyhow::anyhow!("Invalid context '{value}': {PIN_FORM}");
-    if segment.contains(['\n', '\r']) || segment.trim().is_empty() {
-        return Err(invalid());
-    }
-    cuelib::head::validate_slug(segment).map_err(|_| invalid())
+    cuelib::head::validate_slug(segment)
+        .map_err(|_| anyhow::anyhow!("Invalid context '{value}': {PIN_FORM}"))
 }
 
 /// The `<org>/<repo>` scope a query is narrowed to, or `None` when it spans

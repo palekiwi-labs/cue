@@ -31,7 +31,7 @@ pub struct Cli {
 pub enum Commands {
     /// Print the active context
     Status {
-        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
+        /// Set context by slug or <org>/<repo>/<slug> address; overrides $CUE_CONTEXT
         #[arg(long)]
         context: Option<String>,
         /// Output structured JSON instead of human-readable text
@@ -63,7 +63,7 @@ pub enum Commands {
             value_parser = ["task", "spec", "plan", "note", "trace", "bin", "tmp"]
         )]
         cue_type: String,
-        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
+        /// Set context by slug or <org>/<repo>/<slug> address; overrides $CUE_CONTEXT
         #[arg(long)]
         context: Option<String>,
         /// Overwrite existing file
@@ -73,7 +73,7 @@ pub enum Commands {
 
     /// List artifacts for a scope
     List {
-        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
+        /// Set context by slug or <org>/<repo>/<slug> address; overrides $CUE_CONTEXT
         #[arg(long)]
         context: Option<String>,
         /// Filter by artifact type; repeat to match any selected type
@@ -103,7 +103,7 @@ pub enum Commands {
         /// Artifact paths; use "-" to read newline-delimited paths from stdin
         #[arg(value_name = "ENTRY")]
         entries: Vec<String>,
-        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
+        /// Set context by slug or <org>/<repo>/<slug> address; overrides $CUE_CONTEXT
         #[arg(long)]
         context: Option<String>,
     },
@@ -282,13 +282,13 @@ pub enum LogCommands {
         /// Read entry data from a JSON file
         #[arg(long, conflicts_with_all = &["title", "trace", "found", "decided", "open"])]
         file: Option<String>,
-        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
+        /// Set context by slug or <org>/<repo>/<slug> address; overrides $CUE_CONTEXT
         #[arg(long)]
         context: Option<String>,
     },
     /// List log entries
     List {
-        /// Set context; overrides $CUE_CONTEXT and branch.<name>.cue-context
+        /// Set context by slug or <org>/<repo>/<slug> address; overrides $CUE_CONTEXT
         #[arg(long)]
         context: Option<String>,
         /// Output format
