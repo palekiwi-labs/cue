@@ -747,6 +747,7 @@ fn context_list_json_fields_are_unchanged_by_selection() -> anyhow::Result<()> {
                 "mode",
                 "parent",
                 "path",
+                "pinned",
                 "refs",
                 "scope",
                 "title",
@@ -1261,6 +1262,7 @@ fn context_list_pinned_json_reports_full_rows() -> anyhow::Result<()> {
             "mode",
             "parent",
             "path",
+            "pinned",
             "refs",
             "scope",
             "title",
@@ -1366,4 +1368,220 @@ fn context_list_pinned_scope_store_needs_no_repository_scope() {
         .args(["context", "list", "--pinned"])
         .assert()
         .failure();
+}
+
+/// Membership in the working set is a fact about a context, so an
+/// unnarrowed JSON listing reports it per row. This is what a client
+/// rendering every context reads to mark the pinned ones, instead of joining
+/// `cue context pins` against the listing itself.
+#[test]
+fn context_list_json_reports_pin_membership() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for slug in ["alpha", "beta", "zeta"] {
+        env.command()
+            .args(["context", "create", slug])
+            .assert()
+            .success();
+    }
+    env.command()
+        .args(["context", "pin", "beta"])
+        .assert()
+        .success();
+
+    let contexts = list_json(&env, &["context", "list", "--json"])?;
+    assert_eq!(contexts.len(), 3);
+    assert_eq!(contexts[0]["context"], "alpha");
+    assert_eq!(contexts[0]["pinned"], false);
+    assert_eq!(contexts[1]["context"], "beta");
+    assert_eq!(contexts[1]["pinned"], true);
+    assert_eq!(contexts[2]["context"], "zeta");
+    assert_eq!(contexts[2]["pinned"], false);
+
+    // Unpinning is reflected without any other change to the row.
+    env.command()
+        .args(["context", "unpin", "beta"])
+        .assert()
+        .success();
+    let contexts = list_json(&env, &["context", "list", "--json"])?;
+    assert!(contexts.iter().all(|context| context["pinned"] == false));
+
+    Ok(())
+}
+
+/// Pin state is held per scope, so whole-store breadth evaluates membership
+/// against the scope each row belongs to rather than against one repository's
+/// pins.
+#[test]
+fn context_list_scope_store_json_reports_pin_membership_per_scope() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    let other = env.root().join("other-repo");
+    setup_scope_repo(&other, "https://github.com/other/project.git");
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+    env.command()
+        .args(["-C"])
+        .arg(&other)
+        .args(["context", "create", "roadmap"])
+        .assert()
+        .success();
+    env.command()
+        .args(["context", "pin", "other/project/roadmap"])
+        .assert()
+        .success();
+
+    let contexts = list_json(&env, &["context", "list", "--scope", "store", "--json"])?;
+    assert_eq!(contexts.len(), 2);
+    assert_eq!(contexts[0]["scope"], "acme/widgets");
+    assert_eq!(contexts[0]["pinned"], false);
+    assert_eq!(contexts[1]["scope"], "other/project");
+    assert_eq!(contexts[1]["pinned"], true);
+
+    // The default breadth sees only this repository's pin state, where the
+    // other scope's pin is not a member.
+    let contexts = list_json(&env, &["context", "list", "--json"])?;
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(contexts[0]["context"], "alpha");
+    assert_eq!(contexts[0]["pinned"], false);
+
+    Ok(())
+}
+
+/// A row carries the same fields whatever selection produced it, so the
+/// narrowed listing reports membership too, where it is always true. A client
+/// therefore reads `pinned` unconditionally rather than branching on which
+/// query it ran.
+#[test]
+fn context_list_pinned_json_reports_pinned_rows() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for slug in ["alpha", "beta"] {
+        env.command()
+            .args(["context", "create", slug])
+            .assert()
+            .success();
+        env.command()
+            .args(["context", "pin", slug])
+            .assert()
+            .success();
+    }
+
+    let contexts = list_json(&env, &["context", "list", "--pinned", "--json"])?;
+    assert_eq!(contexts.len(), 2);
+    assert!(contexts.iter().all(|context| context["pinned"] == true));
+
+    Ok(())
+}
+
+/// Plain output is one identifier per line, and that line is valid input to
+/// `context switch` and `context unpin`. Pin state changes nothing about it.
+#[test]
+fn context_list_plain_output_is_unchanged_by_pin_state() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for slug in ["alpha", "beta"] {
+        env.command()
+            .args(["context", "create", slug])
+            .assert()
+            .success();
+    }
+    env.command()
+        .args(["context", "pin", "beta"])
+        .assert()
+        .success();
+
+    env.command()
+        .args(["context", "list"])
+        .assert()
+        .success()
+        .stdout("alpha\nbeta\n");
+}
+
+/// Pin state is read only when JSON reports it, matching the gate on the
+/// per-context log scan. Unreadable pin state is fatal to a listing that
+/// consults it, so a store holding some proves the plain listing does not.
+#[test]
+fn context_list_reads_pin_state_only_for_json() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+    // A regular file where a scope's pin directory belongs: reading it as a
+    // directory fails with something other than "not found".
+    let pins_dir = env.cue_store().join(".state/pins/acme");
+    std::fs::create_dir_all(&pins_dir).expect("Failed to create pin state dir");
+    std::fs::write(pins_dir.join("widgets"), "").expect("Failed to write pin state file");
+
+    env.command()
+        .args(["context", "list"])
+        .assert()
+        .success()
+        .stdout("alpha\n");
+    env.command()
+        .args(["context", "list", "--sort", "recency"])
+        .assert()
+        .success()
+        .stdout("alpha\n");
+
+    env.command()
+        .args(["context", "list", "--json"])
+        .assert()
+        .failure();
+}
+
+/// A pin outlives the context it names. Such a pin marks no row, and marks
+/// no other context by accident, so it changes nothing about the listing.
+#[test]
+fn context_list_json_ignores_pins_without_a_context() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+    env.command()
+        .args(["context", "pin", "ghost"])
+        .assert()
+        .success();
+
+    let contexts = list_json(&env, &["context", "list", "--json"])?;
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(contexts[0]["context"], "alpha");
+    assert_eq!(contexts[0]["pinned"], false);
+
+    Ok(())
+}
+
+/// Reporting membership must not introduce a repository lookup where the
+/// requested breadth needs none: whole-store JSON remains listable from
+/// outside a Git repository.
+#[test]
+fn context_list_scope_store_json_needs_no_repository_scope() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    let other = env.root().join("other-repo");
+    setup_scope_repo(&other, "https://github.com/other/project.git");
+    env.command()
+        .args(["-C"])
+        .arg(&other)
+        .args(["context", "create", "roadmap"])
+        .assert()
+        .success();
+    env.command()
+        .args(["-C"])
+        .arg(&other)
+        .args(["context", "pin", "roadmap"])
+        .assert()
+        .success();
+
+    let contexts = list_json(&env, &["context", "list", "--scope", "store", "--json"])?;
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(contexts[0]["context"], "roadmap");
+    assert_eq!(contexts[0]["pinned"], true);
+
+    Ok(())
 }

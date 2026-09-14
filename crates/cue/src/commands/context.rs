@@ -3,6 +3,7 @@ use anyhow::Context as _;
 use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::store;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -58,6 +59,9 @@ struct ContextListEntry {
     /// ordering, but expose whole Unix seconds (or null) in JSON.
     #[serde(rename = "last_logged_at", serialize_with = "serialize_seconds")]
     last_logged_nanos: Option<u64>,
+    /// Whether the context is in the operator's working set. Populated for
+    /// JSON output only, because plain output reports identifiers alone.
+    pinned: bool,
     path: PathBuf,
 }
 
@@ -174,6 +178,19 @@ fn validate_pin_segment(value: &str, segment: &str) -> anyhow::Result<()> {
     cuelib::head::validate_slug(segment).map_err(|_| invalid())
 }
 
+/// The `<org>/<repo>` scope a query is narrowed to, or `None` when it spans
+/// the whole store.
+///
+/// Resolving the repository scope shells out to Git, so a command resolves it
+/// once and hands it to every walk that needs it. `QueryScope::Store` resolves
+/// nothing, which is what lets a whole-store query run outside a repository.
+fn query_scope_prefix(cwd: &Path, scope: QueryScope) -> anyhow::Result<Option<String>> {
+    match scope {
+        QueryScope::Repo => Ok(Some(scope_prefix(cwd)?)),
+        QueryScope::Store => Ok(None),
+    }
+}
+
 /// The current repository scope, as the `<org>/<repo>` prefix of an address.
 fn scope_prefix(cwd: &Path) -> anyhow::Result<String> {
     let scope = store::repository_scope(cwd)?;
@@ -237,7 +254,8 @@ fn handle_unpin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow:
 /// whole-store view works from anywhere, including outside a repository.
 fn handle_pins(cwd: &Path, scope: QueryScope, store_root: Option<&Path>) -> anyhow::Result<()> {
     let pins_dir = pins_dir(&store::root(store_root)?);
-    let mut addresses: Vec<String> = read_pins(cwd, scope, &pins_dir)?
+    let prefix = query_scope_prefix(cwd, scope)?;
+    let mut addresses: Vec<String> = read_pins(prefix.as_deref(), &pins_dir)?
         .into_iter()
         .map(|(scope, context)| format!("{scope}/{context}"))
         .collect();
@@ -255,26 +273,19 @@ fn handle_pins(cwd: &Path, scope: QueryScope, store_root: Option<&Path>) -> anyh
 /// pairs in directory order.
 ///
 /// Reading pin state costs one directory listing per scope and opens nothing,
-/// because a pin is a name rather than a document. The repository scope is
-/// resolved only for `QueryScope::Repo`, so the whole-store view works from
-/// anywhere, including outside a repository.
-fn read_pins(
-    cwd: &Path,
-    scope: QueryScope,
-    pins_dir: &Path,
-) -> anyhow::Result<Vec<(String, String)>> {
+/// because a pin is a name rather than a document.
+fn read_pins(prefix: Option<&str>, pins_dir: &Path) -> anyhow::Result<Vec<(String, String)>> {
     let mut pins = Vec::new();
-    match scope {
-        QueryScope::Store => {
+    match prefix {
+        None => {
             // Joining the scope directories and the filename is what yields an
             // address, so only entries with that shape are pins.
             for (scope, scope_dir) in scope_dirs(pins_dir)? {
                 collect_scope_pins(&scope_dir, &scope, &mut pins)?;
             }
         }
-        QueryScope::Repo => {
-            let scope = scope_prefix(cwd)?;
-            collect_scope_pins(&pins_dir.join(&scope), &scope, &mut pins)?;
+        Some(scope) => {
+            collect_scope_pins(&pins_dir.join(scope), scope, &mut pins)?;
         }
     }
     Ok(pins)
@@ -394,13 +405,24 @@ fn handle_list(
     store_root: Option<&Path>,
 ) -> anyhow::Result<()> {
     let store_root = store::root(store_root)?;
+    let prefix = query_scope_prefix(cwd, scope)?;
+
+    // Pin state is read when it selects the listing, and when JSON reports
+    // each row's membership. Either way it is one directory listing per scope
+    // and opens nothing, so reporting membership on an already-enumerated
+    // listing costs a read that does not grow with the store.
+    let pins = if pinned || json {
+        read_pins(prefix.as_deref(), &pins_dir(&store_root))?
+    } else {
+        Vec::new()
+    };
+
     let mut contexts = Vec::new();
     if pinned {
-        let pins = read_pins(cwd, scope, &pins_dir(&store_root))?;
         collect_pinned_contexts(&store_root, &pins, &mut contexts)?;
     } else {
-        match scope {
-            QueryScope::Store => {
+        match prefix.as_deref() {
+            None => {
                 for (scope, scope_dir) in scope_dirs(&store_root)? {
                     // Directly below the store root, a dot-named directory is
                     // store-internal state such as `.state`, never a
@@ -412,9 +434,8 @@ fn handle_list(
                     collect_scope_contexts(&scope_dir, &scope, &mut contexts)?;
                 }
             }
-            QueryScope::Repo => {
-                let scope = scope_prefix(cwd)?;
-                collect_scope_contexts(&store_root.join(&scope), &scope, &mut contexts)?;
+            Some(scope) => {
+                collect_scope_contexts(&store_root.join(scope), scope, &mut contexts)?;
             }
         }
     }
@@ -431,6 +452,14 @@ fn handle_list(
     let recency = sort == Some(ContextSort::Recency);
     if recency || json {
         read_log_activity(&mut contexts)?;
+    }
+
+    // Membership is a fact about a context rather than a property of the
+    // selection that found it, so it is reported on every JSON row, including
+    // the rows of a listing already narrowed to the working set. A consumer
+    // reads one field without branching on which query produced the row.
+    if json {
+        mark_pinned(&mut contexts, &pins);
     }
 
     if recency {
@@ -464,6 +493,22 @@ fn handle_list(
         }
     }
     Ok(())
+}
+
+/// Record which listed contexts are in the working set.
+///
+/// Membership is matched on the whole `(scope, context)` pair, so a pin only
+/// ever marks the context it addresses. A pin naming a context that does not
+/// exist matches no row, which is the same silence `--pinned` keeps: `cue
+/// context pins` is what reports raw pin state.
+fn mark_pinned(contexts: &mut [ContextListEntry], pins: &[(String, String)]) {
+    let pins: HashSet<(&str, &str)> = pins
+        .iter()
+        .map(|(scope, context)| (scope.as_str(), context.as_str()))
+        .collect();
+    for entry in contexts {
+        entry.pinned = pins.contains(&(entry.scope.as_str(), entry.context.as_str()));
+    }
 }
 
 /// Record each context's latest log activity, as the nanosecond stamp of its
@@ -551,6 +596,7 @@ fn read_context_entry(
         parent: metadata.parent,
         refs: metadata.refs,
         last_logged_nanos: None,
+        pinned: false,
         path: context_path,
     }))
 }
