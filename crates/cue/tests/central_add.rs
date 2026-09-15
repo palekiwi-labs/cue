@@ -513,8 +513,34 @@ fn add_honors_explicit_trace_revision_metadata() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A bin artifact is a script, so the fixtures are scripts. The shebang is
+/// the portable `/usr/bin/env` form because cue stores what it is given.
+const SCRIPT: &str = "#!/usr/bin/env bash\nset -euo pipefail\necho ready\n";
+
+/// The permissions a plain `std::fs::write` produces in `dir`, which is the
+/// umask-derived baseline every artifact type shares. Deriving the expectation
+/// from the running environment keeps the assertion true under any umask
+/// instead of hardcoding one developer's 0o644.
+#[cfg(unix)]
+fn baseline_mode(dir: &Path) -> anyhow::Result<u32> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let probe = dir.join("umask-probe");
+    std::fs::write(&probe, b"probe")?;
+    let mode = std::fs::metadata(&probe)?.permissions().mode() & 0o777;
+    std::fs::remove_file(&probe)?;
+    Ok(mode)
+}
+
+#[cfg(unix)]
+fn mode_of(path: &Path) -> anyhow::Result<u32> {
+    use std::os::unix::fs::PermissionsExt;
+
+    Ok(std::fs::metadata(path)?.permissions().mode() & 0o777)
+}
+
 #[test]
-fn add_creates_json_bin_with_top_level_metadata() -> anyhow::Result<()> {
+fn add_stores_bin_scripts_verbatim_under_the_given_name() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
     env.command()
@@ -525,8 +551,239 @@ fn add_creates_json_bin_with_top_level_metadata() -> anyhow::Result<()> {
     env.command()
         .args([
             "add",
-            "analysis",
-            r#"{"findings":["ready"]}"#,
+            "smoke.sh",
+            SCRIPT,
+            "--type",
+            "bin",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    let path = env.cue_store().join("acme/widgets/release/bin/smoke.sh");
+    assert_eq!(std::fs::read(&path)?, SCRIPT.as_bytes());
+    assert!(
+        !env.cue_store()
+            .join("acme/widgets/release/bin/smoke.sh.json")
+            .exists(),
+        "a bin artifact must not be renamed into a JSON document"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn add_keeps_extensionless_bin_names_extensionless() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "smoke",
+            SCRIPT,
+            "--type",
+            "bin",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    let bin_dir = env.cue_store().join("acme/widgets/release/bin");
+    assert_eq!(std::fs::read(bin_dir.join("smoke"))?, SCRIPT.as_bytes());
+    assert!(
+        !bin_dir.join("smoke.json").exists(),
+        "an extensionless bin name must not gain a default extension"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn add_preserves_non_utf8_bin_content_from_stdin() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    let bytes: Vec<u8> = vec![0x7f, b'E', b'L', b'F', 0x02, 0x00, 0xff, 0xfe, 0x00, 0x80];
+    env.command()
+        .args(["add", "probe", "-", "--type", "bin", "--context", "release"])
+        .write_stdin(bytes.clone())
+        .assert()
+        .success();
+
+    let path = env.cue_store().join("acme/widgets/release/bin/probe");
+    assert_eq!(std::fs::read(&path)?, bytes);
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn add_marks_bin_artifacts_executable_for_readable_classes() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "smoke.sh",
+            SCRIPT,
+            "--type",
+            "bin",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    let baseline = baseline_mode(env.root())?;
+    let expected = baseline | ((baseline & 0o444) >> 2);
+    let path = env.cue_store().join("acme/widgets/release/bin/smoke.sh");
+    assert_eq!(
+        mode_of(&path)?,
+        expected,
+        "a bin artifact gains execute for exactly the classes that may read it"
+    );
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn add_leaves_other_artifact_types_non_executable() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    for (filename, content, cue_type, relative) in [
+        ("publish", "Publish the release", "task", "task/publish.md"),
+        (
+            "readiness",
+            r#"{"verdict":"approve"}"#,
+            "review",
+            "review/readiness.json",
+        ),
+    ] {
+        env.command()
+            .args([
+                "add",
+                filename,
+                content,
+                "--type",
+                cue_type,
+                "--context",
+                "release",
+            ])
+            .assert()
+            .success();
+
+        let path = env.cue_store().join("acme/widgets/release").join(relative);
+        assert_eq!(
+            mode_of(&path)? & 0o111,
+            0,
+            "{cue_type} artifacts are documents, not executables"
+        );
+    }
+
+    Ok(())
+}
+
+#[test]
+fn add_creates_bin_artifacts_in_nested_directories() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "checks/readiness.sh",
+            SCRIPT,
+            "--type",
+            "bin",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    let path = env
+        .cue_store()
+        .join("acme/widgets/release/bin/checks/readiness.sh");
+    assert_eq!(std::fs::read(&path)?, SCRIPT.as_bytes());
+    #[cfg(unix)]
+    {
+        let baseline = baseline_mode(env.root())?;
+        assert_eq!(mode_of(&path)?, baseline | ((baseline & 0o444) >> 2));
+    }
+
+    Ok(())
+}
+
+#[test]
+fn add_rejects_unsafe_bin_paths() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    for (filename, message) in [
+        ("../escape.sh", "'..' is not allowed"),
+        ("/etc/cron.sh", "absolute paths are not allowed"),
+        ("checks/", "trailing path separators are not allowed"),
+    ] {
+        env.command()
+            .args([
+                "add",
+                filename,
+                SCRIPT,
+                "--type",
+                "bin",
+                "--context",
+                "release",
+            ])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains(message));
+    }
+}
+
+#[test]
+fn add_rejects_bin_metadata() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "smoke.sh",
+            SCRIPT,
             "--type",
             "bin",
             "--context",
@@ -535,21 +792,21 @@ fn add_creates_json_bin_with_top_level_metadata() -> anyhow::Result<()> {
             "analyzer=smoke-test",
         ])
         .assert()
-        .success();
+        .failure()
+        .stderr(predicate::str::contains(
+            "bin artifacts do not support metadata",
+        ));
 
-    let path = env
-        .cue_store()
-        .join("acme/widgets/release/bin/analysis.json");
-    let content: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
-
-    assert_eq!(content["findings"][0], "ready");
-    assert_eq!(content["analyzer"], "smoke-test");
-
-    Ok(())
+    assert!(
+        !env.cue_store()
+            .join("acme/widgets/release/bin/smoke.sh")
+            .exists(),
+        "a rejected bin write must leave nothing behind"
+    );
 }
 
 #[test]
-fn add_creates_json_artifacts_in_nested_directories() -> anyhow::Result<()> {
+fn add_rejects_bin_metadata_before_overwriting_with_force() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
     env.command()
@@ -560,8 +817,8 @@ fn add_creates_json_artifacts_in_nested_directories() -> anyhow::Result<()> {
     env.command()
         .args([
             "add",
-            "reports/readiness",
-            r#"{"ready":true}"#,
+            "smoke.sh",
+            SCRIPT,
             "--type",
             "bin",
             "--context",
@@ -570,11 +827,226 @@ fn add_creates_json_artifacts_in_nested_directories() -> anyhow::Result<()> {
         .assert()
         .success();
 
-    let path = env
-        .cue_store()
-        .join("acme/widgets/release/bin/reports/readiness.json");
-    let content: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
-    assert_eq!(content["ready"], true);
+    env.command()
+        .args([
+            "add",
+            "smoke.sh",
+            "#!/usr/bin/env bash\necho replaced\n",
+            "--type",
+            "bin",
+            "--context",
+            "release",
+            "--force",
+            "--frontmatter",
+            "analyzer=smoke-test",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains(
+            "bin artifacts do not support metadata",
+        ));
+
+    let path = env.cue_store().join("acme/widgets/release/bin/smoke.sh");
+    assert_eq!(
+        std::fs::read(&path)?,
+        SCRIPT.as_bytes(),
+        "rejecting metadata must not disturb the existing artifact"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn add_refuses_to_replace_an_existing_bin_without_force() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "smoke.sh",
+            SCRIPT,
+            "--type",
+            "bin",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "smoke.sh",
+            "#!/usr/bin/env bash\necho replaced\n",
+            "--type",
+            "bin",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("File exists"));
+
+    let path = env.cue_store().join("acme/widgets/release/bin/smoke.sh");
+    assert_eq!(std::fs::read(&path)?, SCRIPT.as_bytes());
+
+    Ok(())
+}
+
+#[test]
+fn add_replaces_an_existing_bin_with_force() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "smoke.sh",
+            SCRIPT,
+            "--type",
+            "bin",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    let replacement = "#!/usr/bin/env bash\necho replaced\n";
+    env.command()
+        .args([
+            "add",
+            "smoke.sh",
+            replacement,
+            "--type",
+            "bin",
+            "--context",
+            "release",
+            "--force",
+        ])
+        .assert()
+        .success();
+
+    let path = env.cue_store().join("acme/widgets/release/bin/smoke.sh");
+    assert_eq!(std::fs::read(&path)?, replacement.as_bytes());
+    #[cfg(unix)]
+    {
+        let baseline = baseline_mode(env.root())?;
+        assert_eq!(
+            mode_of(&path)?,
+            baseline | ((baseline & 0o444) >> 2),
+            "a replaced bin artifact stays executable"
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn force_keeps_the_permissions_the_replaced_bin_carried() -> anyhow::Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    // A narrowed artifact stays narrowed across a replacement: the operator's
+    // `chmod` is the base the execute bits are derived from, so a private
+    // script is not quietly reopened to the umask default.
+    for (existing, expected) in [(0o600, 0o700), (0o700, 0o700)] {
+        env.command()
+            .args([
+                "add",
+                "smoke.sh",
+                SCRIPT,
+                "--type",
+                "bin",
+                "--context",
+                "release",
+                "--force",
+            ])
+            .assert()
+            .success();
+
+        let path = env.cue_store().join("acme/widgets/release/bin/smoke.sh");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(existing))?;
+
+        let replacement = "#!/usr/bin/env bash\necho replaced\n";
+        env.command()
+            .args([
+                "add",
+                "smoke.sh",
+                replacement,
+                "--type",
+                "bin",
+                "--context",
+                "release",
+                "--force",
+            ])
+            .assert()
+            .success();
+
+        assert_eq!(std::fs::read(&path)?, replacement.as_bytes());
+        assert_eq!(
+            mode_of(&path)?,
+            expected,
+            "replacing a {existing:o} artifact must publish {expected:o}"
+        );
+    }
+
+    Ok(())
+}
+
+#[cfg(unix)]
+#[test]
+fn add_refuses_a_bin_name_that_is_already_taken_by_a_dangling_link() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    // `Path::exists` follows the link and reports absence, so this name slips
+    // past the pre-check: only the no-clobber publication stops cue writing
+    // through a name that is already taken.
+    let bin_dir = env.cue_store().join("acme/widgets/release/bin");
+    std::fs::create_dir_all(&bin_dir)?;
+    let target = bin_dir.join("missing");
+    let link = bin_dir.join("smoke.sh");
+    std::os::unix::fs::symlink(&target, &link)?;
+
+    env.command()
+        .args([
+            "add",
+            "smoke.sh",
+            SCRIPT,
+            "--type",
+            "bin",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("File exists"));
+
+    assert!(
+        std::fs::symlink_metadata(&link)?.file_type().is_symlink(),
+        "the existing name must be left exactly as it was"
+    );
+    assert!(!target.exists(), "nothing may be written through the link");
 
     Ok(())
 }

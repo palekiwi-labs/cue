@@ -13,8 +13,8 @@ arboard = "3.6.1"
 image = { version = "0.25", features = ["png", "jpeg"] }
 serde_json = "1.0.149"
 serde_yaml = "0.9"
+tempfile = "3.27.0"
 
 [dev-dependencies]
 assert_cmd = "2.2.1"
 predicates = "3.1.4"
-tempfile = "3.27.0"

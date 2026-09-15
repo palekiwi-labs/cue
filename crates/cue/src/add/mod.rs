@@ -1,9 +1,9 @@
 use crate::address;
 use crate::git;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use cuelib::store;
 use std::fs;
-use std::io::Cursor;
+use std::io::{Cursor, Write};
 use std::path::{Component, Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -54,9 +54,13 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
     ) {
         return add_central_markdown(write, frontmatter, &cue_type);
     }
-    // Reuse the current JSON object writer without introducing a review schema
-    // or automatic metadata stamps. The types' longer-term contracts may differ.
-    if matches!(cue_type.as_str(), "bin" | "review") {
+    if cue_type == "bin" {
+        return add_central_bin(write, frontmatter);
+    }
+    // `review` keeps the JSON object writer: a review is structured data cue
+    // reads back, so it is stored as an object with mergeable top-level
+    // metadata rather than as opaque bytes.
+    if cue_type == "review" {
         return add_central_json(write, frontmatter, &cue_type);
     }
     if cue_type == "tmp" {
@@ -185,6 +189,35 @@ fn add_central_json(
     Ok(file_path)
 }
 
+/// Write a `bin` artifact: something an operator or an agent runs.
+///
+/// A bin artifact is an executable, typically a shell script, so cue stores the
+/// supplied bytes verbatim and keeps the caller's filename exactly as given: no
+/// extension is invented, none is required, and neither the shebang nor the
+/// content is inspected. An opaque executable has nowhere to carry metadata, so
+/// supplying any is a caller error rather than something silently dropped, and
+/// it is refused before anything is written.
+fn add_central_bin(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> Result<PathBuf> {
+    let CentralWrite {
+        root,
+        filename,
+        content,
+        force,
+        context,
+        store_root,
+    } = write;
+    if !metadata.is_empty() {
+        bail!("bin artifacts do not support metadata: an executable carries none");
+    }
+    validate_filename(filename)?;
+
+    let context_dir = central_context_dir(root, context, store_root)?;
+    let file_path = context_dir.join("bin").join(filename);
+    write_new_executable(&file_path, force, content)?;
+
+    Ok(file_path)
+}
+
 fn add_central_tmp(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> Result<PathBuf> {
     let CentralWrite {
         root,
@@ -253,6 +286,98 @@ where
     fs::create_dir_all(file_path.parent().expect("artifact path has a parent"))?;
     fs::write(file_path, content()?)
         .with_context(|| format!("Failed to write to {}", file_path.display()))?;
+    Ok(())
+}
+
+/// Publish `content` at `file_path` as an executable file.
+///
+/// Stage bytes and permissions before publication. Without `force`, publication
+/// refuses an existing name even if it appeared after the pre-check.
+fn write_new_executable(file_path: &Path, force: bool, content: &[u8]) -> Result<()> {
+    if file_path.exists() && !force {
+        bail!(
+            "File exists: {}. Use --force to overwrite.",
+            file_path.display()
+        );
+    }
+
+    let parent = file_path.parent().expect("artifact path has a parent");
+    fs::create_dir_all(parent)?;
+    let mut staged =
+        stage_file(parent).with_context(|| format!("Failed to stage {}", file_path.display()))?;
+    staged
+        .write_all(content)
+        .with_context(|| format!("Failed to write to {}", file_path.display()))?;
+    set_executable_mode(staged.as_file(), file_path)
+        .with_context(|| format!("Failed to make {} executable", file_path.display()))?;
+    let published = if force {
+        staged.persist(file_path)
+    } else {
+        staged.persist_noclobber(file_path)
+    };
+    published.map_err(|error| {
+        if error.error.kind() == std::io::ErrorKind::AlreadyExists {
+            anyhow!(
+                "File exists: {}. Use --force to overwrite.",
+                file_path.display()
+            )
+        } else {
+            anyhow::Error::new(error.error)
+                .context(format!("Failed to write to {}", file_path.display()))
+        }
+    })?;
+    Ok(())
+}
+
+/// Create the staging file with the same `0o666` request `fs::write` makes, so
+/// the umask decides its read and write permissions exactly as it does for
+/// every other artifact type. `tempfile`'s own `0o600` default would otherwise
+/// silently narrow a bin artifact relative to its neighbours.
+#[cfg(unix)]
+fn stage_file(dir: &Path) -> std::io::Result<tempfile::NamedTempFile> {
+    use std::os::unix::fs::PermissionsExt;
+
+    tempfile::Builder::new()
+        .permissions(fs::Permissions::from_mode(0o666))
+        .tempfile_in(dir)
+}
+
+#[cfg(not(unix))]
+fn stage_file(dir: &Path) -> std::io::Result<tempfile::NamedTempFile> {
+    tempfile::NamedTempFile::new_in(dir)
+}
+
+/// Give the staged file the mode the published artifact should carry: execute
+/// for exactly the classes that may read it.
+///
+/// The base is the mode `destination` already carries when it is an existing
+/// regular file, so replacing an artifact an operator narrowed to `0o600`
+/// republishes it as `0o700` instead of reopening it to the umask default.
+/// Otherwise the base is the staged file's own mode, which the umask set
+/// exactly as it does for every other artifact type. Either way only execute
+/// bits are added: a class that cannot read the artifact does not gain the
+/// right to run it, and no writer is added for anyone.
+#[cfg(unix)]
+fn set_executable_mode(file: &fs::File, destination: &Path) -> Result<()> {
+    use std::os::unix::fs::PermissionsExt;
+
+    // Consulted only for an existing regular file. Anything else, including a
+    // dangling link or a directory, falls back to the staged mode rather than
+    // giving this writer a symlink policy it does not need. Only the `ugo`
+    // bits carry over: set-user-ID and friends are not reapplied to content
+    // the caller has just replaced.
+    let base = match fs::metadata(destination) {
+        Ok(existing) if existing.is_file() => existing.permissions().mode(),
+        _ => file.metadata()?.permissions().mode(),
+    } & 0o777;
+    file.set_permissions(fs::Permissions::from_mode(base | ((base & 0o444) >> 2)))?;
+    Ok(())
+}
+
+/// Executability is a Unix file mode; elsewhere it is carried by the extension
+/// cue deliberately does not police, so there is nothing to set.
+#[cfg(not(unix))]
+fn set_executable_mode(_file: &fs::File, _destination: &Path) -> Result<()> {
     Ok(())
 }
 
@@ -460,6 +585,54 @@ pub fn resolve_clipboard(filename: &str) -> anyhow::Result<Vec<u8>> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A destination that appears between the pre-check and the publication is
+    /// a race no test can schedule, so the same gap is opened deterministically
+    /// with a dangling symlink: `Path::exists` follows the link and reports
+    /// absence, which slips past the pre-check and leaves the rename as the
+    /// only thing standing between a concurrent writer and a clobbered name.
+    #[cfg(unix)]
+    #[test]
+    fn write_new_executable_refuses_to_clobber_a_name_the_pre_check_missed() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let destination = dir.path().join("smoke.sh");
+        let target = dir.path().join("missing");
+        std::os::unix::fs::symlink(&target, &destination).expect("symlink");
+        assert!(
+            !destination.exists(),
+            "a dangling link must be invisible to the pre-check for this test to mean anything"
+        );
+
+        let error = write_new_executable(&destination, false, b"#!/usr/bin/env bash\n")
+            .expect_err("publication must refuse an existing name");
+
+        assert!(
+            error.to_string().contains("File exists"),
+            "the refusal must read like a collision, got: {error}"
+        );
+        assert!(
+            fs::symlink_metadata(&destination)
+                .expect("link should survive")
+                .file_type()
+                .is_symlink(),
+            "the existing name must be left exactly as it was"
+        );
+        assert!(!target.exists(), "nothing may be written through the link");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn write_new_executable_publishes_when_the_name_is_free() {
+        let dir = tempfile::tempdir().expect("temp dir");
+        let destination = dir.path().join("nested").join("smoke.sh");
+
+        write_new_executable(&destination, false, b"#!/usr/bin/env bash\n").expect("publication");
+
+        assert_eq!(
+            fs::read(&destination).expect("published bytes"),
+            b"#!/usr/bin/env bash\n"
+        );
+    }
 
     #[test]
     fn validate_filename_accepts_valid_inputs() {
