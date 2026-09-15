@@ -54,8 +54,10 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
     ) {
         return add_central_markdown(write, frontmatter, &cue_type);
     }
-    if cue_type == "bin" {
-        return add_central_bin(write, frontmatter);
+    // Reuse the current JSON object writer without introducing a review schema
+    // or automatic metadata stamps. The types' longer-term contracts may differ.
+    if matches!(cue_type.as_str(), "bin" | "review") {
+        return add_central_json(write, frontmatter, &cue_type);
     }
     if cue_type == "tmp" {
         return add_central_tmp(write, frontmatter);
@@ -134,7 +136,11 @@ fn add_central_markdown(
     Ok(file_path)
 }
 
-fn add_central_bin(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> Result<PathBuf> {
+fn add_central_json(
+    write: CentralWrite<'_>,
+    metadata: Vec<(String, String)>,
+    cue_type: &str,
+) -> Result<PathBuf> {
     let CentralWrite {
         root,
         filename,
@@ -150,13 +156,13 @@ fn add_central_bin(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> 
     } else {
         filename.to_string()
     };
-    let file_path = context_dir.join("bin").join(filename);
+    let file_path = context_dir.join(cue_type).join(filename);
 
     write_new_file(&file_path, force, || {
-        let value: serde_json::Value =
-            serde_json::from_slice(content).context("Bin content must be valid JSON")?;
+        let value: serde_json::Value = serde_json::from_slice(content)
+            .with_context(|| format!("{cue_type} content must be valid JSON"))?;
         let serde_json::Value::Object(mut object) = value else {
-            bail!("Bin content must be a JSON object");
+            bail!("{cue_type} content must be a JSON object");
         };
         for (key, raw_value) in metadata {
             let value = serde_json::to_value(coerce_scalar(&raw_value))?;

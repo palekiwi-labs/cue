@@ -5,7 +5,83 @@ use serde::Serialize;
 use std::path::{Path, PathBuf};
 use std::str::FromStr;
 
-const SUPPORTED_ARTIFACT_TYPES: &[&str] = &["task", "spec", "plan", "note", "trace", "bin", "tmp"];
+// ── Artifact addressing ──────────────────────────────────────────────────────
+
+/// The artifact types cue recognises.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ArtifactType {
+    Task,
+    Spec,
+    Plan,
+    Note,
+    Trace,
+    Review,
+    Bin,
+    Tmp,
+}
+
+impl ArtifactType {
+    fn from_segment(segment: &str) -> Option<Self> {
+        Some(match segment {
+            "task" => Self::Task,
+            "spec" => Self::Spec,
+            "plan" => Self::Plan,
+            "note" => Self::Note,
+            "trace" => Self::Trace,
+            "review" => Self::Review,
+            "bin" => Self::Bin,
+            "tmp" => Self::Tmp,
+            _ => return None,
+        })
+    }
+
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Task => "task",
+            Self::Spec => "spec",
+            Self::Plan => "plan",
+            Self::Note => "note",
+            Self::Trace => "trace",
+            Self::Review => "review",
+            Self::Bin => "bin",
+            Self::Tmp => "tmp",
+        }
+    }
+}
+
+/// A store path split on cue's single addressing rule,
+/// `<scope root>/<context>/<artifact type>/<caller path>`.
+struct ArtifactAddress {
+    context: String,
+    cue_type: ArtifactType,
+    /// Everything the caller named below the type, which may be nested.
+    name: String,
+}
+
+/// Read an artifact's address out of its location under the scope root.
+///
+/// Returns `None` for any path that does not satisfy the rule, so a directory
+/// naming no known type is simply not an artifact and is ignored. Only the
+/// segment directly below the context names the type: artifacts may be grouped
+/// into subdirectories (`review/rounds/first.json`), and a directory further
+/// down may itself be named after a type (`note/review/decisions.md`).
+fn artifact_address(path: &Path, scope_root: &Path) -> Option<ArtifactAddress> {
+    let relative = path.strip_prefix(scope_root).ok()?;
+    let mut components = relative.components();
+
+    let context = components.next()?.as_os_str().to_string_lossy();
+    let cue_type = ArtifactType::from_segment(&components.next()?.as_os_str().to_string_lossy())?;
+    let name = components.collect::<PathBuf>();
+    if name.as_os_str().is_empty() {
+        return None;
+    }
+
+    Some(ArtifactAddress {
+        context: context.into_owned(),
+        cue_type,
+        name: name.to_string_lossy().into_owned(),
+    })
+}
 
 // ── Frontmatter filter ───────────────────────────────────────────────────────
 
@@ -84,17 +160,24 @@ fn evaluate_filter(filter: &Filter, fm: &serde_json::Value) -> bool {
 }
 
 /// Parse queryable artifact metadata, or `Null` if absent or malformed.
-fn parse_metadata(path: &Path) -> serde_json::Value {
-    if path.parent().and_then(Path::file_name) == Some(std::ffi::OsStr::new("bin")) {
-        return std::fs::File::open(path)
+///
+/// Where the metadata lives is a property of the type, so the type decides how
+/// to decode it.
+fn parse_metadata(path: &Path, cue_type: ArtifactType) -> serde_json::Value {
+    use ArtifactType::*;
+    match cue_type {
+        // A review file *is* a JSON object, so the document is its metadata.
+        Review => std::fs::File::open(path)
             .ok()
             .and_then(|file| serde_json::from_reader(file).ok())
-            .unwrap_or(serde_json::Value::Null);
+            .unwrap_or(serde_json::Value::Null),
+        // Markdown artifacts declare their metadata in YAML frontmatter.
+        Task | Spec | Plan | Note | Trace => extract_frontmatter_yaml(path)
+            .and_then(|yaml| serde_yaml::from_str(&yaml).ok())
+            .unwrap_or(serde_json::Value::Null),
+        // `bin` and `tmp` hold opaque content: there is nothing to decode.
+        Bin | Tmp => serde_json::Value::Null,
     }
-
-    extract_frontmatter_yaml(path)
-        .and_then(|yaml| serde_yaml::from_str(&yaml).ok())
-        .unwrap_or(serde_json::Value::Null)
 }
 
 /// Returns `true` if `fm` satisfies every filter (AND semantics).
@@ -126,7 +209,7 @@ pub struct ListOptions {
     pub filters: Vec<Filter>,
 }
 
-pub fn list(root: &Path, opts: ListOptions) -> Result<Vec<(PathBuf, Option<serde_json::Value>)>> {
+pub fn list(root: &Path, opts: ListOptions) -> Result<Vec<CueFile>> {
     let ListOptions {
         context,
         cue_types,
@@ -136,8 +219,8 @@ pub fn list(root: &Path, opts: ListOptions) -> Result<Vec<(PathBuf, Option<serde
         ..
     } = opts;
 
-    // Parse frontmatter once when either filtering or outputting it requires it.
-    let need_frontmatter = frontmatter || !filters.is_empty();
+    // Parse metadata once when either filtering or outputting it requires it.
+    let need_metadata = frontmatter || !filters.is_empty();
 
     // 1. Resolve the current repository's directory in the central store.
     let store_dir = store::root(store_root.as_deref())?.join(store::repository_scope(root)?);
@@ -149,28 +232,46 @@ pub fn list(root: &Path, opts: ListOptions) -> Result<Vec<(PathBuf, Option<serde
     // 3. Sort
     paths.sort();
 
-    // 4. Filter by supported artifact structure and requested type
-    let valid_paths = paths
+    // 4. Read each address once, then reuse the type it resolves to for the
+    //    type filter, for metadata decoding, and for the emitted row.
+    let rows: Vec<CueFile> = paths
         .into_iter()
-        .filter(|path| is_valid_cue_file(path, &store_dir, &cue_types));
-
-    // 5. Parse frontmatter once (if needed), apply filters, carry value forward.
-    let filtered: Vec<(PathBuf, Option<serde_json::Value>)> = valid_paths
         .filter_map(|path| {
-            let fm_val = if need_frontmatter {
-                let fm = parse_metadata(&path);
-                if !apply_filters(&fm, &filters) {
+            let address = artifact_address(&path, &store_dir)?;
+
+            if !cue_types.is_empty()
+                && !cue_types
+                    .iter()
+                    .any(|requested| requested == address.cue_type.as_str())
+            {
+                return None;
+            }
+
+            let metadata = if need_metadata {
+                let metadata = parse_metadata(&path, address.cue_type);
+                if !apply_filters(&metadata, &filters) {
                     return None;
                 }
-                Some(fm)
+                Some(metadata)
             } else {
                 None
             };
-            Some((path, fm_val))
+
+            Some(CueFile {
+                path: path.to_string_lossy().into_owned(),
+                name: address.name,
+                context: address.context,
+                cue_type: address.cue_type.as_str().to_string(),
+                frontmatter: if frontmatter {
+                    metadata.filter(|value| !value.is_null())
+                } else {
+                    None
+                },
+            })
         })
         .collect();
 
-    Ok(filtered)
+    Ok(rows)
 }
 
 fn resolve_central_scan_paths(store_dir: &Path, context: Option<&str>) -> Result<Vec<PathBuf>> {
@@ -180,65 +281,6 @@ fn resolve_central_scan_paths(store_dir: &Path, context: Option<&str>) -> Result
         store_dir.to_path_buf()
     };
     collect_files(&scan_dir)
-}
-
-pub fn is_valid_cue_file(path: &Path, cue_path: &Path, cue_types: &[String]) -> bool {
-    let Ok(rel_to_mem) = path.strip_prefix(cue_path) else {
-        return false;
-    };
-    let mut components = rel_to_mem.components();
-
-    let _branch = components.next();
-    let Some(category_comp) = components.next() else {
-        return false;
-    };
-    let Some(_name_comp) = components.next() else {
-        return false; // Ensures len >= 3
-    };
-
-    let category = category_comp.as_os_str().to_string_lossy();
-
-    if !SUPPORTED_ARTIFACT_TYPES.contains(&category.as_ref()) {
-        return false;
-    }
-
-    if !cue_types.is_empty()
-        && !cue_types
-            .iter()
-            .any(|requested| category == requested.as_str())
-    {
-        return false;
-    }
-
-    true
-}
-
-pub fn to_cue_file(path: &Path, cue_path: &Path) -> Option<CueFile> {
-    let rel_to_mem = path.strip_prefix(cue_path).ok()?;
-    let mut components = rel_to_mem.components();
-
-    let context = components
-        .next()?
-        .as_os_str()
-        .to_string_lossy()
-        .into_owned();
-    let cue_type = components
-        .next()?
-        .as_os_str()
-        .to_string_lossy()
-        .into_owned();
-    let name = components
-        .collect::<PathBuf>()
-        .to_string_lossy()
-        .into_owned();
-
-    Some(CueFile {
-        path: path.to_string_lossy().into_owned(),
-        name,
-        context,
-        cue_type,
-        frontmatter: None,
-    })
 }
 
 // ── Unit tests ────────────────────────────────────────────────────────────────

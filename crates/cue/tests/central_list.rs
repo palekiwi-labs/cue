@@ -218,14 +218,14 @@ fn list_reads_top_level_json_artifact_metadata() -> anyhow::Result<()> {
     env.command()
         .args([
             "add",
-            "analysis",
+            "readiness",
             r#"{"findings":["ready"]}"#,
             "--type",
-            "bin",
+            "review",
             "--context",
             "release",
             "--frontmatter",
-            "analyzer=smoke-test",
+            "reviewer=smoke-test",
         ])
         .assert()
         .success();
@@ -241,9 +241,261 @@ fn list_reads_top_level_json_artifact_metadata() -> anyhow::Result<()> {
     let artifacts: serde_json::Value = serde_json::from_slice(&output)?;
     let artifact = &artifacts[0];
 
-    assert_eq!(artifact["type"], "bin");
-    assert_eq!(artifact["frontmatter"]["analyzer"], "smoke-test");
+    assert_eq!(artifact["type"], "review");
+    assert_eq!(artifact["frontmatter"]["reviewer"], "smoke-test");
     assert_eq!(artifact["frontmatter"]["findings"][0], "ready");
+
+    Ok(())
+}
+
+#[test]
+fn list_reads_nested_json_artifact_metadata() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "add",
+            "rounds/first",
+            r#"{"findings":["ready"]}"#,
+            "--type",
+            "review",
+            "--context",
+            "release",
+            "--frontmatter",
+            "verdict=approve",
+        ])
+        .assert()
+        .success();
+
+    // The artifact type is the path segment below the context, not the
+    // directory the file happens to sit in, so grouping a review into a
+    // subdirectory must not demote it to frontmatter parsing.
+    let output = env
+        .command()
+        .args([
+            "list",
+            "--context",
+            "release",
+            "--filter",
+            "verdict=approve",
+            "--frontmatter",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let artifacts: serde_json::Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(artifacts.as_array().map(Vec::len), Some(1));
+    assert_eq!(artifacts[0]["type"], "review");
+    assert_eq!(artifacts[0]["name"], "rounds/first.json");
+    assert_eq!(artifacts[0]["frontmatter"]["findings"][0], "ready");
+
+    Ok(())
+}
+
+#[test]
+fn list_reads_markdown_metadata_inside_a_type_named_directory() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    for filename in ["review/decisions", "bin/decisions"] {
+        env.command()
+            .args([
+                "add",
+                filename,
+                "Release decisions",
+                "--type",
+                "note",
+                "--context",
+                "release",
+                "--frontmatter",
+                "audience=operators",
+            ])
+            .assert()
+            .success();
+    }
+
+    // A note grouped under a directory named after another artifact type is
+    // still a note: its metadata is frontmatter, and it stays filterable.
+    let output = env
+        .command()
+        .args([
+            "list",
+            "--context",
+            "release",
+            "--filter",
+            "audience=operators",
+            "--frontmatter",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let artifacts: serde_json::Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(artifacts.as_array().map(Vec::len), Some(2));
+    for artifact in artifacts.as_array().unwrap() {
+        assert_eq!(artifact["type"], "note");
+        assert_eq!(artifact["frontmatter"]["audience"], "operators");
+    }
+    assert_eq!(artifacts[0]["name"], "bin/decisions.md");
+    assert_eq!(artifacts[1]["name"], "review/decisions.md");
+
+    Ok(())
+}
+
+#[test]
+fn list_skips_metadata_for_opaque_artifact_content() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    for (cue_type, filename) in [
+        ("bin", "analysis"),
+        ("review", "readiness"),
+        ("tmp", "report.json"),
+    ] {
+        env.command()
+            .args([
+                "add",
+                filename,
+                r#"{"verdict":"approve"}"#,
+                "--type",
+                cue_type,
+                "--context",
+                "release",
+            ])
+            .assert()
+            .success();
+    }
+
+    // `bin` and `tmp` hold opaque content: cue stores the bytes and decodes
+    // no metadata out of them, even when those bytes happen to be JSON.
+    let output = env
+        .command()
+        .args(["list", "--context", "release", "--frontmatter"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let artifacts: serde_json::Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(artifacts.as_array().map(Vec::len), Some(3));
+    assert_eq!(artifacts[0]["type"], "bin");
+    assert!(artifacts[0].get("frontmatter").is_none());
+    assert_eq!(artifacts[1]["type"], "review");
+    assert_eq!(artifacts[1]["frontmatter"]["verdict"], "approve");
+    assert_eq!(artifacts[2]["type"], "tmp");
+    assert!(artifacts[2].get("frontmatter").is_none());
+
+    // Having no metadata, opaque artifacts answer no metadata query.
+    let output = env
+        .command()
+        .args([
+            "list",
+            "--context",
+            "release",
+            "--filter",
+            "verdict=approve",
+            "--frontmatter",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let artifacts: serde_json::Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(artifacts.as_array().map(Vec::len), Some(1));
+    assert_eq!(artifacts[0]["type"], "review");
+
+    Ok(())
+}
+
+#[test]
+fn list_includes_review_artifacts_and_filters_by_type() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "add",
+            "decisions",
+            "Release decisions",
+            "--type",
+            "note",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "add",
+            "readiness",
+            r#"{"findings":[{"severity":"blocker"}]}"#,
+            "--type",
+            "review",
+            "--context",
+            "release",
+            "--frontmatter",
+            "reviewer=smoke-test",
+        ])
+        .assert()
+        .success();
+
+    let output = env
+        .command()
+        .args(["list", "--context", "release", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let artifacts: serde_json::Value = serde_json::from_slice(&output)?;
+    assert_eq!(artifacts.as_array().map(Vec::len), Some(2));
+
+    let output = env
+        .command()
+        .args([
+            "list",
+            "--context",
+            "release",
+            "--type",
+            "review",
+            "--frontmatter",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let artifacts: serde_json::Value = serde_json::from_slice(&output)?;
+
+    assert_eq!(artifacts.as_array().map(Vec::len), Some(1));
+    assert_eq!(artifacts[0]["type"], "review");
+    assert_eq!(artifacts[0]["name"], "readiness.json");
+    assert_eq!(artifacts[0]["frontmatter"]["reviewer"], "smoke-test");
+    assert_eq!(
+        artifacts[0]["frontmatter"]["findings"][0]["severity"],
+        "blocker"
+    );
 
     Ok(())
 }

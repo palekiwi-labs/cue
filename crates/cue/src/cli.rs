@@ -60,7 +60,7 @@ pub enum Commands {
             short = 't',
             long = "type",
             default_value = "spec",
-            value_parser = ["task", "spec", "plan", "note", "trace", "bin", "tmp"]
+            value_parser = ["task", "spec", "plan", "note", "trace", "bin", "review", "tmp"]
         )]
         cue_type: String,
         /// Set context by slug or <org>/<repo>/<slug> address; overrides $CUE_CONTEXT

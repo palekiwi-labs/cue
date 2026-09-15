@@ -580,6 +580,191 @@ fn add_creates_json_artifacts_in_nested_directories() -> anyhow::Result<()> {
 }
 
 #[test]
+fn add_creates_json_review_artifacts() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "readiness",
+            r#"{"findings":[{"severity":"blocker"}]}"#,
+            "--type",
+            "review",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    let path = env
+        .cue_store()
+        .join("acme/widgets/release/review/readiness.json");
+    let content: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+
+    assert_eq!(content["findings"][0]["severity"], "blocker");
+
+    Ok(())
+}
+
+#[test]
+fn add_rejects_review_content_that_is_not_a_json_object() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    for content in ["not json at all", r#"["findings"]"#, r#""blocker""#] {
+        env.command()
+            .args([
+                "add",
+                "readiness",
+                content,
+                "--type",
+                "review",
+                "--context",
+                "release",
+            ])
+            .assert()
+            .failure()
+            // Asserting the writer's own complaint distinguishes a rejected
+            // payload from a `review` type clap never accepted in the first
+            // place, which would otherwise satisfy this test vacuously.
+            .stderr(predicate::str::contains("review content must be"));
+    }
+
+    assert!(
+        !env.cue_store()
+            .join("acme/widgets/release/review/readiness.json")
+            .exists()
+    );
+}
+
+#[test]
+fn add_accepts_nested_review_paths_and_any_extension() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    // An extensionless name defaults to `.json`, while a caller-supplied
+    // extension is taken as given: cue stores the object, it does not police
+    // what the file is called.
+    for (filename, relative) in [
+        ("rounds/first", "rounds/first.json"),
+        ("rounds/second.review", "rounds/second.review"),
+    ] {
+        env.command()
+            .args([
+                "add",
+                filename,
+                r#"{"verdict":"approve"}"#,
+                "--type",
+                "review",
+                "--context",
+                "release",
+            ])
+            .assert()
+            .success();
+
+        let path = env
+            .cue_store()
+            .join("acme/widgets/release/review")
+            .join(relative);
+        let content: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+        assert_eq!(content["verdict"], "approve");
+    }
+
+    Ok(())
+}
+
+#[test]
+fn add_does_not_stamp_review_artifacts() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "readiness",
+            r#"{"verdict":"approve"}"#,
+            "--type",
+            "review",
+            "--context",
+            "release",
+        ])
+        .assert()
+        .success();
+
+    let path = env
+        .cue_store()
+        .join("acme/widgets/release/review/readiness.json");
+    let content: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+
+    // A review carries only what its caller supplied. cue adds no lifecycle
+    // or revision correlation of its own.
+    assert!(content.get("created_at").is_none());
+    assert!(content.get("commit_hash").is_none());
+    assert!(content.get("repo_id").is_none());
+    assert_eq!(content.as_object().map(serde_json::Map::len), Some(1));
+
+    Ok(())
+}
+
+#[test]
+fn add_merges_review_metadata_into_existing_json_fields() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "readiness",
+            r#"{"reviewer":"ada","verdict":"approve"}"#,
+            "--type",
+            "review",
+            "--context",
+            "release",
+            "--frontmatter",
+            "reviewer=grace",
+            "--frontmatter",
+            "round=2",
+        ])
+        .assert()
+        .success();
+
+    let path = env
+        .cue_store()
+        .join("acme/widgets/release/review/readiness.json");
+    let content: serde_json::Value = serde_json::from_slice(&std::fs::read(path)?)?;
+
+    // Merging is inherited wholesale from the JSON writer: a key already in
+    // the payload is promoted to a list rather than overwritten, and a scalar
+    // is coerced rather than stored as a string.
+    assert_eq!(content["reviewer"], serde_json::json!(["ada", "grace"]));
+    assert_eq!(content["round"], serde_json::json!(2));
+    assert_eq!(content["verdict"], "approve");
+
+    Ok(())
+}
+
+#[test]
 fn add_creates_a_revision_correlated_tmp_directory() -> anyhow::Result<()> {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();
