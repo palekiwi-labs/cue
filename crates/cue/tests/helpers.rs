@@ -2,6 +2,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tempfile::TempDir;
 
+#[allow(dead_code)]
+pub const TEST_ORIGIN_URL: &str = "https://github.com/acme/widgets.git";
+
 /// The single authoritative test isolation boundary. All integration tests
 /// MUST spawn the `cue` binary via `TestEnv::command()`. Never use a raw
 /// `assert_cmd::Command` directly — doing so risks leaking into the
@@ -11,6 +14,7 @@ pub struct TestEnv {
     pub temp_dir: TempDir,
     pub config_dir: PathBuf,
     pub data_dir: PathBuf,
+    pub cue_store: PathBuf,
 }
 
 impl Default for TestEnv {
@@ -25,13 +29,16 @@ impl TestEnv {
         let temp_dir = tempfile::tempdir().expect("Failed to create temp dir");
         let config_dir = temp_dir.path().join("config");
         let data_dir = temp_dir.path().join("data");
+        let cue_store = temp_dir.path().join("cue-store");
         std::fs::create_dir_all(&config_dir).expect("Failed to create config dir");
         std::fs::create_dir_all(&data_dir).expect("Failed to create data dir");
+        std::fs::create_dir_all(&cue_store).expect("Failed to create CUE_STORE");
 
         Self {
             temp_dir,
             config_dir,
             data_dir,
+            cue_store,
         }
     }
 
@@ -43,9 +50,10 @@ impl TestEnv {
         let mut cmd = assert_cmd::Command::cargo_bin("cue").expect("Failed to find cue binary");
         cmd.env("CUE_CONFIG_DIR", &self.config_dir)
             .env("CUE_DATA_DIR", &self.data_dir)
+            .env("CUE_STORE", &self.cue_store)
             .env_remove("CUE_ARTIFACT_TYPES")
             .env_remove("CUE_IGNORED_TYPES")
-            .env_remove("CUE_TASK")
+            .env_remove("CUE_CONTEXT")
             .current_dir(self.temp_dir.path());
         cmd
     }
@@ -54,6 +62,42 @@ impl TestEnv {
     pub fn root(&self) -> &Path {
         self.temp_dir.path()
     }
+
+    #[allow(dead_code)]
+    pub fn cue_store(&self) -> &Path {
+        &self.cue_store
+    }
+
+    /// Advance the fixture repository to a new revision so tests can observe
+    /// revision-correlated behavior such as tmp artifact paths.
+    #[allow(dead_code)]
+    pub fn commit_new_revision(&self, filename: &str) {
+        commit_new_revision(self.root(), filename);
+    }
+
+    #[allow(dead_code)]
+    pub fn setup_repo_with_origin(&self) {
+        setup_git_repo(self.root());
+        std::fs::remove_dir_all(self.root().join(".cue"))
+            .expect("Failed to remove legacy default test store");
+        std::fs::remove_dir_all(self.root().join(".test-mem"))
+            .expect("Failed to remove legacy custom test store");
+    }
+}
+
+#[allow(dead_code)]
+pub fn setup_origin(dir: &Path, url: &str) {
+    let output = Command::new("git")
+        .args(["remote", "add", "origin", url])
+        .current_dir(dir)
+        .output()
+        .expect("Failed to add remote origin");
+
+    assert!(
+        output.status.success(),
+        "Failed to add remote origin: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[allow(dead_code)]
@@ -95,6 +139,37 @@ pub fn setup_git_repo(dir: &Path) {
         .current_dir(dir)
         .output()
         .expect("Failed to git commit");
+
+    setup_origin(dir, TEST_ORIGIN_URL);
+
+    // Legacy command suites still exercise the old artifact model directly.
+    // Keep their fixture store explicit while central-store slices replace
+    // those suites incrementally.
+    std::fs::create_dir(dir.join(".cue")).expect("Failed to create legacy default test store");
+    std::fs::create_dir(dir.join(".test-mem")).expect("Failed to create legacy custom test store");
+}
+
+#[allow(dead_code)]
+pub fn commit_new_revision(dir: &Path, filename: &str) {
+    std::fs::write(dir.join(filename), filename).expect("Failed to write revision file");
+
+    Command::new("git")
+        .args(["add", filename])
+        .current_dir(dir)
+        .output()
+        .expect("Failed to git add");
+
+    let output = Command::new("git")
+        .args(["commit", "-m", filename])
+        .current_dir(dir)
+        .output()
+        .expect("Failed to git commit");
+
+    assert!(
+        output.status.success(),
+        "Failed to create revision: {}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 }
 
 #[allow(dead_code)]

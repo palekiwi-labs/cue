@@ -1,8 +1,7 @@
 //! `acuity-api` — read/response types for acuity's query API and SSE stream.
 //!
-//! Used by both `acuity` (serialization) and `curator` (deserialization).
-//! Kept dependency-light so `curator` can depend on this crate without
-//! pulling in the server stack.
+//! Used by `acuity` for serialization and by lightweight API consumers for
+//! deserialization without pulling in the server stack.
 //!
 //! `AcuityEvent` is re-exported here so consumers that need to parse the
 //! `payload` field of an `EventRecord` only need to depend on `acuity-api`,

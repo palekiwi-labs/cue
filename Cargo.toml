@@ -5,6 +5,5 @@ members = [
     "crates/acuity-schema",
     "crates/acuity-api",
     "crates/acuity",
-    "crates/curator",
 ]
 resolver = "2"
