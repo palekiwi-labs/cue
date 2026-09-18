@@ -1,0 +1,19 @@
+[package]
+name = "cue-agent"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.98"
+
+[dependencies]
+anyhow = "1.0.102"
+clap = { version = "4.6.1", features = ["derive"] }
+cuelib = { path = "../cuelib" }
+dirs = "6.0.0"
+libc = "0.2.186"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.149"
+tempfile = "3.27.0"
+
+[dev-dependencies]
+assert_cmd = "2.2.1"
+predicates = "3.1.4"

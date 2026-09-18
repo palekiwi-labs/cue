@@ -110,5 +110,6 @@ storage contract they implement now live in
 ## Docs
 
 - [cue](docs/cue.md) — the memory CLI
+- [cue-agent](docs/cue-agent.md) — the named-agent delegation runner
 - [curator](docs/curator.md) — the artifact kanban TUI
 - [acuity](docs/acuity.md) — the observability ingestion server (+ NixOS module)

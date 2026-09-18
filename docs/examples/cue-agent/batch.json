@@ -1,0 +1,15 @@
+{
+  "label": "Review the branch diff",
+  "context": "cue-agent-runtime-mvp",
+  "runs": [
+    {
+      "agent": "diff-reviewer-flash",
+      "prompt": "Review this diff for defects.\n\n<diff goes here>"
+    },
+    {
+      "agent": "consultant-opus",
+      "prompt": "Is the teardown order in this diff correct under an interrupt during the grace window?\n\n<diff goes here>",
+      "timeout_secs": 600
+    }
+  ]
+}

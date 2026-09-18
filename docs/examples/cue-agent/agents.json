@@ -1,0 +1,21 @@
+{
+  "agents": {
+    "explore": {
+      "description": "Surveys unfamiliar code and reports what is where",
+      "model": "anthropic/claude-haiku-4",
+      "system_prompt": "You explore code. Answer with findings and file:line references only.",
+      "tools": ["read", "bash"]
+    },
+    "consultant-opus": {
+      "description": "Consults on hard design questions",
+      "model": "anthropic/claude-opus-4",
+      "system_prompt": "You are a consultant. Argue from the evidence given, name your assumptions, and say what would change your mind.",
+      "timeout_secs": 900
+    },
+    "diff-reviewer-flash": {
+      "description": "Reviews a diff and lists defects, most severe first",
+      "model": "google/gemini-flash",
+      "system_prompt": "You review diffs. List defects, most severe first, with file:line references. Say nothing about style unless it changes behaviour."
+    }
+  }
+}

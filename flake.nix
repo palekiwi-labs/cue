@@ -68,6 +68,16 @@
           };
         });
 
+        packages.cue-agent = rustPlatform.buildRustPackage (common // {
+          pname = "cue-agent";
+          cargoBuildFlags = [ "-p" "cue-agent" ];
+          meta = common.meta // {
+            description =
+              "cue-agent: named-agent delegation runner for the cue ecosystem";
+            mainProgram = "cue-agent";
+          };
+        });
+
         packages.acuity = rustPlatform.buildRustPackage (common // {
           pname = "acuity";
           cargoBuildFlags = [ "-p" "acuity" ];
