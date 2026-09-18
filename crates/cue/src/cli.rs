@@ -158,6 +158,19 @@ pub enum ContextCommands {
         /// Order by latest log activity instead of canonical address
         #[arg(long, value_enum)]
         sort: Option<ContextSort>,
+        /// Filter by context metadata field (repeatable, ANDed)
+        ///
+        /// Syntax: KEY[OP]VALUE where OP is =, !=, or ~= (substring match).
+        /// KEY names a context.md frontmatter field, with dot notation for
+        /// nested keys. Filtering is applied before --sort and --limit.
+        ///
+        /// Examples:
+        ///   --filter kind=coord
+        ///   --filter "mode!=review"
+        ///   --filter "title~=release"
+        ///   --filter parent=acme/widgets/program
+        #[arg(long = "filter", value_name = "EXPR", verbatim_doc_comment)]
+        filters: Vec<Filter>,
         /// Keep only the first N contexts of the resulting order
         #[arg(long, value_name = "N")]
         limit: Option<usize>,

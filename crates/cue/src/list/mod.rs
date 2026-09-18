@@ -182,7 +182,10 @@ fn parse_metadata(path: &Path, cue_type: ArtifactType) -> serde_json::Value {
 
 /// Returns `true` if `fm` satisfies every filter (AND semantics).
 /// `Null` (no frontmatter) will fail any `=` / `~=` filter and pass any `!=` filter.
-fn apply_filters(fm: &serde_json::Value, filters: &[Filter]) -> bool {
+///
+/// Shared with `cue context list`, so the two collection queries evaluate one
+/// grammar over one metadata model rather than drifting into two.
+pub(crate) fn apply_filters(fm: &serde_json::Value, filters: &[Filter]) -> bool {
     filters.iter().all(|f| evaluate_filter(f, fm))
 }
 

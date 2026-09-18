@@ -1585,3 +1585,85 @@ fn context_list_scope_store_json_needs_no_repository_scope() -> anyhow::Result<(
 
     Ok(())
 }
+
+// ── Metadata filtering ───────────────────────────────────────────────────────
+
+/// The motivating query: the direct children of one context, across every
+/// scope in the store. Children are derived by matching the canonical parent
+/// address, so a grandchild and a context that merely references the parent
+/// are not children and must not be returned.
+#[test]
+fn context_list_filter_selects_direct_children_across_scopes() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    let other = env.root().join("other-repo");
+    setup_scope_repo(&other, "https://github.com/other/project.git");
+
+    env.command()
+        .args(["context", "create", "program"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "context",
+            "create",
+            "near-child",
+            "--parent",
+            "acme/widgets/program",
+        ])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "context",
+            "create",
+            "cousin",
+            "--ref",
+            "acme/widgets/program",
+        ])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "context",
+            "create",
+            "grandchild",
+            "--parent",
+            "acme/widgets/near-child",
+        ])
+        .assert()
+        .success();
+    env.command()
+        .args(["-C"])
+        .arg(&other)
+        .args([
+            "context",
+            "create",
+            "far-child",
+            "--parent",
+            "acme/widgets/program",
+        ])
+        .assert()
+        .success();
+
+    let contexts = list_json(
+        &env,
+        &[
+            "context",
+            "list",
+            "--scope",
+            "store",
+            "--json",
+            "--filter",
+            "parent=acme/widgets/program",
+        ],
+    )?;
+
+    assert_eq!(contexts.len(), 2);
+    assert_eq!(contexts[0]["context"], "near-child");
+    assert_eq!(contexts[0]["scope"], "acme/widgets");
+    assert_eq!(contexts[1]["context"], "far-child");
+    assert_eq!(contexts[1]["scope"], "other/project");
+
+    Ok(())
+}

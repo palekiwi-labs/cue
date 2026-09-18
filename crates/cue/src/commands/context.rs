@@ -1,4 +1,5 @@
 use crate::cli::{ContextCommands, ContextSort, QueryScope};
+use crate::list::{Filter, apply_filters};
 use anyhow::Context as _;
 use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::store;
@@ -107,8 +108,20 @@ pub fn handle(
             pinned,
             scope,
             sort,
+            filters,
             limit,
-        } => handle_list(cwd, json, pinned, scope, sort, limit, store_root),
+        } => handle_list(
+            cwd,
+            ContextListOptions {
+                json,
+                pinned,
+                scope,
+                sort,
+                filters,
+                limit,
+            },
+            store_root,
+        ),
         ContextCommands::Pin { context } => handle_pin(cwd, &context, store_root),
         ContextCommands::Unpin { context } => handle_unpin(cwd, &context, store_root),
         ContextCommands::Pins { scope } => handle_pins(cwd, scope, store_root),
@@ -376,6 +389,17 @@ fn target_branch(cwd: &Path, branch: Option<String>, action: &str) -> anyhow::Re
     Ok(branch)
 }
 
+/// What a context listing was asked for: which contexts to enumerate, which
+/// of them to keep, and how to order and truncate what remains.
+struct ContextListOptions {
+    json: bool,
+    pinned: bool,
+    scope: QueryScope,
+    sort: Option<ContextSort>,
+    filters: Vec<Filter>,
+    limit: Option<usize>,
+}
+
 /// List contexts at the requested breadth.
 ///
 /// The repository scope is resolved only for `QueryScope::Repo`, so the
@@ -389,13 +413,17 @@ fn target_branch(cwd: &Path, branch: Option<String>, action: &str) -> anyhow::Re
 /// working set.
 fn handle_list(
     cwd: &Path,
-    json: bool,
-    pinned: bool,
-    scope: QueryScope,
-    sort: Option<ContextSort>,
-    limit: Option<usize>,
+    options: ContextListOptions,
     store_root: Option<&Path>,
 ) -> anyhow::Result<()> {
+    let ContextListOptions {
+        json,
+        pinned,
+        scope,
+        sort,
+        filters,
+        limit,
+    } = options;
     let store_root = store::root(store_root)?;
     let prefix = query_scope_prefix(cwd, scope)?;
 
@@ -409,9 +437,13 @@ fn handle_list(
         Vec::new()
     };
 
+    // Selection happens as rows are read, so `--sort` orders and `--limit`
+    // truncates what matched rather than what was enumerated: a limit over an
+    // unfiltered listing would discard matching contexts before they were
+    // tested.
     let mut contexts = Vec::new();
     if pinned {
-        collect_pinned_contexts(&store_root, &pins, &mut contexts)?;
+        collect_pinned_contexts(&store_root, &pins, &filters, &mut contexts)?;
     } else {
         match prefix.as_deref() {
             None => {
@@ -423,11 +455,11 @@ fn handle_list(
                     if scope.starts_with('.') {
                         continue;
                     }
-                    collect_scope_contexts(&scope_dir, &scope, &mut contexts)?;
+                    collect_scope_contexts(&scope_dir, &scope, &filters, &mut contexts)?;
                 }
             }
             Some(scope) => {
-                collect_scope_contexts(&store_root.join(scope), scope, &mut contexts)?;
+                collect_scope_contexts(&store_root.join(scope), scope, &filters, &mut contexts)?;
             }
         }
     }
@@ -526,11 +558,12 @@ fn read_log_activity(contexts: &mut [ContextListEntry]) -> anyhow::Result<()> {
 fn collect_scope_contexts(
     scope_dir: &Path,
     scope: &str,
+    filters: &[Filter],
     contexts: &mut Vec<ContextListEntry>,
 ) -> anyhow::Result<()> {
     for context_dir in read_optional_dir(scope_dir)? {
         let context = entry_name(&context_dir)?.to_string();
-        if let Some(entry) = read_context_entry(&context_dir, scope, &context)? {
+        if let Some(entry) = read_context_entry(&context_dir, scope, &context, filters)? {
             contexts.push(entry);
         }
     }
@@ -545,13 +578,14 @@ fn collect_scope_contexts(
 fn collect_pinned_contexts(
     store_root: &Path,
     pins: &[(String, String)],
+    filters: &[Filter],
     contexts: &mut Vec<ContextListEntry>,
 ) -> anyhow::Result<()> {
     for (scope, context) in pins {
         // Resolution is direct concatenation onto the store root, which is
         // what makes narrowing to the working set cost one read per pin.
         let context_dir = store_root.join(scope).join(context);
-        if let Some(entry) = read_context_entry(&context_dir, scope, context)? {
+        if let Some(entry) = read_context_entry(&context_dir, scope, context, filters)? {
             contexts.push(entry);
         }
     }
@@ -559,11 +593,18 @@ fn collect_pinned_contexts(
 }
 
 /// Read one context directory into a listing row, or `None` when it holds no
-/// `context.md` and so is not a context at all.
+/// `context.md` and so is not a context at all, or when its metadata does not
+/// satisfy every filter.
+///
+/// Filters are evaluated against the `context.md` frontmatter rather than the
+/// row built from it, so a context is queried on the metadata it declares.
+/// Conventional fields cue does not model are therefore filterable, matching
+/// `cue list`.
 fn read_context_entry(
     context_dir: &Path,
     scope: &str,
     context: &str,
+    filters: &[Filter],
 ) -> anyhow::Result<Option<ContextListEntry>> {
     let context_path = context_dir.join("context.md");
     if !context_path.is_file() {
@@ -577,6 +618,15 @@ fn read_context_entry(
     })?;
     let metadata: StoredContextMetadata = serde_yaml::from_str(&frontmatter)
         .with_context(|| format!("invalid context metadata at {}", context_path.display()))?;
+
+    if !filters.is_empty() {
+        let queryable: serde_json::Value =
+            serde_yaml::from_str(&frontmatter).unwrap_or(serde_json::Value::Null);
+        if !apply_filters(&queryable, filters) {
+            return Ok(None);
+        }
+    }
+
     Ok(Some(ContextListEntry {
         context: context.to_string(),
         scope: scope.to_string(),
