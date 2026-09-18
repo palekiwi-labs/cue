@@ -29,6 +29,9 @@
           rustc = rustToolchain;
         };
 
+        # Cargo.toml is the source of truth for the cue package version.
+        cueCargo = pkgs.lib.importTOML ./crates/cue/Cargo.toml;
+
         common = {
           version = "0.1.0";
           src = pkgs.lib.cleanSource ./.;
@@ -56,20 +59,12 @@
 
         packages.cue = rustPlatform.buildRustPackage (common // {
           pname = "cue";
+          version = cueCargo.package.version;
           cargoBuildFlags = [ "-p" "cue" ];
           meta = common.meta // {
             description =
               "cue: file-based memory system for agentic workflows";
             mainProgram = "cue";
-          };
-        });
-
-        packages.curator = rustPlatform.buildRustPackage (common // {
-          pname = "curator";
-          cargoBuildFlags = [ "-p" "curator" ];
-          meta = common.meta // {
-            description = "curator: TUI for the cue memory system";
-            mainProgram = "curator";
           };
         });
 

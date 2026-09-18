@@ -4,8 +4,7 @@
 HTTP server that persists agent lifecycle events (session idle, agent turns,
 tool calls) to SQLite and optionally forwards notifications to a Gotify server.
 
-It is deployed separately from `cue`/`curator` — typically on a server, not a
-workstation.
+It is deployed separately from `cue` — typically on a server, not a workstation.
 
 ## Install
 
