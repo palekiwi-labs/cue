@@ -1667,3 +1667,207 @@ fn context_list_filter_selects_direct_children_across_scopes() -> anyhow::Result
 
     Ok(())
 }
+
+/// Filtering is a property of the query, not of its output format: the plain
+/// repository listing narrows on the same expressions, and repeated filters
+/// are ANDed as they are in `cue list`.
+#[test]
+fn context_list_filters_plain_output_on_every_predicate() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for (slug, kind, mode) in [
+        ("alpha", "work", "build"),
+        ("beta", "work", "review"),
+        ("gamma", "coord", "build"),
+        ("delta", "work", "build"),
+    ] {
+        env.command()
+            .args(["context", "create", slug, "--kind", kind, "--mode", mode])
+            .assert()
+            .success();
+    }
+
+    env.command()
+        .args([
+            "context",
+            "list",
+            "--filter",
+            "kind=work",
+            "--filter",
+            "mode=build",
+        ])
+        .assert()
+        .success()
+        .stdout("alpha\ndelta\n");
+}
+
+/// Optional context metadata is absent from `context.md` rather than written
+/// as null, so a filter must treat it the way `cue list` treats a missing
+/// frontmatter field: `=` and `~=` reject it, `!=` accepts it.
+#[test]
+fn context_list_filter_treats_absent_metadata_as_no_value() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "bare"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "context",
+            "create",
+            "described",
+            "--mode",
+            "review",
+            "--title",
+            "Quarterly release review",
+        ])
+        .assert()
+        .success();
+
+    env.command()
+        .args(["context", "list", "--filter", "mode=review"])
+        .assert()
+        .success()
+        .stdout("described\n");
+
+    env.command()
+        .args(["context", "list", "--filter", "mode!=review"])
+        .assert()
+        .success()
+        .stdout("bare\n");
+
+    env.command()
+        .args(["context", "list", "--filter", "title~=release"])
+        .assert()
+        .success()
+        .stdout("described\n");
+}
+
+/// An expression cue cannot parse is a mistake in the query, not a predicate
+/// that matches nothing: it is rejected before any context is read.
+#[test]
+fn context_list_rejects_an_unparseable_filter() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+
+    env.command()
+        .args(["context", "list", "--filter", "kindwork"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("=, !=, ~="));
+
+    env.command()
+        .args(["context", "list", "--filter", "=work"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("filter key cannot be empty"));
+}
+
+/// Selection precedes truncation, so a limit keeps the leading matches rather
+/// than filtering whatever survived an arbitrary cut of the unfiltered
+/// listing.
+#[test]
+fn context_list_filters_before_applying_the_limit() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for (slug, kind) in [
+        ("alpha", "work"),
+        ("beta", "work"),
+        ("gamma", "coord"),
+        ("omega", "coord"),
+    ] {
+        env.command()
+            .args(["context", "create", slug, "--kind", kind])
+            .assert()
+            .success();
+    }
+
+    // Both matches sort behind two non-matching contexts, so a limit of one
+    // over the unfiltered listing would report nothing.
+    env.command()
+        .args(["context", "list", "--filter", "kind=coord", "--limit", "1"])
+        .assert()
+        .success()
+        .stdout("gamma\n");
+}
+
+/// `--pinned` selects what is enumerated and a filter selects what is kept, so
+/// the two compose: the query narrows the working set instead of replacing it.
+#[test]
+fn context_list_filters_the_pinned_working_set() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for (slug, kind) in [("alpha", "work"), ("beta", "reference"), ("gamma", "work")] {
+        env.command()
+            .args(["context", "create", slug, "--kind", kind])
+            .assert()
+            .success();
+    }
+    for slug in ["alpha", "beta"] {
+        env.command()
+            .args(["context", "pin", slug])
+            .assert()
+            .success();
+    }
+
+    // gamma matches the filter but is unpinned; beta is pinned but does not
+    // match.
+    env.command()
+        .args(["context", "list", "--pinned", "--filter", "kind=work"])
+        .assert()
+        .success()
+        .stdout("alpha\n");
+
+    let contexts = list_json(
+        &env,
+        &[
+            "context",
+            "list",
+            "--pinned",
+            "--json",
+            "--filter",
+            "kind=work",
+        ],
+    )?;
+    assert_eq!(contexts.len(), 1);
+    assert_eq!(contexts[0]["context"], "alpha");
+    assert_eq!(contexts[0]["pinned"], true);
+
+    Ok(())
+}
+
+/// Ordering applies to the matches, so a filtered listing is still ordered by
+/// the requested key rather than falling back to canonical address order.
+#[test]
+fn context_list_orders_filtered_contexts_by_recency() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for (slug, kind) in [("alpha", "work"), ("beta", "work"), ("gamma", "reference")] {
+        env.command()
+            .args(["context", "create", slug, "--kind", kind])
+            .assert()
+            .success();
+    }
+    let scope_dir = env.cue_store().join("acme/widgets");
+    plant_log_entry(&scope_dir.join("alpha"), 1_000);
+    plant_log_entry(&scope_dir.join("beta"), 2_000);
+    plant_log_entry(&scope_dir.join("gamma"), 3_000);
+
+    env.command()
+        .args([
+            "context",
+            "list",
+            "--filter",
+            "kind=work",
+            "--sort",
+            "recency",
+        ])
+        .assert()
+        .success()
+        .stdout("beta\nalpha\n");
+}
