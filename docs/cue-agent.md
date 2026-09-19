@@ -25,9 +25,9 @@ channel anywhere in the crate.
 Agents live in a JSON manifest, read from two layers and merged with the local
 layer overriding field by field:
 
-1. `$XDG_CONFIG_HOME/cue/agents.json` (falling back to
-   `~/.config/cue/agents.json`)
-2. `.cue-agent.json`, the nearest one at or above the working directory,
+1. `$XDG_CONFIG_HOME/cue/cue-agent.json` (falling back to
+   `~/.config/cue/cue-agent.json`)
+2. `cue-agent.json`, the nearest one at or above the working directory,
    stopping at the repository root
 
 `agents` is an object keyed by agent name, never an array: a merge replaces an

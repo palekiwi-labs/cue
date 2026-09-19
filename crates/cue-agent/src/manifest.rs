@@ -6,7 +6,7 @@
 //! and a project file would then wipe every global agent instead of overriding
 //! one field of one agent.
 
-use anyhow::{Context, Result, bail};
+use anyhow::{bail, Context, Result};
 use serde::Deserialize;
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
@@ -15,10 +15,10 @@ use std::path::{Path, PathBuf};
 /// The project-local manifest filename, looked up from the working directory
 /// upwards. Deliberately not `.cue/`: that name belonged to the abolished
 /// per-repository store and reusing it would be actively confusing.
-pub const PROJECT_MANIFEST: &str = ".cue-agent.json";
+pub const PROJECT_MANIFEST: &str = "cue-agent.json";
 
 /// The global manifest, relative to the config home.
-const GLOBAL_MANIFEST: &str = "cue/agents.json";
+const GLOBAL_MANIFEST: &str = "cue/cue-agent.json";
 
 /// Which layer last defined an agent.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

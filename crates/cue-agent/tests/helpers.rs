@@ -52,16 +52,16 @@ impl Sandbox {
         self.dir.path().join("harness")
     }
 
-    /// Write the global agent manifest (`$XDG_CONFIG_HOME/cue/agents.json`).
+    /// Write the global agent manifest (`$XDG_CONFIG_HOME/cue/cue-agent.json`).
     pub fn global_manifest(&self, json: &str) {
         let dir = self.config().join("cue");
         std::fs::create_dir_all(&dir).expect("config dir");
-        std::fs::write(dir.join("agents.json"), json).expect("global manifest");
+        std::fs::write(dir.join("cue-agent.json"), json).expect("global manifest");
     }
 
-    /// Write the project-local manifest (`.cue-agent.json` in the project).
+    /// Write the project-local manifest (`cue-agent.json` in the project).
     pub fn local_manifest(&self, json: &str) {
-        std::fs::write(self.project().join(".cue-agent.json"), json).expect("local manifest");
+        std::fs::write(self.project().join("cue-agent.json"), json).expect("local manifest");
     }
 
     /// Install the fake harness and return its path.

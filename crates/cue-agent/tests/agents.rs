@@ -42,7 +42,7 @@ fn two_prompt_sources_in_one_layer_are_rejected_even_if_overridden() {
     assert_eq!(output.status.code(), Some(2));
     let error = String::from_utf8_lossy(&output.stderr);
     assert!(error.contains("sets both"), "{error}");
-    assert!(error.contains("agents.json"), "{error}");
+    assert!(error.contains("cue-agent.json"), "{error}");
 }
 
 #[test]
