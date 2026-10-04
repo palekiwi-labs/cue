@@ -5,6 +5,8 @@ mod harness;
 mod ids;
 mod manifest;
 mod receipt;
+#[allow(dead_code)] // consumed once the run command migrates to the tasks envelope
+mod run_spec;
 mod state;
 mod string_source;
 mod trace;

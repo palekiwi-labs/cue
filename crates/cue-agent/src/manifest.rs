@@ -152,7 +152,10 @@ pub fn load(cwd: &Path) -> Result<Manifest> {
     load_from(global_manifest_path(), find_project_manifest(cwd))
 }
 
-fn load_from(global_path: Option<PathBuf>, project_path: Option<PathBuf>) -> Result<Manifest> {
+pub(crate) fn load_from(
+    global_path: Option<PathBuf>,
+    project_path: Option<PathBuf>,
+) -> Result<Manifest> {
     let mut timeout = 0;
     let mut worktree_root: Slot<StringSource> = None;
     let mut merged: BTreeMap<String, MergedAgent> = BTreeMap::new();
