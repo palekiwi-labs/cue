@@ -45,6 +45,23 @@ pub struct RunReceipt {
     pub trace: Option<String>,
     pub trace_error: Option<String>,
     pub persistence_errors: Vec<String>,
+    /// Worktree resources that could not be removed, each naming what
+    /// survives and where. Independent of the execution outcome.
+    pub cleanup_errors: Vec<String>,
+    /// Generated identifiers of a retained worktree, present only when the
+    /// caller needs them to find the work.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub worktree: Option<RetainedWorktree>,
+}
+
+/// Where retained work lives, limited to identifiers the caller did not
+/// choose itself.
+#[derive(Debug, Clone, Serialize)]
+pub struct RetainedWorktree {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub path: Option<PathBuf>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub branch: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
@@ -103,6 +120,17 @@ pub fn human(batch: &BatchReceipt) -> String {
         }
         for error in &run.persistence_errors {
             let _ = writeln!(out, "persistence error: {error}");
+        }
+        for error in &run.cleanup_errors {
+            let _ = writeln!(out, "cleanup error: {error}");
+        }
+        if let Some(worktree) = &run.worktree {
+            if let Some(path) = &worktree.path {
+                let _ = writeln!(out, "retained worktree: {}", path.display());
+            }
+            if let Some(branch) = &worktree.branch {
+                let _ = writeln!(out, "retained branch: {branch}");
+            }
         }
         let _ = writeln!(out, "record: {}", run.run_path.display());
         if !run.response.is_empty() {

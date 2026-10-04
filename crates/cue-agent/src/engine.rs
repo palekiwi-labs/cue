@@ -53,7 +53,8 @@ extern "C" fn handle_signal(signal: libc::c_int) {
     ABORTED.store(true, Ordering::SeqCst);
 }
 
-fn abort_requested() -> Option<i32> {
+/// The signal that interrupted the batch, once one has.
+pub fn abort_requested() -> Option<i32> {
     ABORTED
         .load(Ordering::SeqCst)
         .then(|| ABORT_SIGNAL.load(Ordering::SeqCst))
@@ -185,7 +186,7 @@ pub fn supervise(plans: &[RunPlan]) -> Vec<RunOutcome> {
 
 /// Grace window, overridable for tests that need a child to be escalated to
 /// SIGKILL without waiting five seconds for it.
-fn grace_window() -> Duration {
+pub fn grace_window() -> Duration {
     std::env::var("CUE_AGENT_GRACE_MS")
         .ok()
         .and_then(|value| value.parse::<u64>().ok())

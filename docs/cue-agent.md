@@ -62,11 +62,10 @@ instead of overriding one field of one agent.
 The root accepts only `timeout`, `worktree_root`, and `agents`:
 
 - `timeout` — non-negative integer seconds, default `0` (unlimited).
-- `worktree_root` — optional parent path for future worktree preparation.
-  Absolute paths are kept; relative paths resolve against each execution
-  target's directory, not the manifest directory. Worktree creation is not
-  implemented yet (see "Worktrees" below), so this setting is loaded and
-  validated but never creates anything.
+- `worktree_root` — optional parent directory for generated worktree
+  checkouts (see "Worktrees" below). Absolute paths are kept; relative paths
+  resolve against each execution target's directory, not the manifest
+  directory or the Git root.
 - `agents` — named reusable definitions, with the fields below.
 
 Agent fields, all optional except the agent's own key:
@@ -189,7 +188,7 @@ Fields accepted on a task (and, except `agent`, in `defaults`):
 - `cwd` — optional absolute working directory.
 - `env` — optional environment overlay object.
 - `context` — optional canonical capture context address.
-- `worktree` — optional worktree request; refused for now (see below).
+- `worktree` — optional request to run in a new worktree (see below).
 - `description`, `model`, `system_prompt`, `tools`, `thinking` — overrides
   of the named agent's manifest fields, with the same meaning and types as in
   the manifest.
@@ -340,13 +339,85 @@ capture is follow-up work.
 
 ### Worktrees
 
-The specification accepts and validates a `worktree` object (`base` and
-`ephemeral` required; optional `path`, resolved against the task's effective
-cwd, and `branch`; a `path` or a manifest `worktree_root` must be available).
-Worktree creation is not implemented yet: any request whose effective task has
-a worktree is refused at admission with exit `2`, before anything is
-launched. Omit `worktree` (or clear an inherited one with `"worktree": null`)
-and use `cwd` to run in an existing checkout.
+A `worktree` object runs the task in a newly created checkout instead of in
+its cwd. The task's effective cwd (or the invocation directory) is the target
+that selects the source repository.
+
+- `base` (required) — the revision the new branch starts from.
+- `ephemeral` (required) — `true` for disposable work, `false` to retain it.
+- `path` (optional) — the exact checkout destination; a relative path
+  resolves against the target directory. Without it, a unique child of the
+  manifest's `worktree_root` is generated. With neither, the request is
+  rejected at admission.
+- `branch` (optional) — the new branch name; without it a unique
+  `cue-agent/<run-id>` name is generated.
+
+Only new resources are created. A destination that already exists (or
+appears while the task is being prepared), a destination already registered
+as a worktree even if its directory is missing, or a branch name already
+taken, fails that task without touching the existing resource; existing
+worktrees are never adopted. So does a destination that would contain a
+registered worktree, or that equals, contains or lies inside a checkout
+created for an earlier task in the same batch (symlinked aliases included),
+since removing one checkout would delete the other. Omit `worktree` (or clear an
+inherited one with `"worktree": null`) and use `cwd` to run in an existing
+checkout. The harness starts at the root of the new checkout, and `pi` is
+looked up from there.
+
+Tasks are prepared one at a time in specification order. Preparation failures
+(not a Git repository, an unknown base, a collision, a failing `git worktree
+add` or checkout hook) are per-task: that task fails with an `error`, whatever
+it had already created (its branch, its checkout, directories made for the
+destination) is removed, and the other tasks still run.
+
+After the run and its trace capture, an ephemeral checkout and its branch are
+deleted, including uncommitted and untracked changes. A persistent checkout
+and branch are kept; the receipt's `worktree` object then gives whichever of
+`path` and `branch` were generated, so the work can be found. A checkout whose
+harness never started (interrupted before launch, `pi` not found, spawn
+failure) holds no work and is removed even when persistent. Cleanup only ever
+removes resources created for that task.
+
+Cleanup failures are reported in `cleanup_errors`, each naming the surviving
+checkout or branch and its repository, independently of the run's outcome,
+and make the batch exit `1`. Local records stay outside checkouts: the run
+manifest records the worktree request, generated identifiers and base commit
+before launch, and both the run manifest (`worktree.head`) and the index line
+record the checkout's final `HEAD` before removal. A failure to write either
+is reported in `persistence_errors` and does not skip cleanup.
+
+The branch is created with a create-only ref update whose reflog message is
+unique to the run. Git commits a new ref before it runs the
+`reference-transaction` `committed` hook, so a creation that fails or is
+stopped after an interrupt may still have made the branch: it is removed when
+its reflog begins with the run's message at the base commit, left alone when
+it begins otherwise (another actor's branch), and reported in
+`cleanup_errors` when it exists but cannot be attributed. Ref lock files left
+by interrupted creation or deletion are reported by path and left untouched
+because their ownership cannot be proved.
+
+Git commands run in their own process groups with file-backed output, so an
+interrupt reaching cue-agent's foreground job does not kill a checkout half
+way through creation or removal. After an interrupt, a pending preparation
+command gets the grace window before it is killed. Inspection and cleanup
+commands are capped at 60 seconds, or at the grace window once an interrupt
+has been observed, so a hook that never exits cannot hold finalization: the
+command is killed and whatever it was removing is reported as surviving
+(unless it is in fact gone), with the run's result kept. A hard crash (for
+example SIGKILL) can leave worktrees and
+branches behind; there is no recovery service. Directories that `git` itself
+or a hook creates elsewhere are not tracked. A partial checkout left in the
+task's own new directory by a failed or killed `git worktree add` is removed
+when Git has no registration there; one registered on anything other than
+the task's branch is kept and reported in `cleanup_errors`. Repository-local
+Git variables inherited by `cue-agent` (`GIT_DIR`, `GIT_WORK_TREE`,
+`GIT_INDEX_FILE`, `GIT_COMMON_DIR` and the rest of
+`git rev-parse --local-env-vars`) are cleared for these commands, so only the
+task's target selects the repository.
+
+The existing trace-writing helper is not yet bounded. A stalled `cue add`
+can still delay reaching worktree cleanup; bounding that helper is a separate
+follow-up before interruption-safe finalization is complete end to end.
 
 ### Timeouts
 
@@ -373,25 +444,34 @@ There is no queue, so nothing is silently split, truncated or deferred.
 
 ### Exit codes
 
-- `0` — every run completed, and every requested trace, receipt and index
-  write succeeded.
+- `0` — every run completed, and every required trace, local record write
+  and worktree cleanup succeeded.
 - `1` — the batch ran but at least one run failed, timed out or was aborted
-  (including a task whose `pi` could not be found), or a trace, receipt or
-  index write failed. The receipt is still printed. Execution outcome and
+  (including a task whose `pi` could not be found or whose worktree could not
+  be prepared), or a trace, receipt or index write or a worktree cleanup
+  failed. The receipt is still printed. Execution outcome and
   storage outcome stay separate: a completed run whose trace failed keeps
   `outcome: "completed"` and reports `trace_error`; storage failures appear in
   `persistence_errors`. A failed receipt write can only be reported in
   stdout; an index error is also recorded in the receipt file when writable.
 - `2` — the request was rejected before any run launched: bad arguments, an
   invalid specification, an unknown agent, an oversized batch, an unreadable
-  manifest, an invalid capture context, a worktree request. Failure to create
-  the local run record before launch also ends here. A diagnostic prefixed
+  manifest, an invalid capture context, an unresolvable worktree request.
+  Failure to create the local run record before launch also ends here, after
+  every worktree already created for the batch has been removed. A diagnostic
+  prefixed
   `cue-agent:` goes to stderr and nothing is printed on stdout, with or
   without `--json`.
 
 ### Interrupts and deadlines
 
-SIGINT or SIGTERM to `cue-agent` tears the whole batch down: SIGTERM to each
+The handler is installed once admission succeeds, before any run state or
+worktree is created. An interrupt during preparation stops further
+preparation and launches nothing; tasks skipped before launch are reported
+`aborted`, while a preparation command stopped by the interrupt reports a
+preparation failure. Their owned resources are cleaned up. SIGINT or SIGTERM
+to `cue-agent` tears the whole
+batch down: SIGTERM to each
 child's process group, a five-second grace window, then SIGKILL. A run past its
 deadline is torn down the same way. Both record how the child actually died
 alongside the reason teardown started, because they are distinct facts.
@@ -439,7 +519,8 @@ not a context exists:
 $XDG_STATE_HOME/cue/agent/runs/<YYYY-MM-DD>/<batch-id>/<agent>-<n>/
   manifest.json      the request: agent, model, harness path and version,
                      argv, cwd, capture context, labels, repo, commit,
-                      store root, timeout, launch error (no environment dump)
+                      store root, timeout, launch error (no environment dump);
+                      a launched worktree's final HEAD is added before removal
   prompt.md          the prompt verbatim, as passed to the harness
   system-prompt.md   the agent's effective system prompt at run time
   events.jsonl       raw harness stdout
@@ -511,7 +592,8 @@ names its own destination.
       "run_path": ".../20260918-120301-3f9a2b/explore-1",
       "trace": "acme/widgets/cue-agent-runtime-mvp/trace/agent/review-the-branch-diff-explore-4f1a9c02.md",
       "trace_error": null,
-      "persistence_errors": []
+      "persistence_errors": [],
+      "cleanup_errors": []
     }
   ]
 }
@@ -524,8 +606,13 @@ manifest and trace.
 Without `--json`, the same information is printed as a summary: a
 `batch <id>` header, then for each run in specification order a line such as
 `[1] explore (completed, 8412 ms)` (with exit status or signal when relevant),
-any `error`, stderr excerpt, `trace`, `trace error` and `persistence error`
-lines, the `record` path, and finally the response. Failures are never reduced
+any `error`, stderr excerpt, `trace`, `trace error`, `persistence error`,
+`cleanup error`, `retained worktree` and `retained branch` lines, the `record`
+path, and finally the response.
+
+A run with a retained worktree whose path or branch was generated also has a
+`worktree` object holding only the generated `path` and/or `branch`; it is
+absent otherwise. Failures are never reduced
 to the outcome word alone.
 
 `outcome` is one of `completed`, `failed`, `timeout`, `aborted`. Failures are
@@ -559,7 +646,7 @@ through `env`, like any other variable.
 
 No `Harness` trait, no streaming protocol, no queue, no session-wide admission
 tracking, no dry-run, no harness session persistence (`--no-session` is
-always passed) and no cue-review integration. Worktree creation, cross-scope
-trace capture and the revised trace naming and metadata are pending follow-up
+always passed) and no cue-review integration. Cross-scope trace capture and
+the revised trace naming and metadata are pending follow-up
 work rather than deferred indefinitely. Each is recorded in the design notes,
 not forgotten.

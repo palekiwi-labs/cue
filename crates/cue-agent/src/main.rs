@@ -9,6 +9,7 @@ mod run_spec;
 mod state;
 mod string_source;
 mod trace;
+mod worktree;
 
 use crate::cli::{AgentCommands, Cli, Commands};
 use anyhow::Result;

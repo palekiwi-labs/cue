@@ -205,7 +205,12 @@ fn invalid_requests_are_refused_whole_before_any_side_effect() {
         (json!({"agent": "bare", "prompt": "p", "bogus": 1}), "bogus"),
         (
             json!({"agent": "bare", "prompt": "p",
-                   "worktree": {"base": "main", "ephemeral": true, "path": "/tmp/wt"}}),
+                   "worktree": {"base": "main", "ephemeral": true}}),
+            "worktree_root",
+        ),
+        (
+            json!({"agent": "bare", "prompt": "p",
+                   "worktree": {"base": "main", "path": "/tmp/wt"}}),
             "tasks[1].worktree",
         ),
     ] {

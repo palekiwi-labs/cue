@@ -227,6 +227,71 @@ impl Sandbox {
     }
 }
 
+/// Run git in `dir` with configuration isolated from the host, returning
+/// trimmed stdout; panics on failure.
+pub fn git(dir: &Path, args: &[&str]) -> String {
+    let output = git_command(dir).args(args).output().expect("git");
+    assert!(
+        output.status.success(),
+        "git {args:?} in {dir:?}: {output:?}"
+    );
+    String::from_utf8_lossy(&output.stdout).trim().to_string()
+}
+
+/// A git command isolated from the host's global and system configuration.
+pub fn git_command(dir: &Path) -> Command {
+    let mut command = Command::new("git");
+    command
+        .current_dir(dir)
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1");
+    command
+}
+
+/// A disposable repository at `dir` on branch `main`, with a committed
+/// `README.md` (holding `readme`) and `sub/.keep`.
+pub fn init_repo(dir: &Path, readme: &str) {
+    std::fs::create_dir_all(dir.join("sub")).expect("repo dir");
+    git(dir, &["init", "--quiet", "--initial-branch=main"]);
+    git(dir, &["config", "user.email", "test@example.com"]);
+    git(dir, &["config", "user.name", "Test"]);
+    std::fs::write(dir.join("README.md"), readme).expect("readme");
+    std::fs::write(dir.join("sub").join(".keep"), "").expect("keep");
+    git(dir, &["add", "."]);
+    git(dir, &["commit", "--quiet", "-m", "root"]);
+}
+
+/// Local branch names of the repository at `dir`, sorted.
+pub fn branches(dir: &Path) -> Vec<String> {
+    let mut names: Vec<String> = git(
+        dir,
+        &["for-each-ref", "--format=%(refname:short)", "refs/heads"],
+    )
+    .lines()
+    .map(str::to_string)
+    .collect();
+    names.sort();
+    names
+}
+
+/// Checkout paths Git has registered for the repository at `dir`, sorted.
+pub fn worktrees(dir: &Path) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = git(dir, &["worktree", "list", "--porcelain"])
+        .lines()
+        .filter_map(|line| line.strip_prefix("worktree "))
+        .map(PathBuf::from)
+        .collect();
+    paths.sort();
+    paths
+}
+
+/// `paths`, sorted, for comparison with [`worktrees`].
+pub fn sorted(paths: &[&Path]) -> Vec<PathBuf> {
+    let mut paths: Vec<PathBuf> = paths.iter().map(|path| path.to_path_buf()).collect();
+    paths.sort();
+    paths
+}
+
 pub fn bin() -> PathBuf {
     PathBuf::from(env!("CARGO_BIN_EXE_cue-agent"))
 }
@@ -435,6 +500,26 @@ case "$prompt" in
     ;;
   *SILENT*)
     emit_session
+    ;;
+  *DIRTY*)
+    # Leave tracked modifications and untracked files in the checkout.
+    emit_session
+    printf 'changed\n' >README.md
+    printf 'new\n' >untracked.txt
+    emit_message "dirtied ${PWD}"
+    ;;
+  *BREAK_GIT*)
+    # Corrupt the checkout's .git link so Git refuses to remove it.
+    emit_session
+    printf 'gitdir: /nonexistent\n' >.git
+    emit_message "broke the checkout"
+    ;;
+  *COMMIT*)
+    # Commit in the checkout, so its final HEAD differs from the base.
+    emit_session
+    printf 'work\n' >committed.txt
+    git add committed.txt && git commit --quiet -m work
+    emit_message "committed $(git rev-parse HEAD)"
     ;;
   *)
     emit_session
