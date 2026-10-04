@@ -5,7 +5,6 @@ mod harness;
 mod ids;
 mod manifest;
 mod receipt;
-#[allow(dead_code)] // consumed once the run command migrates to the tasks envelope
 mod run_spec;
 mod state;
 mod string_source;
@@ -42,7 +41,11 @@ fn run() -> Result<ExitCode> {
         }
         Commands::Run(args) => {
             let outcome = batch::execute(&args)?;
-            println!("{}", serde_json::to_string(&outcome.receipt)?);
+            if args.json {
+                println!("{}", serde_json::to_string(&outcome.receipt)?);
+            } else {
+                print!("{}", receipt::human(&outcome.receipt));
+            }
             Ok(if outcome.all_completed {
                 ExitCode::SUCCESS
             } else {

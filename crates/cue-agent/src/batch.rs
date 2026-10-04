@@ -2,24 +2,18 @@
 //! capture, receipts and traces.
 
 use crate::cli::RunArgs;
-use crate::engine::{self, Disposition, RunPlan};
+use crate::engine::{self, Disposition, RunOutcome, RunPlan};
 use crate::harness;
 use crate::ids;
 use crate::manifest::{self, Agent};
 use crate::receipt::{BatchReceipt, Outcome, RunReceipt};
+use crate::run_spec::{self, Bases, MAX_TASKS, ResolvedBatch};
 use crate::state;
 use crate::trace;
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
-
-/// The per-call concurrency cap. Not shared across a session: overlapping calls
-/// may run more than this in total, which is accepted for this phase. A batch
-/// over the cap fails before anything is spawned rather than queuing, because
-/// there is no queue.
-pub const MAX_BATCH: usize = 4;
 
 /// How much of a failed run's stderr travels in the receipt.
 const STDERR_EXCERPT_BYTES: usize = 2000;
@@ -29,80 +23,136 @@ pub struct BatchOutcome {
     pub all_completed: bool,
 }
 
-/// One requested run, before its agent is resolved.
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct Request {
-    agent: String,
-    prompt: String,
-    #[serde(default)]
+/// An admitted request and the settings it runs under. Building one touches
+/// nothing but the specification, its referenced files, the manifest and the
+/// store's context records.
+struct Admitted {
+    request: ResolvedBatch,
     timeout_secs: Option<u64>,
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct BatchFile {
-    #[serde(default)]
-    label: Option<String>,
-    #[serde(default)]
-    context: Option<String>,
-    runs: Vec<Request>,
+pub fn execute(args: &RunArgs) -> Result<BatchOutcome> {
+    let admitted = admit(args)?;
+    run(admitted)
 }
 
-pub fn execute(args: &RunArgs) -> Result<BatchOutcome> {
-    let cwd = match &args.cwd {
-        Some(path) => path
-            .canonicalize()
-            .with_context(|| format!("--cwd: could not resolve directory {}", path.display()))?,
-        None => std::env::current_dir()?,
-    };
-
-    let mut label = args.label.clone();
-    let mut context = args.context.clone();
-    let requests = collect_requests(args, &mut label, &mut context)?;
-
-    // Admission: validate the whole batch before spawning any of it, so a
-    // rejected request never leaves half a batch running.
-    if requests.is_empty() {
-        bail!("No runs requested: name at least one agent, or pass --batch");
-    }
-    if requests.len() > MAX_BATCH {
+/// Admission: resolve and validate the whole request before any run state is
+/// created, any harness is probed or launched, or any trace is written, so a
+/// rejected request leaves nothing behind.
+fn admit(args: &RunArgs) -> Result<Admitted> {
+    let invocation =
+        std::env::current_dir().context("Could not determine the invocation directory")?;
+    let (raw, references) = read_specification(args, &invocation)?;
+    // Agent names come from the manifest discovered from the invocation
+    // directory, whatever cwd a task later runs in.
+    let manifest = manifest::load(&invocation)?;
+    let store = cuelib::store::root(None)?;
+    let request = run_spec::resolve(
+        &raw,
+        Bases {
+            references: &references,
+            invocation: &invocation,
+            store: &store,
+        },
+        &manifest,
+    )?;
+    // Worktree provisioning is a separate, later piece of work. Until it
+    // exists a worktree request is refused outright rather than silently run
+    // in the target directory it names.
+    if let Some(index) = request
+        .tasks
+        .iter()
+        .position(|task| task.worktree.is_some())
+    {
         bail!(
-            "Batch of {} exceeds the per-call cap of {MAX_BATCH}. \
-             Split the request; cue-agent does not queue the excess.",
-            requests.len()
+            "tasks[{index}].worktree: creating worktrees is not supported yet; \
+             omit worktree to run in the task's cwd"
         );
     }
+    // The CLI overrides the manifest; zero means no deadline.
+    let timeout_secs = Some(args.timeout.unwrap_or(manifest.timeout)).filter(|secs| *secs > 0);
+    Ok(Admitted {
+        request,
+        timeout_secs,
+    })
+}
 
-    for request in &requests {
-        if request.prompt.trim().is_empty() {
-            bail!("The prompt for '{}' is empty", request.agent);
-        }
-        if request.prompt.starts_with(['-', '@']) {
-            bail!(
-                "The prompt for '{}' starts with '-' or '@', which Pi interprets as an option or file; prepend ordinary instruction text",
-                request.agent
-            );
-        }
+/// Read the specification from exactly one source. A `--spec` path is joined
+/// to the invocation directory but not canonicalized, so its references
+/// resolve beside the path the caller named even when it is a symlink.
+fn read_specification(args: &RunArgs, invocation: &Path) -> Result<(String, PathBuf)> {
+    if let Some(path) = &args.spec {
+        let path = invocation.join(path);
+        let raw = std::fs::read_to_string(&path)
+            .with_context(|| format!("Could not read the run specification {}", path.display()))?;
+        let base = path.parent().unwrap_or(invocation).to_path_buf();
+        return Ok((raw, base));
     }
+    let raw = match args.input.as_deref() {
+        Some("-") => {
+            let mut buffer = String::new();
+            std::io::stdin()
+                .read_to_string(&mut buffer)
+                .context("Could not read the run specification from standard input")?;
+            buffer
+        }
+        Some(json) => json.to_string(),
+        None => bail!("A run specification is required: pass JSON, '-' or --spec PATH"),
+    };
+    Ok((raw, invocation.to_path_buf()))
+}
 
-    let manifest = manifest::load(&cwd)?;
-    let agents: Vec<&Agent> = requests
+/// One task, with its run directory written and its launch decided.
+struct Prepared {
+    plan: RunPlan,
+    agent: Agent,
+    run_path: PathBuf,
+    context: Option<String>,
+    label: Option<String>,
+    harness_version: Option<String>,
+    /// Why the harness cannot be launched for this task, decided before
+    /// supervision; the other tasks still run.
+    launch_error: Option<String>,
+}
+
+/// Everything after admission. Launch failures are isolated per task. Local
+/// record preparation errors still propagate until finalization is unified.
+fn run(admitted: Admitted) -> Result<BatchOutcome> {
+    let Admitted {
+        request,
+        timeout_secs,
+    } = admitted;
+    let deadline = timeout_secs.map(Duration::from_secs);
+
+    // Each task finds pi on its own effective PATH and is probed exactly as
+    // it will run: the executable's answer may depend on cwd and environment,
+    // so a probe is shared only by tasks identical in all three. The key is
+    // held in memory only; no environment value is persisted.
+    type ProbeKey<'a> = (PathBuf, &'a Path, &'a harness::EnvOverlay);
+    let mut probed: Vec<(ProbeKey, Option<String>)> = Vec::new();
+    let located: Vec<std::result::Result<(PathBuf, Option<String>), String>> = request
+        .tasks
         .iter()
-        .map(|request| manifest.resolve(&request.agent))
-        .collect::<Result<_>>()?;
-
-    let context = context
-        .or_else(|| std::env::var("CUE_CONTEXT").ok())
-        .map(|value| value.trim().to_string())
-        .filter(|value| !value.is_empty());
-
-    let harness_path = harness::resolve(args.harness.clone())?;
-    let harness_name = harness_path
-        .file_name()
-        .map(|name| name.to_string_lossy().into_owned())
-        .unwrap_or_else(|| harness_path.to_string_lossy().into_owned());
-    let harness_version = harness::version(&harness_path, &cwd);
+        .map(|task| {
+            let program =
+                harness::locate(&task.env, &task.cwd).map_err(|err| format!("{err:#}"))?;
+            let key: ProbeKey = (program, &task.cwd, &task.env);
+            let version = match probed.iter().find(|(probe, _)| *probe == key) {
+                Some((_, version)) => version.clone(),
+                None => {
+                    let version = harness::version(&key.0, key.1, key.2);
+                    probed.push((key.clone(), version.clone()));
+                    version
+                }
+            };
+            Ok((key.0, version))
+        })
+        .collect();
+    let mut versions = probed.iter().map(|(_, version)| version);
+    let harness_version = match versions.next() {
+        Some(first) if versions.all(|version| version == first) => first.clone(),
+        _ => None,
+    };
 
     let now = SystemTime::now();
     let now_secs = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
@@ -114,14 +164,13 @@ pub fn execute(args: &RunArgs) -> Result<BatchOutcome> {
         .with_context(|| format!("Could not create {}", batch_path.display()))?;
 
     let store_root = cuelib::store::root(None).ok();
-    let repo_scope = cuelib::store::repository_scope(&cwd).ok();
-    let commit = cuelib::git::get_short_head_hash(&cwd).ok();
 
     // Persist before spawn: prompt, system prompt and request manifest exist on
     // disk before the harness starts, so an instant crash loses no record.
-    let mut prepared = Vec::with_capacity(requests.len());
-    for (index, (request, agent)) in requests.iter().zip(agents.iter()).enumerate() {
+    let mut prepared = Vec::with_capacity(request.tasks.len());
+    for (index, (task, located)) in request.tasks.into_iter().zip(located).enumerate() {
         let number = index + 1;
+        let agent = task.agent;
         let run_id = ids::run_id(&batch_id, &agent.name, number);
         // The id names a harness session as well as a directory, so it is
         // checked against the harness's own rule rather than assumed valid.
@@ -133,40 +182,39 @@ pub fn execute(args: &RunArgs) -> Result<BatchOutcome> {
             .with_context(|| format!("Could not create {}", run_path.display()))?;
 
         let prompt_path = run_path.join("prompt.md");
-        state::write_private(&prompt_path, &request.prompt)?;
+        state::write_private(&prompt_path, &task.prompt)?;
         let system_prompt_path = run_path.join("system-prompt.md");
         state::write_private(&system_prompt_path, &agent.system_prompt)?;
         let system_prompt_arg =
             (!agent.system_prompt.is_empty()).then(|| system_prompt_path.clone());
 
-        let argv = harness::argv(
-            &run_id,
-            agent,
-            &request.prompt,
-            system_prompt_arg.as_deref(),
-        );
-        let timeout_secs = request
-            .timeout_secs
-            .or(args.timeout)
-            .or(Some(manifest.timeout))
-            .filter(|secs| *secs > 0);
-        let deadline = timeout_secs.map(Duration::from_secs);
+        let argv = harness::argv(&run_id, &agent, &task.prompt, system_prompt_arg.as_deref());
+        let (program, version, launch_error) = match located {
+            Ok((program, version)) => (Some(program), version, None),
+            Err(message) => (None, None, Some(message)),
+        };
+        let label = task.label.or_else(|| request.label.clone());
 
+        // Environment values are deliberately absent: an overlay may carry
+        // secrets, and no persistence policy for them exists yet.
         let manifest_json = serde_json::json!({
             "run_id": run_id,
             "batch_id": batch_id,
             "agent": agent.name,
             "model": agent.model,
-            "harness": harness_name,
-            "harness_version": harness_version,
-            "harness_path": harness_path,
+            "harness": harness::PROGRAM,
+            "harness_version": version,
+            "harness_path": program,
             "argv": argv,
-            "cwd": cwd,
-            "context": context,
-            "repo": repo_scope,
-            "commit": commit,
+            "cwd": task.cwd,
+            "context": task.context,
+            "label": label,
+            "batch_label": request.label,
+            "repo": cuelib::store::repository_scope(&task.cwd).ok(),
+            "commit": cuelib::git::get_short_head_hash(&task.cwd).ok(),
             "store_root": store_root,
             "timeout_secs": timeout_secs,
+            "launch_error": launch_error,
             "created_at": now_secs,
         });
         state::write_private(
@@ -177,27 +225,46 @@ pub fn execute(args: &RunArgs) -> Result<BatchOutcome> {
         prepared.push(Prepared {
             plan: RunPlan {
                 run_id,
-                program: harness_path.clone(),
+                program: program.unwrap_or_else(|| PathBuf::from(harness::PROGRAM)),
                 argv,
-                cwd: cwd.clone(),
-                context: context.clone(),
+                cwd: task.cwd,
+                env: task.env,
                 events_path: run_path.join("events.jsonl"),
                 stderr_path: run_path.join("stderr.log"),
                 deadline,
             },
-            agent: (*agent).clone(),
+            agent,
             run_path,
+            context: task.context,
+            label,
+            harness_version: version,
+            launch_error,
         });
     }
 
     // Registration belongs to the host, not to supervision: one handler covers
     // the whole batch.
     engine::install_signal_handlers();
-    let plans: Vec<RunPlan> = prepared.iter().map(|run| run.plan.clone()).collect();
-    let outcomes = engine::supervise(&plans);
+    let plans: Vec<RunPlan> = prepared
+        .iter()
+        .filter(|run| run.launch_error.is_none())
+        .map(|run| run.plan.clone())
+        .collect();
+    let mut outcomes = engine::supervise(&plans).into_iter();
 
     let mut runs = Vec::with_capacity(prepared.len());
-    for (prepared, outcome) in prepared.into_iter().zip(outcomes) {
+    for prepared in prepared {
+        let outcome = match &prepared.launch_error {
+            Some(message) => RunOutcome {
+                disposition: Disposition::SpawnFailed {
+                    message: message.clone(),
+                },
+                duration: Duration::ZERO,
+            },
+            None => outcomes
+                .next()
+                .expect("supervision returns one outcome per launched plan"),
+        };
         let capture = harness::capture(&prepared.plan.events_path);
         let (result, exit_code, signal, error) = classify(&outcome.disposition, &capture);
 
@@ -229,16 +296,8 @@ pub fn execute(args: &RunArgs) -> Result<BatchOutcome> {
             persistence_errors: Vec::new(),
         };
 
-        if let Some(context) = &context {
-            match write_trace(
-                &run,
-                &prepared,
-                &cwd,
-                context,
-                label.as_deref(),
-                &harness_name,
-                harness_version.as_deref(),
-            ) {
+        if let Some(context) = &prepared.context {
+            match write_trace(&run, &prepared, context) {
                 Ok(address) => run.trace = address,
                 Err(err) => run.trace_error = Some(format!("{err:#}")),
             }
@@ -252,9 +311,8 @@ pub fn execute(args: &RunArgs) -> Result<BatchOutcome> {
                 "batch_id": run.batch_id,
                 "agent": run.agent,
                 "model": run.model,
-                "context": context,
-                "repo": repo_scope,
-                "commit": commit,
+                "context": prepared.context,
+                "cwd": prepared.plan.cwd,
                 "outcome": run.outcome.as_str(),
                 "exit_code": run.exit_code,
                 "duration_ms": run.duration_ms,
@@ -279,27 +337,25 @@ pub fn execute(args: &RunArgs) -> Result<BatchOutcome> {
         runs.push(run);
     }
 
-    let all_completed = runs
-        .iter()
-        .all(|run| run.outcome == Outcome::Completed && run.persistence_errors.is_empty());
+    // Execution and storage outcomes stay separate in each receipt, but any
+    // failed finalization, an explicit capture that was not written
+    // included, fails the batch.
+    let all_completed = runs.iter().all(|run| {
+        run.outcome == Outcome::Completed
+            && run.trace_error.is_none()
+            && run.persistence_errors.is_empty()
+    });
     Ok(BatchOutcome {
         receipt: BatchReceipt {
             batch_id,
             batch_path,
-            cap: MAX_BATCH,
-            context,
-            harness: harness_name,
+            cap: MAX_TASKS,
+            harness: harness::PROGRAM.to_string(),
             harness_version,
             runs,
         },
         all_completed,
     })
-}
-
-struct Prepared {
-    plan: RunPlan,
-    agent: Agent,
-    run_path: PathBuf,
 }
 
 /// Map a disposition and what the stream said into a receipt outcome.
@@ -349,16 +405,8 @@ fn classify(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
-fn write_trace(
-    run: &RunReceipt,
-    prepared: &Prepared,
-    cwd: &Path,
-    context: &str,
-    label: Option<&str>,
-    harness_name: &str,
-    harness_version: Option<&str>,
-) -> Result<Option<String>> {
+/// Promote the final response into the task's capture context.
+fn write_trace(run: &RunReceipt, prepared: &Prepared, context: &str) -> Result<Option<String>> {
     // The body is the final message verbatim and nothing else, so a run that
     // produced no message gets no trace. Plane 2 preserves the run either way,
     // and the trace can be materialised later from it.
@@ -367,13 +415,20 @@ fn write_trace(
     }
     let body_path = prepared.run_path.join("response.body");
     state::write_private(&body_path, &run.response)?;
+    let label = prepared.label.as_deref();
     let name = trace::artifact_name(
         label.unwrap_or("run"),
         &prepared.agent.name,
         &ids::short(&run.run_id),
     );
-    let fields = trace::frontmatter(run, harness_name, harness_version, label);
-    let address = trace::write(cwd, context, &name, &body_path, &fields);
+    let fields = trace::frontmatter(
+        run,
+        harness::PROGRAM,
+        prepared.harness_version.as_deref(),
+        label,
+    );
+    // Stamped from the directory the run executed in.
+    let address = trace::write(&prepared.plan.cwd, context, &name, &body_path, &fields);
     // The body file is a transport detail for `cue add`, not a third copy of
     // the response, so it does not survive the write.
     let _ = std::fs::remove_file(&body_path);
@@ -400,74 +455,6 @@ fn read_stderr_excerpt(path: &Path) -> Option<String> {
         0
     };
     Some(String::from_utf8_lossy(&bytes[skip..]).into_owned())
-}
-
-/// Turn the command line into the runs it asks for.
-fn collect_requests(
-    args: &RunArgs,
-    label: &mut Option<String>,
-    context: &mut Option<String>,
-) -> Result<Vec<Request>> {
-    if let Some(source) = &args.batch {
-        if !args.agents.is_empty() {
-            bail!("--batch carries its own agents; do not also name agents positionally");
-        }
-        let raw = read_source(source)?;
-        let file = parse_batch(&raw)?;
-        if label.is_none() {
-            *label = file.label;
-        }
-        if context.is_none() {
-            *context = file.context;
-        }
-        return Ok(file.runs);
-    }
-
-    let prompt = match (&args.prompt, &args.prompt_file) {
-        (Some(text), _) => text.clone(),
-        (None, Some(source)) => read_source(source)?,
-        (None, None) => bail!("A prompt is required: pass --prompt, --prompt-file or --batch"),
-    };
-    if prompt.trim().is_empty() {
-        bail!("The prompt is empty");
-    }
-
-    Ok(args
-        .agents
-        .iter()
-        .map(|agent| Request {
-            agent: agent.clone(),
-            prompt: prompt.clone(),
-            timeout_secs: None,
-        })
-        .collect())
-}
-
-/// A batch is an object with `runs`, or the bare array of runs.
-fn parse_batch(raw: &str) -> Result<BatchFile> {
-    let value: serde_json::Value =
-        serde_json::from_str(raw).context("The batch is not valid JSON")?;
-    if value.is_array() {
-        let runs: Vec<Request> =
-            serde_json::from_value(value).context("Invalid run in the batch")?;
-        return Ok(BatchFile {
-            label: None,
-            context: None,
-            runs,
-        });
-    }
-    serde_json::from_value(value).context("Invalid batch")
-}
-
-fn read_source(source: &str) -> Result<String> {
-    if source == "-" {
-        let mut buffer = String::new();
-        std::io::stdin()
-            .read_to_string(&mut buffer)
-            .context("Could not read standard input")?;
-        return Ok(buffer);
-    }
-    std::fs::read_to_string(source).with_context(|| format!("Could not read {source}"))
 }
 
 #[cfg(test)]

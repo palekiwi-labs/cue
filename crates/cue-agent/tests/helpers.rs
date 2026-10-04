@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 /// A disposable machine: its own state directory, config directory, project
-/// directory and fake harness.
+/// directory and a fake `pi` first on `PATH`.
 pub struct Sandbox {
     pub dir: tempfile::TempDir,
 }
@@ -25,10 +25,44 @@ impl Default for Sandbox {
 impl Sandbox {
     pub fn new() -> Self {
         let dir = tempfile::tempdir().expect("tempdir");
-        for sub in ["state", "config", "project", "harness", "store"] {
+        for sub in ["state", "config", "project", "harness", "store", "bin"] {
             std::fs::create_dir_all(dir.path().join(sub)).expect("sandbox subdir");
         }
-        Self { dir }
+        let sandbox = Self { dir };
+        write_executable(&sandbox.harness(), FAKE_HARNESS);
+        write_executable(&sandbox.pi_dir().join("pi"), FAKE_HARNESS);
+        sandbox
+    }
+
+    /// The directory holding the `pi` that normal executable lookup finds.
+    pub fn pi_dir(&self) -> PathBuf {
+        self.dir.path().join("bin")
+    }
+
+    /// Replace the `pi` on the sandbox `PATH` with another script.
+    pub fn install_pi(&self, body: &str) {
+        write_executable(&self.pi_dir().join("pi"), body);
+    }
+
+    /// A `PATH` value that puts `dir` first, ahead of the inherited entries
+    /// (which supply `bash` and `env` for the fake scripts). The sandbox's own
+    /// `pi` directory is deliberately absent.
+    pub fn path_with(&self, dir: &Path) -> String {
+        let mut paths = vec![dir.to_path_buf()];
+        if let Some(path) = std::env::var_os("PATH") {
+            paths.extend(std::env::split_paths(&path));
+        }
+        std::env::join_paths(paths)
+            .expect("PATH")
+            .to_string_lossy()
+            .into_owned()
+    }
+
+    /// Create an existing context in the sandbox store.
+    pub fn context(&self, address: &str) {
+        let dir = self.store().join(address);
+        std::fs::create_dir_all(&dir).expect("context dir");
+        std::fs::write(dir.join("context.md"), "---\n---\n").expect("context.md");
     }
 
     pub fn state(&self) -> PathBuf {
@@ -64,11 +98,9 @@ impl Sandbox {
         std::fs::write(self.project().join("cue-agent.json"), json).expect("local manifest");
     }
 
-    /// Install the fake harness and return its path.
+    /// The fake harness outside `PATH`, for wrappers that delegate to it.
     pub fn harness(&self) -> PathBuf {
-        let path = self.dir.path().join("fake-pi");
-        write_executable(&path, FAKE_HARNESS);
-        path
+        self.dir.path().join("fake-pi")
     }
 
     /// Install a fake `cue` binary that records the arguments cue-agent hands
@@ -108,26 +140,69 @@ impl Sandbox {
         }
     }
 
-    /// A `cue-agent` invocation wired to this sandbox.
+    /// A `cue-agent` invocation wired to this sandbox. `pi` is found through
+    /// normal executable lookup, with the sandbox's fake first on `PATH`.
     pub fn cmd(&self) -> Command {
-        // Exercise normal Pi lookup, rather than depending on the prototype's
-        // harness override. Keep fake-pi for the explicit-path regression tests.
-        self.harness();
-        write_executable(&self.dir.path().join("pi"), FAKE_HARNESS);
-        let mut paths = vec![self.dir.path().to_path_buf()];
-        if let Some(path) = std::env::var_os("PATH") {
-            paths.extend(std::env::split_paths(&path));
-        }
         let mut cmd = Command::new(bin());
         cmd.current_dir(self.project())
             .env("XDG_STATE_HOME", self.state())
             .env("XDG_CONFIG_HOME", self.config())
             .env("CUE_STORE", self.store())
-            .env("PATH", std::env::join_paths(paths).expect("sandbox PATH"))
-            .env_remove("CUE_AGENT_HARNESS")
+            .env("PATH", self.path_with(&self.pi_dir()))
             .env("FAKE_HARNESS_LOG", self.harness_log())
             .env_remove("CUE_CONTEXT");
         cmd
+    }
+
+    /// `cue-agent run --json <spec>` with the specification inline.
+    pub fn run_json(&self, spec: &serde_json::Value) -> std::process::Output {
+        self.cmd()
+            .args(["run", "--json"])
+            .arg(spec.to_string())
+            .output()
+            .expect("run cue-agent")
+    }
+
+    /// The environment one run's harness saw, as `KEY=VALUE` lines.
+    pub fn recorded_env(&self, session_id: &str) -> std::collections::BTreeMap<String, String> {
+        let path = self.harness_log().join(format!("{session_id}.env"));
+        let raw = std::fs::read(&path)
+            .unwrap_or_else(|err| panic!("missing env record {}: {err}", path.display()));
+        raw.split(|byte| *byte == 0)
+            .filter(|entry| !entry.is_empty())
+            .filter_map(|entry| {
+                let entry = String::from_utf8_lossy(entry);
+                let (key, value) = entry.split_once('=')?;
+                Some((key.to_string(), value.to_string()))
+            })
+            .collect()
+    }
+
+    /// The working directory one run's harness started in.
+    pub fn recorded_cwd(&self, session_id: &str) -> String {
+        std::fs::read_to_string(self.harness_log().join(format!("{session_id}.cwd")))
+            .expect("cwd record")
+            .trim()
+            .to_string()
+    }
+
+    /// Assert that a refused request left no trace of having run.
+    pub fn assert_nothing_ran(&self, output: &std::process::Output) {
+        assert_eq!(output.status.code(), Some(2), "{output:?}");
+        assert!(output.stdout.is_empty(), "{output:?}");
+        assert!(
+            !self.harness_log().join("cue.argv").exists(),
+            "no trace may be written"
+        );
+        assert!(self.recorded_sessions().is_empty(), "no harness may start");
+        assert!(
+            !self.harness_log().join("version-probed").exists(),
+            "the harness version is not probed for a refused request"
+        );
+        assert!(
+            !self.state().join("cue").exists(),
+            "no run state may be created"
+        );
     }
 
     /// Recorded argv for one session id, one argument per line.
@@ -209,6 +284,15 @@ pub fn run_of<'a>(receipt: &'a serde_json::Value, agent: &str) -> &'a serde_json
         .unwrap_or_else(|| panic!("no run for agent {agent}"))
 }
 
+/// A run specification from `(agent, prompt)` pairs.
+pub fn spec(tasks: &[(&str, &str)]) -> serde_json::Value {
+    let tasks: Vec<serde_json::Value> = tasks
+        .iter()
+        .map(|(agent, prompt)| serde_json::json!({ "agent": agent, "prompt": prompt }))
+        .collect();
+    serde_json::json!({ "tasks": tasks })
+}
+
 /// A fake `cue` binary: records its argv and the body it was given, then
 /// reports success.
 pub const FAKE_CUE: &str = r#"#!/usr/bin/env bash
@@ -239,7 +323,11 @@ pub const FAKE_HARNESS: &str = r#"#!/usr/bin/env bash
 set -u
 
 if [[ "${1:-}" == "--version" ]]; then
-  printf 'fake-pi 9.9.9\n'
+  if [[ -n "${FAKE_HARNESS_LOG:-}" ]]; then
+    mkdir -p "$FAKE_HARNESS_LOG"
+    : >"$FAKE_HARNESS_LOG/version-probed"
+  fi
+  printf '%s\n' "${FAKE_PI_VERSION:-fake-pi 9.9.9}"
   exit 0
 fi
 
@@ -261,6 +349,7 @@ if [[ -n "${FAKE_HARNESS_LOG:-}" ]]; then
   done
   printf '%s\n' "${CUE_CONTEXT-<unset>}" >"$FAKE_HARNESS_LOG/$session.context"
   printf '%s\n' "$PWD" >"$FAKE_HARNESS_LOG/$session.cwd"
+  env -0 >"$FAKE_HARNESS_LOG/$session.env"
   # Concurrency witness: hold a marker for the lifetime of the process.
   mkdir -p "$FAKE_HARNESS_LOG/live"
   : >"$FAKE_HARNESS_LOG/live/$session"

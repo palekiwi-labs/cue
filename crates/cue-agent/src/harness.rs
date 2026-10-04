@@ -6,6 +6,9 @@
 //! extracting a trait later is mechanical rather than speculative.
 
 use crate::manifest::Agent;
+use anyhow::{Context, Result};
+use std::collections::BTreeMap;
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Read, Seek, SeekFrom};
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
@@ -20,30 +23,103 @@ const MAX_TOTAL_BYTES: u64 = 32 << 20;
 /// Longest reply to `--version` still treated as a version.
 const MAX_VERSION_BYTES: usize = 120;
 
-/// Resolve the harness executable: explicit flag, then `$CUE_AGENT_HARNESS`,
-/// then `pi` on `PATH`.
-pub fn resolve(explicit: Option<PathBuf>) -> std::io::Result<PathBuf> {
-    let path = explicit
-        .or_else(|| std::env::var_os("CUE_AGENT_HARNESS").map(PathBuf::from))
-        .unwrap_or_else(|| PathBuf::from("pi"));
-    // Path-like values are relative to the caller, not --cwd. Keep bare names
-    // intact for PATH lookup; missing executables remain isolated run failures.
-    Ok(
-        if path.is_relative() && path.as_os_str().as_encoded_bytes().contains(&b'/') {
-            std::env::current_dir()?.join(path)
-        } else {
-            path
-        },
-    )
+/// The harness, found through normal executable lookup. There is no override.
+pub const PROGRAM: &str = "pi";
+
+/// The environment overlay one task applies to the inherited environment.
+pub type EnvOverlay = BTreeMap<String, Option<String>>;
+
+/// Locate `pi` the way the task's own exec would: on its effective `PATH`
+/// (the inherited value, unless the task overlay sets or removes it, and the
+/// platform default search path when it is unset), with
+/// empty and relative entries taken against the task's cwd, as they are
+/// after the child changes directory.
+///
+/// Resolving here rather than in `exec` gives the version probe and the run
+/// one and the same executable, and records which one it was.
+pub fn locate(env: &EnvOverlay, cwd: &Path) -> Result<PathBuf> {
+    let path = search_path(env, std::env::var_os("PATH"))?;
+    std::env::split_paths(&path)
+        .map(|dir| cwd.join(dir).join(PROGRAM))
+        .find(|candidate| is_executable(candidate))
+        .with_context(|| format!("could not find {PROGRAM} on this task's PATH"))
 }
 
-/// Ask the harness for its version, once per batch.
+/// The directories to search: the task overlay's `PATH`, else the inherited
+/// one. When neither yields a value, normal Unix lookup searches the
+/// platform default, so this does too. Only resolution uses that default:
+/// a removed `PATH` stays removed from the child's environment. An explicitly
+/// empty `PATH` is a value, not an absence; its one empty entry is the cwd.
+fn search_path(env: &EnvOverlay, inherited: Option<OsString>) -> Result<OsString> {
+    let path = match env.get("PATH") {
+        Some(Some(value)) => Some(OsString::from(value)),
+        Some(None) => None,
+        None => inherited,
+    };
+    match path {
+        Some(path) => Ok(path),
+        None => default_search_path(),
+    }
+}
+
+/// The platform's default executable search path, `confstr(_CS_PATH)`.
+fn default_search_path() -> Result<OsString> {
+    use std::os::unix::ffi::OsStringExt;
+    let unavailable = || {
+        anyhow::anyhow!(
+            "could not find {PROGRAM}: PATH is unset and the platform defines no default search path"
+        )
+    };
+    // SAFETY: a null buffer with length 0 only asks for the required size,
+    // including the terminating NUL; 0 means no value or an error.
+    let len = unsafe { libc::confstr(libc::_CS_PATH, std::ptr::null_mut(), 0) };
+    if len == 0 {
+        return Err(unavailable());
+    }
+    let mut buf = vec![0u8; len];
+    // SAFETY: `buf` provides exactly `len` writable bytes.
+    let written = unsafe { libc::confstr(libc::_CS_PATH, buf.as_mut_ptr().cast(), len) };
+    // The value cannot grow between calls; refuse rather than truncate if it
+    // somehow did, or if the second call failed.
+    if written == 0 || written > len {
+        return Err(unavailable());
+    }
+    buf.truncate(written - 1);
+    Ok(OsString::from_vec(buf))
+}
+
+/// A regular file (after following symlinks) that this process may execute,
+/// judged by the kernel with the effective ids, as `execve` would. Mode bits
+/// alone are not enough: an execute bit for group or other does not grant the
+/// owner execute rights.
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::ffi::OsStrExt;
+    if !std::fs::metadata(path).is_ok_and(|meta| meta.is_file()) {
+        return false;
+    }
+    let Ok(path) = std::ffi::CString::new(path.as_os_str().as_bytes()) else {
+        return false;
+    };
+    // SAFETY: `path` is a valid NUL-terminated string that outlives the call.
+    unsafe { libc::faccessat(libc::AT_FDCWD, path.as_ptr(), libc::X_OK, libc::AT_EACCESS) == 0 }
+}
+
+/// Ask the harness for its version with exactly the environment overlay and
+/// cwd of the task that will run it; callers share an answer only between
+/// tasks identical in executable, cwd and environment.
 ///
 /// Best effort: a harness that cannot answer still runs, it is simply recorded
 /// without a version.
-pub fn version(harness: &Path, cwd: &Path) -> Option<String> {
+pub fn version(harness: &Path, cwd: &Path, env: &EnvOverlay) -> Option<String> {
     let mut output = tempfile::tempfile().ok()?;
-    let mut child = Command::new(harness)
+    let mut command = Command::new(harness);
+    for (key, value) in env {
+        match value {
+            Some(value) => command.env(key, value),
+            None => command.env_remove(key),
+        };
+    }
+    let mut child = command
         .arg("--version")
         .current_dir(cwd)
         .stdin(Stdio::null())
@@ -456,6 +532,113 @@ mod tests {
         assert_eq!(capture.malformed_lines, 2);
         assert_eq!(capture.response, "ok");
         assert_eq!(capture.turns, 1);
+    }
+
+    fn executable(path: &Path) {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, "#!/bin/sh\n").unwrap();
+        std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+
+    #[test]
+    fn pi_is_located_on_the_tasks_own_path() {
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().join("cwd");
+        executable(&dir.path().join("first/pi"));
+        executable(&cwd.join("rel/pi"));
+        executable(&cwd.join("pi"));
+        std::fs::create_dir_all(dir.path().join("empty")).unwrap();
+        // Not executable: skipped rather than chosen.
+        std::fs::write(dir.path().join("empty/pi"), "").unwrap();
+
+        let overlay =
+            |path: &str| -> EnvOverlay { [("PATH".to_string(), Some(path.to_string()))].into() };
+        let empty = dir.path().join("empty").display().to_string();
+        let first = dir.path().join("first").display().to_string();
+
+        assert_eq!(
+            locate(&overlay(&format!("{empty}:{first}")), &cwd).unwrap(),
+            dir.path().join("first/pi")
+        );
+        assert_eq!(
+            locate(&overlay(&format!("{empty}:rel")), &cwd).unwrap(),
+            cwd.join("rel/pi")
+        );
+        assert_eq!(
+            locate(&overlay(&format!("{empty}::{first}")), &cwd).unwrap(),
+            cwd.join("pi")
+        );
+        let missing = format!("{:#}", locate(&overlay(&empty), &cwd).unwrap_err());
+        assert!(missing.contains("could not find pi"), "{missing}");
+    }
+
+    /// The platform's default search path, read independently of the code
+    /// under test.
+    fn confstr_path() -> OsString {
+        use std::os::unix::ffi::OsStringExt;
+        // SAFETY: a null buffer of length 0 only queries the needed size.
+        let len = unsafe { libc::confstr(libc::_CS_PATH, std::ptr::null_mut(), 0) };
+        assert!(len > 0, "this platform defines _CS_PATH");
+        let mut buf = vec![0u8; len];
+        // SAFETY: `buf` holds `len` writable bytes.
+        unsafe { libc::confstr(libc::_CS_PATH, buf.as_mut_ptr().cast(), len) };
+        buf.pop();
+        OsString::from_vec(buf)
+    }
+
+    #[test]
+    fn the_search_path_follows_the_overlay_then_the_inherited_value() {
+        let inherited = Some(OsString::from("/inherited"));
+        let none = EnvOverlay::new();
+        assert_eq!(search_path(&none, inherited.clone()).unwrap(), "/inherited");
+        let set: EnvOverlay = [("PATH".to_string(), Some("/task".to_string()))].into();
+        assert_eq!(search_path(&set, inherited.clone()).unwrap(), "/task");
+        // An explicitly empty PATH is kept: its one empty entry is the cwd.
+        let empty: EnvOverlay = [("PATH".to_string(), Some(String::new()))].into();
+        assert_eq!(search_path(&empty, inherited.clone()).unwrap(), "");
+    }
+
+    #[test]
+    fn an_unset_path_searches_the_platform_default() {
+        let default = confstr_path();
+        assert!(!default.is_empty());
+        // Removed by the task, though the supervisor has one.
+        let removed: EnvOverlay = [("PATH".to_string(), None)].into();
+        assert_eq!(
+            search_path(&removed, Some(OsString::from("/inherited"))).unwrap(),
+            default
+        );
+        // Absent from the supervisor and untouched by the task.
+        assert_eq!(search_path(&EnvOverlay::new(), None).unwrap(), default);
+    }
+
+    #[test]
+    fn a_candidate_the_current_user_cannot_execute_is_skipped() {
+        use std::os::unix::fs::PermissionsExt;
+        let dir = tempfile::tempdir().unwrap();
+        let cwd = dir.path().to_path_buf();
+        // Group and other may execute it, but its owner (this user) may not:
+        // a mode-bit check accepts it, an effective-access check does not.
+        let denied = dir.path().join("denied/pi");
+        executable(&denied);
+        std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o611)).unwrap();
+        // An executable directory named pi is not a program.
+        std::fs::create_dir_all(dir.path().join("dir/pi")).unwrap();
+        executable(&dir.path().join("good/pi"));
+        let path = ["dir", "denied", "good"]
+            .map(|sub| dir.path().join(sub).display().to_string())
+            .join(":");
+        let env: EnvOverlay = [("PATH".to_string(), Some(path))].into();
+        let found = locate(&env, &cwd).unwrap();
+        // SAFETY: geteuid has no preconditions.
+        if unsafe { libc::geteuid() } == 0 {
+            // Root may execute any file with some execute bit set, so the
+            // denied candidate is genuinely runnable there.
+            assert_eq!(found, denied);
+        } else {
+            assert_eq!(found, dir.path().join("good/pi"));
+        }
     }
 
     #[test]

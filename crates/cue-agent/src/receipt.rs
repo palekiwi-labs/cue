@@ -13,9 +13,11 @@ pub struct BatchReceipt {
     pub batch_id: String,
     pub batch_path: PathBuf,
     pub cap: usize,
-    pub context: Option<String>,
     pub harness: String,
+    /// The one version every launched run reported; `None` when unknown or
+    /// when tasks resolved different executables.
     pub harness_version: Option<String>,
+    /// One run per task, in specification order.
     pub runs: Vec<RunReceipt>,
 }
 
@@ -63,4 +65,49 @@ impl Outcome {
             Self::Aborted => "aborted",
         }
     }
+}
+
+/// A short human-readable account of a batch: one header per run, in
+/// specification order, followed by its response or by everything that went
+/// wrong. Failures are never reduced to the outcome word alone.
+pub fn human(batch: &BatchReceipt) -> String {
+    use std::fmt::Write;
+    let mut out = String::new();
+    let _ = writeln!(out, "batch {}", batch.batch_id);
+    for (index, run) in batch.runs.iter().enumerate() {
+        let mut status = run.outcome.as_str().to_string();
+        if let Some(code) = run.exit_code.filter(|code| *code != 0) {
+            let _ = write!(status, ", exit {code}");
+        }
+        if let Some(signal) = run.signal {
+            let _ = write!(status, ", signal {signal}");
+        }
+        let _ = writeln!(
+            out,
+            "\n[{}] {} ({status}, {} ms)",
+            index + 1,
+            run.agent,
+            run.duration_ms
+        );
+        if let Some(error) = &run.error {
+            let _ = writeln!(out, "error: {error}");
+        }
+        if let Some(stderr) = &run.stderr_excerpt {
+            let _ = writeln!(out, "stderr:\n{}", stderr.trim_end());
+        }
+        if let Some(trace) = &run.trace {
+            let _ = writeln!(out, "trace: {trace}");
+        }
+        if let Some(error) = &run.trace_error {
+            let _ = writeln!(out, "trace error: {error}");
+        }
+        for error in &run.persistence_errors {
+            let _ = writeln!(out, "persistence error: {error}");
+        }
+        let _ = writeln!(out, "record: {}", run.run_path.display());
+        if !run.response.is_empty() {
+            let _ = writeln!(out, "\n{}", run.response.trim_end());
+        }
+    }
+    out
 }

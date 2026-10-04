@@ -2,7 +2,7 @@
 
 mod helpers;
 
-use helpers::{Sandbox, receipt, run_of};
+use helpers::{Sandbox, receipt, run_of, spec};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
@@ -21,7 +21,8 @@ fn a_run_past_its_deadline_is_torn_down_and_reported_as_a_timeout() {
     let started = Instant::now();
     let output = sandbox
         .cmd()
-        .args(["run", "alpha", "--prompt", "SLEEP=30", "--timeout", "1"])
+        .args(["run", "--json", "--timeout", "1"])
+        .arg(spec(&[("alpha", "SLEEP=30")]).to_string())
         .output()
         .expect("run cue-agent");
     let elapsed = started.elapsed();
@@ -42,11 +43,7 @@ fn the_manifest_root_timeout_applies_unless_the_cli_overrides_it() {
     let sandbox = Sandbox::new();
     sandbox.global_manifest(r#"{"timeout": 1, "agents": {"alpha": {}}}"#);
 
-    let output = sandbox
-        .cmd()
-        .args(["run", "alpha", "--prompt", "SLEEP=30"])
-        .output()
-        .expect("run cue-agent");
+    let output = sandbox.run_json(&spec(&[("alpha", "SLEEP=30")]));
     let receipt_value = receipt(&output.stdout);
     let run = run_of(&receipt_value, "alpha");
     assert_eq!(run["outcome"], "timeout", "{output:?}");
@@ -57,7 +54,8 @@ fn the_manifest_root_timeout_applies_unless_the_cli_overrides_it() {
 
     let output = sandbox
         .cmd()
-        .args(["run", "alpha", "--prompt", "SLEEP=2", "--timeout", "0"])
+        .args(["run", "--json", "--timeout", "0"])
+        .arg(spec(&[("alpha", "SLEEP=2")]).to_string())
         .output()
         .expect("run cue-agent");
     assert!(output.status.success(), "{output:?}");
@@ -65,6 +63,46 @@ fn the_manifest_root_timeout_applies_unless_the_cli_overrides_it() {
         run_of(&receipt(&output.stdout), "alpha")["outcome"],
         "completed"
     );
+}
+
+#[test]
+fn a_timed_out_run_does_not_cancel_or_shorten_the_others() {
+    let sandbox = Sandbox::new();
+    sandbox.global_manifest(r#"{"timeout": 30, "agents": {"alpha": {}, "beta": {}}}"#);
+
+    let started = Instant::now();
+    let output = sandbox
+        .cmd()
+        .args(["run", "--json", "--timeout", "2"])
+        .arg(
+            spec(&[
+                ("alpha", "SLEEP=30"),
+                ("beta", "SLEEP=1"),
+                ("alpha", "quick"),
+            ])
+            .to_string(),
+        )
+        .output()
+        .expect("run cue-agent");
+    let elapsed = started.elapsed();
+
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let receipt = receipt(&output.stdout);
+    let runs = receipt["runs"].as_array().unwrap();
+    assert_eq!(runs[0]["outcome"], "timeout");
+    assert_eq!(runs[1]["outcome"], "completed", "{}", runs[1]);
+    assert_eq!(runs[1]["response"], "slept 1");
+    assert_eq!(runs[2]["outcome"], "completed");
+    for run in runs {
+        let path = std::path::Path::new(run["run_path"].as_str().unwrap());
+        let recorded: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(path.join("manifest.json")).unwrap()).unwrap();
+        assert_eq!(
+            recorded["timeout_secs"], 2,
+            "the CLI overrides the manifest"
+        );
+    }
+    assert!(elapsed < Duration::from_secs(10), "{elapsed:?}");
 }
 
 #[test]
@@ -76,14 +114,8 @@ fn a_child_that_ignores_sigterm_is_escalated_to_sigkill() {
     let output = sandbox
         .cmd()
         .env("CUE_AGENT_GRACE_MS", "300")
-        .args([
-            "run",
-            "alpha",
-            "--prompt",
-            "IGNORE_TERM=60",
-            "--timeout",
-            "1",
-        ])
+        .args(["run", "--json", "--timeout", "1"])
+        .arg(spec(&[("alpha", "IGNORE_TERM=60")]).to_string())
         .output()
         .expect("run cue-agent");
     let elapsed = started.elapsed();
@@ -102,19 +134,13 @@ fn a_child_that_ignores_sigterm_is_escalated_to_sigkill() {
 fn an_interrupt_tears_down_every_run_in_the_batch() {
     let sandbox = Sandbox::new();
     sandbox.global_manifest(MANIFEST);
-    let batch = serde_json::json!({
-        "runs": [
-            { "agent": "alpha", "prompt": "SLEEP=30" },
-            { "agent": "beta", "prompt": "SLEEP=30" }
-        ]
-    })
-    .to_string();
+    let batch = spec(&[("alpha", "SLEEP=30"), ("beta", "SLEEP=30")]).to_string();
     let batch_path = sandbox.project().join("batch.json");
     std::fs::write(&batch_path, batch).unwrap();
 
     let child = sandbox
         .cmd()
-        .args(["run", "--batch"])
+        .args(["run", "--json", "--spec"])
         .arg(&batch_path)
         .stdout(Stdio::piped())
         .spawn()
@@ -153,7 +179,8 @@ fn interrupt_escalates_sigterm_ignoring_children_and_preserves_the_trigger() {
     sandbox.global_manifest(MANIFEST);
     let child = sandbox
         .cmd()
-        .args(["run", "alpha", "--prompt", "IGNORE_TERM=10"])
+        .args(["run", "--json"])
+        .arg(spec(&[("alpha", "IGNORE_TERM=10")]).to_string())
         .env("CUE_AGENT_GRACE_MS", "100")
         .stdout(Stdio::piped())
         .spawn()
@@ -198,11 +225,7 @@ fn a_grandchild_holding_the_inherited_stdout_does_not_hold_the_batch_open() {
     // the parent's reader never sees EOF and the run hangs. With a file there
     // is nothing to wait for.
     let started = Instant::now();
-    let output = sandbox
-        .cmd()
-        .args(["run", "alpha", "--prompt", "ORPHAN=5"])
-        .output()
-        .expect("run cue-agent");
+    let output = sandbox.run_json(&spec(&[("alpha", "ORPHAN=5")]));
     let elapsed = started.elapsed();
 
     assert!(output.status.success(), "{output:?}");

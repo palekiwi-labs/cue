@@ -2,7 +2,7 @@
 
 mod helpers;
 
-use helpers::{Sandbox, receipt, run_of};
+use helpers::{Sandbox, receipt, run_of, spec};
 use std::time::Instant;
 
 const MANIFEST: &str = r#"{
@@ -16,11 +16,7 @@ const MANIFEST: &str = r#"{
 }"#;
 
 fn batch(runs: &[(&str, &str)]) -> String {
-    let runs: Vec<serde_json::Value> = runs
-        .iter()
-        .map(|(agent, prompt)| serde_json::json!({ "agent": agent, "prompt": prompt }))
-        .collect();
-    serde_json::json!({ "runs": runs }).to_string()
+    spec(runs).to_string()
 }
 
 /// The peak number of harness processes the fake harness saw alive at once.
@@ -46,7 +42,7 @@ fn a_full_batch_runs_concurrently_and_results_stay_attributed_in_reverse_order()
     let started = Instant::now();
     let output = sandbox
         .cmd()
-        .args(["run", "--batch", "-"])
+        .args(["run", "--json", "-"])
         .stdin(std::process::Stdio::piped())
         .stdout(std::process::Stdio::piped())
         .spawn()
@@ -94,27 +90,16 @@ fn a_batch_over_the_cap_fails_before_anything_is_spawned() {
 
     let output = sandbox
         .cmd()
-        .args(["run", "--batch"])
+        .args(["run", "--json", "--spec"])
         .arg(&batch_path)
         .output()
         .expect("run cue-agent");
 
     assert_eq!(output.status.code(), Some(2));
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("exceeds the per-call cap of 4"), "{stderr}");
+    assert!(stderr.contains("at most 4"), "{stderr}");
     assert!(stderr.contains("does not queue"), "{stderr}");
-    assert!(
-        output.stdout.is_empty(),
-        "a refused batch prints no receipt"
-    );
-    assert!(
-        sandbox.recorded_sessions().is_empty(),
-        "no harness process may start"
-    );
-    assert!(
-        !sandbox.state().join("cue/agent/runs").exists(),
-        "no run directory may be created"
-    );
+    sandbox.assert_nothing_ran(&output);
 }
 
 #[test]
@@ -131,7 +116,7 @@ fn one_failing_run_neither_stops_nor_taints_the_others() {
 
     let output = sandbox
         .cmd()
-        .args(["run", "--batch"])
+        .args(["run", "--json", "--spec"])
         .arg(&batch_path)
         .output()
         .expect("run cue-agent");
@@ -171,7 +156,8 @@ fn an_oversized_event_line_is_skipped_rather_than_swallowing_the_run() {
 
     let output = sandbox
         .cmd()
-        .args(["run", "alpha", "--prompt", "OVERSIZED"])
+        .args(["run", "--json"])
+        .arg(batch(&[("alpha", "OVERSIZED")]))
         .output()
         .expect("run cue-agent");
     assert!(output.status.success(), "{output:?}");
@@ -183,23 +169,39 @@ fn an_oversized_event_line_is_skipped_rather_than_swallowing_the_run() {
 }
 
 #[test]
-fn a_missing_harness_fails_that_run_and_still_yields_a_receipt() {
+fn a_task_whose_path_has_no_pi_fails_alone_and_still_yields_a_receipt() {
     let sandbox = Sandbox::new();
     sandbox.global_manifest(MANIFEST);
+    // Only an empty directory: no pi, and certainly not a real one.
+    let empty = sandbox.project().join("empty-bin");
+    std::fs::create_dir(&empty).unwrap();
 
-    let output = sandbox
-        .cmd()
-        .env("CUE_AGENT_HARNESS", sandbox.project().join("no-such-pi"))
-        .args(["run", "alpha", "--prompt", "hi"])
-        .output()
-        .expect("run cue-agent");
+    let output = sandbox.run_json(&serde_json::json!({"tasks": [
+        {"agent": "alpha", "prompt": "first"},
+        {"agent": "beta", "prompt": "second", "env": {"PATH": empty}},
+        {"agent": "gamma", "prompt": "third"}
+    ]}));
 
-    assert_eq!(output.status.code(), Some(1));
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
     let receipt = receipt(&output.stdout);
-    let run = run_of(&receipt, "alpha");
-    assert_eq!(run["outcome"], "failed");
+    let runs = receipt["runs"].as_array().unwrap();
+    let agents: Vec<_> = runs.iter().map(|run| run["agent"].clone()).collect();
+    assert_eq!(agents, ["alpha", "beta", "gamma"]);
+
+    let failed = &runs[1];
+    assert_eq!(failed["outcome"], "failed");
+    let error = failed["error"].as_str().unwrap();
+    assert!(error.contains("pi"), "{error}");
     assert!(
-        run["error"].as_str().unwrap().contains("Could not start"),
-        "{run}"
+        std::path::Path::new(failed["run_path"].as_str().unwrap())
+            .join("receipt.json")
+            .is_file(),
+        "a run that never launched still leaves its record"
     );
+
+    assert_eq!(runs[0]["outcome"], "completed");
+    assert_eq!(runs[0]["response"], "echo: first");
+    assert_eq!(runs[2]["outcome"], "completed");
+    assert_eq!(runs[2]["response"], "echo: third");
+    assert_eq!(sandbox.recorded_sessions().len(), 2);
 }

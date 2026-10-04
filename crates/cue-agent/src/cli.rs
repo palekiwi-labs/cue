@@ -1,4 +1,4 @@
-use clap::{Parser, Subcommand};
+use clap::{ArgGroup, Parser, Subcommand};
 use std::path::PathBuf;
 
 #[derive(Parser)]
@@ -10,7 +10,8 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 pub enum Commands {
-    /// Run one batch of named agents concurrently and print a JSON receipt
+    /// Run one batch of named-agent tasks concurrently from a JSON
+    /// specification
     #[command(arg_required_else_help = true)]
     Run(Box<RunArgs>),
     /// Inspect the agents the layered manifest defines
@@ -20,44 +21,28 @@ pub enum Commands {
     },
 }
 
+/// Exactly one specification source: literal JSON, "-" for standard input, or
+/// --spec PATH. A positional value is never guessed to be a path.
 #[derive(clap::Args)]
+#[command(group(ArgGroup::new("source").required(true).args(["input", "spec"])))]
 pub struct RunArgs {
-    /// Named agents to run, one run each; repeat a name to run it twice
-    #[arg(value_name = "AGENT")]
-    pub agents: Vec<String>,
+    /// The run specification as literal JSON, or "-" to read it from standard
+    /// input
+    #[arg(value_name = "JSON")]
+    pub input: Option<String>,
 
-    /// Prompt sent to every named agent
-    #[arg(short = 'p', long, value_name = "TEXT", conflicts_with_all = &["prompt_file", "batch"])]
-    pub prompt: Option<String>,
+    /// Read the run specification from a JSON file
+    #[arg(long, value_name = "PATH")]
+    pub spec: Option<PathBuf>,
 
-    /// Read the prompt from a file; "-" reads standard input
-    #[arg(long, value_name = "PATH", conflicts_with_all = &["prompt", "batch"])]
-    pub prompt_file: Option<String>,
-
-    /// Read per-agent runs from a JSON batch; "-" reads standard input
-    #[arg(long, value_name = "PATH", conflicts_with_all = &["prompt", "prompt_file"])]
-    pub batch: Option<String>,
-
-    /// Caller's cue context: selects the trace destination and is exported to
-    /// the child as CUE_CONTEXT
-    #[arg(long, value_name = "SLUG")]
-    pub context: Option<String>,
-
-    /// Short label recorded as the trace description and used in its filename
-    #[arg(long, value_name = "TEXT")]
-    pub label: Option<String>,
-
-    /// Per-run wall-clock deadline in seconds
+    /// Per-run wall-clock deadline in seconds, counted from each harness
+    /// launch; overrides the manifest timeout, and 0 means none
     #[arg(long, value_name = "SECS")]
     pub timeout: Option<u64>,
 
-    /// Working directory for the harness; defaults to the current directory
-    #[arg(long, value_name = "PATH")]
-    pub cwd: Option<PathBuf>,
-
-    /// Harness executable; defaults to $CUE_AGENT_HARNESS, then `pi`
-    #[arg(long, value_name = "PATH")]
-    pub harness: Option<PathBuf>,
+    /// Print the batch receipt as JSON instead of a human-readable summary
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Subcommand)]

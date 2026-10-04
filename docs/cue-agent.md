@@ -1,9 +1,10 @@
 # cue-agent
 
 `cue-agent` runs named coding agents as child harness processes and reports
-what they produced. One invocation is one batch: up to four named agents run
-concurrently, each in its own process group, and the command prints a single
-JSON receipt when the last of them finishes.
+what they produced. One invocation is one batch: a JSON run specification
+lists up to four tasks, each naming an agent, and they run concurrently, each
+in its own process group. The command prints a single receipt, as a human
+summary or as JSON, when the last of them finishes.
 
 It is a standalone binary. Nothing calls it automatically yet: a Pi delegation
 extension is a separate piece of work.
@@ -63,8 +64,9 @@ The root accepts only `timeout`, `worktree_root`, and `agents`:
 - `timeout` — non-negative integer seconds, default `0` (unlimited).
 - `worktree_root` — optional parent path for future worktree preparation.
   Absolute paths are kept; relative paths resolve against each execution
-  target's directory, not the manifest directory. Loading this setting does
-  not yet create worktrees.
+  target's directory, not the manifest directory. Worktree creation is not
+  implemented yet (see "Worktrees" below), so this setting is loaded and
+  validated but never creates anything.
 - `agents` — named reusable definitions, with the fields below.
 
 Agent fields, all optional except the agent's own key:
@@ -114,82 +116,278 @@ Unspecified or cleared tools are `null`, distinct from explicit `[]`.
 
 ## Running agents
 
-One prompt, one agent:
+`cue-agent run` takes one JSON run specification from exactly one source:
 
 ```
-cue-agent run explore --prompt "Where is session admission decided?"
+cue-agent run '<JSON>'          # literal JSON as the positional argument
+cue-agent run - < spec.json     # "-" reads the JSON from standard input
+cue-agent run --spec spec.json  # read the JSON from a file
 ```
 
-One prompt fanned out to several agents, which is the "Request reviews from
-Flash and Opus" case:
+A positional argument is always JSON (or `-`), never guessed to be a path;
+use `--spec` for files. Giving both a positional argument and `--spec`, or
+neither, is a usage error.
+
+The smallest request runs one named agent on one prompt:
 
 ```
-cue-agent run diff-reviewer-flash consultant-opus \
-  --prompt "$(git diff main...HEAD)" \
-  --context cue-agent-runtime-mvp \
-  --label "Review the branch diff"
+cue-agent run '{"tasks": [{"agent": "explore", "prompt": "Where is session admission decided?"}]}'
 ```
 
-Different prompts per agent, via a batch file (or `-` for stdin):
+### Options
+
+- `--spec <PATH>` — read the specification from a file. Mutually exclusive
+  with the positional argument. A relative path is taken from the invocation
+  directory.
+- `--json` — print the batch receipt as one JSON object. Without it, a
+  human-readable summary is printed instead (see "The receipt").
+- `--timeout <SECS>` — per-run deadline, overriding the manifest root
+  `timeout` for this invocation. `0` means no deadline.
+- `--help` — usage.
+
+Prompts, working directories, environment, capture context and agent field
+overrides belong in the specification; there are no CLI flags for them.
+There is no harness override flag or variable and no dry-run mode.
+
+### The envelope
+
+The root is an object with three fields, and unknown fields are rejected:
+
+- `tasks` — required, a nonempty array of task objects, at most four.
+- `defaults` — optional object of shared task values.
+- `label` — optional batch label (a string or file reference).
+
+Each task requests one independent execution, in the order given. Every task
+must name its agent explicitly with `agent`; `defaults` cannot select one.
+Repeating an agent name requests separate, independent executions:
 
 ```json
 {
-  "label": "Split investigation",
-  "context": "cue-agent-runtime-mvp",
-  "runs": [
-    { "agent": "explore", "prompt": "Map the supervision loop." },
-    { "agent": "consultant-opus", "prompt": "Critique the teardown order.",
-      "timeout_secs": 600 }
+  "label": "Review the branch diff",
+  "defaults": {
+    "prompt": { "file": "review-prompt.md" },
+    "context": "acme/widgets/cue-agent-runtime-mvp"
+  },
+  "tasks": [
+    { "agent": "diff-reviewer-flash" },
+    { "agent": "diff-reviewer-flash", "model": "google/gemini-pro",
+      "label": "Second opinion" },
+    { "agent": "consultant-opus",
+      "prompt": "Is the teardown order correct under an interrupt during the grace window?" }
   ]
 }
 ```
 
+A worked example lives in `docs/examples/cue-agent/spec.json`, with a
+matching manifest in `docs/examples/cue-agent/agents.json`.
+
+Fields accepted on a task (and, except `agent`, in `defaults`):
+
+- `agent` — required on every task; a name defined in the merged manifest.
+- `prompt` — required after defaults are applied.
+- `label` — optional per-task label; it falls back to the batch label.
+- `cwd` — optional absolute working directory.
+- `env` — optional environment overlay object.
+- `context` — optional canonical capture context address.
+- `worktree` — optional worktree request; refused for now (see below).
+- `description`, `model`, `system_prompt`, `tools`, `thinking` — overrides
+  of the named agent's manifest fields, with the same meaning and types as in
+  the manifest.
+
+There is no timeout field anywhere in the specification: `timeout` and the
+legacy `timeout_secs` are rejected as unknown fields. The bare-array form,
+the `runs` key, and the old `--batch`, `--prompt`, `--prompt-file`,
+`--context`, `--label`, `--cwd` and `--harness` flags no longer exist.
+
+### Defaults and overrides
+
+Each field resolves in this order, highest first: the task's own value, then
+`defaults`, then the named agent's manifest definition. Manifest agents supply
+only reusable agent fields; prompt, label, cwd, env, context and worktree come
+from the specification alone.
+
+- Omitting a field inherits it.
+- An explicit `null` clears an inherited optional value: `"label": null`,
+  `"context": null`, `"model": null` and so on. Clearing `system_prompt`
+  removes supplementary instructions; clearing `tools` returns to Pi defaults.
+  `null` never satisfies a required field: a task with `"prompt": null` is
+  rejected even if `defaults` has a prompt.
+- Scalars replace. Arrays such as `tools` replace whole, never concatenate.
+- `worktree` replaces as a whole object.
+- `env` merges by variable name (see "Environment").
+
+### File-sourced values
+
+Wherever the specification accepts a string, it also accepts a single-key
+`{ "file": "path" }` object, including `agent`, `prompt`, labels, `cwd`, env
+values, individual `tools` elements and worktree strings. The file's contents
+are used verbatim as the string: not trimmed, not parsed as JSON, and never
+expanded recursively, so Markdown and text that looks like a reference stay
+literal.
+
+Relative reference paths resolve against:
+
+- the specification file's directory, for `--spec PATH` (the directory of the
+  path as named, without resolving symlinks);
+- the invocation directory, for positional JSON and standard input.
+
+A task's `cwd` never relocates the reference base. Manifest references keep
+resolving against their declaring manifest. Only winning values are read: a
+default overridden by every task is never opened. A missing or unreadable
+winning file rejects the whole request.
+
+### Prompts
+
+The effective prompt must not be empty or whitespace-only, and it is passed to
+Pi and recorded byte for byte, surrounding whitespace included. It must not
+begin with `-` or `@`: Pi's current prompt transport parses those prefixes as
+options or file references, and Pi offers no `--` separator. Prepend ordinary
+instruction text when passing such content. Strings that reach argv, the
+environment or paths must not contain NUL bytes.
+
+### Working directory
+
+`cwd` must be an absolute path; a relative value rejects the request. Without
+one, the task runs in the invocation directory. Each task has its own
+effective cwd, so one batch can work across several repositories or unrelated
+checkouts.
+
+The manifest is always discovered from the invocation directory, never from a
+task's cwd, so the agent names available are the same for every task.
+
+### Environment
+
+Each child inherits `cue-agent`'s own process environment, overlaid by
+`defaults.env` and then by the task's `env`, merged by variable name:
+
+- a string value sets the variable;
+- a `null` value removes it, including a variable inherited from the
+  supervisor;
+- `"env": null` on a task drops the whole `defaults.env` overlay, leaving
+  that task with the unchanged inherited environment; a `null`
+  `defaults.env` is simply no overlay.
+
+Variable names must be nonempty and must not contain `=` or NUL.
+
+```json
+{
+  "defaults": { "env": { "RUST_LOG": "info", "HTTP_PROXY": null } },
+  "tasks": [
+    { "agent": "explore", "prompt": "Map the supervision loop.",
+      "env": { "RUST_LOG": "debug" } },
+    { "agent": "explore", "prompt": "Map the trace writer.", "env": null }
+  ]
+}
 ```
-cue-agent run --batch batch.json
-cue-agent run --batch - < batch.json
-```
 
-A bare JSON array of runs is accepted as shorthand for `{"runs": [...]}`.
+The inherited environment and explicit overlay are not dumped into run
+manifests, receipts, index lines or traces. Overlays remain in memory for
+launch and version probing. This is not output redaction: a child that prints
+an environment value can still expose it in captured output or metadata.
 
-Prompts must be nonempty and must not begin with `-` or `@`: Pi parses those
-prefixes as options or file references, not verbatim text. These checks apply
-to the entire batch before launch. Prepend ordinary instruction text when
-passing such content. Pi does not support a `--` separator workaround.
+### Finding the harness
 
-### Options
+The harness is always `pi`, found by normal executable lookup on each task's
+effective environment and working directory. There is no override flag or
+variable.
 
-- `--prompt <TEXT>` / `--prompt-file <PATH>` — the prompt; `-` reads stdin.
-- `--batch <PATH>` — per-agent runs as JSON; `-` reads stdin.
-- `--context <SLUG>` — the caller's cue context; see below.
-- `--label <TEXT>` — short description, recorded on the trace and used in its
-  filename.
-- `--timeout <SECS>` — deadline for every run in the batch; a batch entry's
-  `timeout_secs` wins, then this flag, then root manifest `timeout`. Zero disables
-  the deadline; the effective unlimited setting is recorded as JSON `null`.
-- `--cwd <PATH>` — working directory for the harness.
-- `--harness <PATH>` — the harness executable. Relative paths containing `/`
-  are resolved against the invocation directory, not `--cwd`; bare names use
-  `PATH`. The version probe uses the same program and working directory, with
-  a two-second timeout and bounded result reading. Probe failure is benign.
+- The effective `PATH` is the inherited value unless the task's overlay sets
+  or removes it.
+- Entries are taken as the child sees them after changing into its cwd: a
+  relative entry resolves against the task cwd, and an empty entry (as in
+  `a::b`, or an empty `PATH`) means the task cwd itself.
+- The first candidate that is a regular file the current user may execute
+  wins; the resolved path is recorded as `harness_path` in the run manifest.
+- When the effective `PATH` is unset (the supervisor has none, or the task
+  removes it with `"PATH": null`), lookup searches the platform's default
+  search path (`confstr(_CS_PATH)`), as normal Unix executable lookup does.
+  The child still runs without `PATH`; if the platform defines no default,
+  lookup fails for that task.
+
+A task whose `pi` cannot be found is not an admission error: it becomes a
+failed run with an `error` explaining why, and the other tasks still run.
+
+The version probe runs the same resolved executable with `--version`, in the
+same cwd and environment, with a two-second timeout and bounded output
+reading. Tasks share a probe only when executable, cwd and environment are
+all identical. Probe failure is benign: the run simply records no version.
+
+### Capture context
+
+`context` selects where a task's trace is written. It can be set in
+`defaults` and overridden or cleared per task, so tasks in one invocation may
+capture into different contexts or none.
+
+Every effective non-null context must be a canonical cue context address,
+`<org>/<repo>/<context>`, naming a context that already exists in the cue
+store (`$CUE_STORE`, else `~/cue`). Slugs, filesystem paths and artifact addresses are
+rejected, as are nonexistent contexts, before anything is launched. A
+cleared or omitted context disables trace capture only; local run records are
+always written.
+
+Capture context and `CUE_CONTEXT` are independent. `cue-agent` never sets or
+clears `CUE_CONTEXT` on its own: the child inherits it from the supervisor
+like any other variable, and a task controls it through `env`, for example
+`"env": { "CUE_CONTEXT": "cue-agent-runtime-mvp" }` or
+`"env": { "CUE_CONTEXT": null }`. Context selection is also independent of
+the task's cwd.
+
+Current limitation: the trace is written by running `cue -C <task cwd> add`,
+which writes only into the scope of the repository at the task's cwd and
+stamps that repository's revision. A destination context in another scope is
+not redirected: the write fails and is reported as `trace_error`. Cross-scope
+capture is follow-up work.
+
+### Worktrees
+
+The specification accepts and validates a `worktree` object (`base` and
+`ephemeral` required; optional `path`, resolved against the task's effective
+cwd, and `branch`; a `path` or a manifest `worktree_root` must be available).
+Worktree creation is not implemented yet: any request whose effective task has
+a worktree is refused at admission with exit `2`, before anything is
+launched. Omit `worktree` (or clear an inherited one with `"worktree": null`)
+and use `cwd` to run in an existing checkout.
+
+### Timeouts
+
+The per-run deadline comes from the root `timeout` of the merged manifest
+(built-in `0`, then global, then project), overridden by `--timeout`. `0`
+means no deadline, recorded as `null`. The deadline applies independently to
+each run, counted from its own harness launch; it is not a batch deadline,
+and a run timing out does not cancel the others.
+
+### Admission
+
+The whole request is validated before any run state is created or any
+harness is launched: JSON syntax, the envelope and every field, the four-task
+cap, agent names, required prompts, file references, cwd, env names, capture
+contexts and worktree requests. Any failure rejects the entire request with
+exit `2`.
 
 ### The cap
 
-Four runs per invocation. The cap is per call, not per session: overlapping
+Four tasks per invocation. The cap is per call, not per session: overlapping
 calls may run more than four in total, which is accepted for this phase. A
-batch over the cap fails before anything is spawned, with a clear error. There
-is no queue, so nothing is silently split, truncated or deferred.
+request over the cap fails before anything is spawned, with a clear error.
+There is no queue, so nothing is silently split, truncated or deferred.
 
 ### Exit codes
 
-- `0` — every run completed and its receipt/index persistence succeeded.
-- `1` — the batch ran but at least one run failed, timed out or was aborted;
-  or a receipt/index write failed. The available receipt is still printed.
-  Per-run `persistence_errors` records storage failures without changing the
-  agent's execution outcome. A failed receipt write can only be reported in
+- `0` — every run completed, and every requested trace, receipt and index
+  write succeeded.
+- `1` — the batch ran but at least one run failed, timed out or was aborted
+  (including a task whose `pi` could not be found), or a trace, receipt or
+  index write failed. The receipt is still printed. Execution outcome and
+  storage outcome stay separate: a completed run whose trace failed keeps
+  `outcome: "completed"` and reports `trace_error`; storage failures appear in
+  `persistence_errors`. A failed receipt write can only be reported in
   stdout; an index error is also recorded in the receipt file when writable.
-- `2` — the request never reached the harness: bad arguments, an unknown
-  agent, an oversized batch, an unreadable manifest. Nothing is printed on
-  stdout.
+- `2` — the request was rejected before any run launched: bad arguments, an
+  invalid specification, an unknown agent, an oversized batch, an unreadable
+  manifest, an invalid capture context, a worktree request. Failure to create
+  the local run record before launch also ends here. A diagnostic prefixed
+  `cue-agent:` goes to stderr and nothing is printed on stdout, with or
+  without `--json`.
 
 ### Interrupts and deadlines
 
@@ -202,16 +400,6 @@ window or replace the timeout reason. Descendants that detach using
 `setsid`/`setpgid` escape the group and may outlive the run; process groups are
 not a containment or sandbox boundary.
 
-## The context parameter
-
-`--context` is optional and does double duty: it selects where the trace
-artifact is written, and it is exported to the child as `CUE_CONTEXT` so a
-subagent's own cue writes land in the caller's context. When no context is
-given, `$CUE_CONTEXT` is inherited if set; when neither is present, the
-variable is *removed* from the child environment and no trace is written. A
-child with no context fails its cue writes loudly rather than guessing, which
-is cue's stated rule working as designed.
-
 ## Where runs are recorded
 
 Two planes. The trace artifact is curation; the run directory is preservation,
@@ -219,22 +407,28 @@ so a missing trace is never data loss.
 
 ### Plane 1: the trace artifact
 
-Written only when a context was supplied and the agent produced a final
-message. Its body is that message verbatim, with nothing added, so the trace
-and the response extracted from `events.jsonl` are byte-identical.
-All text blocks of the final assistant message are concatenated in order,
-without adding separators or including thinking/tool blocks.
+Written only when the task has an effective capture context and the agent
+produced a final message. Its body is that message verbatim, with nothing
+added, so the trace and the response extracted from `events.jsonl` are
+byte-identical. All text blocks of the final assistant message are
+concatenated in order, without adding separators or including thinking/tool
+blocks.
 
 ```
-<context>/trace/agent/<label-slug>-<agent>-<short-run-id>.md
+<org>/<repo>/<context>/trace/agent/<label-slug>-<agent>-<short-run-id>.md
 ```
+
+The label is the task's label, else the batch label, else `run`. This naming
+is the current one; the batch-qualified, position-numbered naming and revised
+metadata described in the program specification are follow-up work.
 
 Frontmatter carries `kind: agent-run`, the agent, model, harness and harness
-version, the caller's `description`, the outcome, exit code and duration, usage
-(`turns`, `tokens_input`, `tokens_output`, `cost_usd`) and `run_id`, `batch_id`
-and `run_path` as forward pointers into plane 2. cue stamps `repo_id` and
-`commit_hash`. The prompt is deliberately not frontmatter: prompts are long and
-multi-line, and `prompt.md` in the run directory holds it verbatim.
+version, `description` (the effective label), the outcome, exit code and
+duration, usage (`turns`, `tokens_input`, `tokens_output`, `cost_usd`) and
+`run_id`, `batch_id` and `run_path` as forward pointers into plane 2. cue
+stamps `repo_id` and `commit_hash` from the task's cwd. The prompt is
+deliberately not frontmatter: prompts are long and multi-line, and
+`prompt.md` in the run directory holds it verbatim.
 
 ### Plane 2: the run directory
 
@@ -243,19 +437,22 @@ not a context exists:
 
 ```
 $XDG_STATE_HOME/cue/agent/runs/<YYYY-MM-DD>/<batch-id>/<agent>-<n>/
-  manifest.json      the request: agent, model, argv, cwd, repo, commit,
-                     context, store root
+  manifest.json      the request: agent, model, harness path and version,
+                     argv, cwd, capture context, labels, repo, commit,
+                      store root, timeout, launch error (no environment dump)
   prompt.md          the prompt verbatim, as passed to the harness
-  system-prompt.md   the agent's system prompt as it was at run time
+  system-prompt.md   the agent's effective system prompt at run time
   events.jsonl       raw harness stdout
   stderr.log         raw harness stderr
   receipt.json       outcome, exit disposition, usage, timings
 ```
 
-`manifest.json`, `prompt.md` and `system-prompt.md` are written before the
-harness starts, so an instant crash still leaves a record. Agent definitions
-are edited over time, which is why the system prompt is captured per run: a
-past run cannot be interpreted without it.
+`<n>` is the task's one-based position in the specification, so repeated
+agents get distinct directories. `manifest.json`, `prompt.md` and
+`system-prompt.md` are written before the harness starts, so an instant crash
+still leaves a record. Agent definitions are edited over time and may be
+overridden per task, which is why the effective system prompt is captured per
+run: a past run cannot be interpreted without it.
 
 The agent state root is restricted to mode `0700`; run files and the index
 use `0600`. Existing cue-owned target permissions are tightened when opened.
@@ -267,26 +464,34 @@ may grow throughout execution, including from escaped descendants. Live output
 quotas and stronger process containment are deferred; use appropriate host
 disk limits and deadlines for unattended workloads.
 
-One line per run is appended to `$XDG_STATE_HOME/cue/agent/index.jsonl`, so
-"what has run" is one pass over one file. It is rebuildable from the manifests.
+One line per run is appended to `$XDG_STATE_HOME/cue/agent/index.jsonl`
+(agent, model, capture context, cwd, outcome, exit code, duration, cost and
+run path), so "what has run" is one pass over one file. It is rebuildable from
+the manifests.
 
 ## The receipt
 
-`cue-agent run` prints one JSON object. There is no streaming protocol in this
-phase; the run files exist from day one, so tailing them or emitting a merged
-event stream both stay open as later additions.
+`cue-agent run` prints one result when the batch finishes. There is no
+streaming protocol in this phase; the run files exist from day one, so
+tailing them or emitting a merged event stream both stay open as later
+additions.
+
+With `--json` it is one JSON object. Runs appear in specification order, one
+per task, whatever order they finished in. There is no batch-level context:
+tasks may capture into different contexts, and each run's `trace` address
+names its own destination.
 
 ```json
 {
   "batch_id": "20260918-120301-3f9a2b",
   "batch_path": "/home/you/.local/state/cue/agent/runs/2026-09-18/20260918-120301-3f9a2b",
   "cap": 4,
-  "context": "cue-agent-runtime-mvp",
   "harness": "pi",
   "harness_version": "pi 1.2.3",
   "runs": [
     {
       "run_id": "20260918-120301-3f9a2b-explore-1",
+      "batch_id": "20260918-120301-3f9a2b",
       "agent": "explore",
       "model": "anthropic/claude-haiku-4",
       "outcome": "completed",
@@ -304,34 +509,57 @@ event stream both stay open as later additions.
       "events_oversized": 0,
       "events_truncated": false,
       "run_path": ".../20260918-120301-3f9a2b/explore-1",
-      "trace": "acme/widgets/cue-agent-runtime-mvp/trace/agent/review-explore-4f1a9c02.md",
-      "trace_error": null
+      "trace": "acme/widgets/cue-agent-runtime-mvp/trace/agent/review-the-branch-diff-explore-4f1a9c02.md",
+      "trace_error": null,
+      "persistence_errors": []
     }
   ]
 }
 ```
 
+The batch-level `harness_version` is set only when every probed task reported
+the same version; otherwise it is `null`, and each run's own version is in its
+manifest and trace.
+
+Without `--json`, the same information is printed as a summary: a
+`batch <id>` header, then for each run in specification order a line such as
+`[1] explore (completed, 8412 ms)` (with exit status or signal when relevant),
+any `error`, stderr excerpt, `trace`, `trace error` and `persistence error`
+lines, the `record` path, and finally the response. Failures are never reduced
+to the outcome word alone.
+
 `outcome` is one of `completed`, `failed`, `timeout`, `aborted`. Failures are
 isolated: one failing run never stops or taints the others, and a harness that
-will not start is a failed run with a receipt, not a usage error.
+cannot be found or will not start is a failed run with a receipt, not a usage
+error.
 
 ## Environment
 
-- `CUE_AGENT_HARNESS` — harness executable; `--harness` wins, `pi` is the
-  default.
+These variables configure `cue-agent` itself. Unless a task's `env` overlay
+says otherwise, children also inherit them along with the rest of the
+supervisor's environment.
+
+- `PATH` — where `pi` is found, per task, as described in "Finding the
+  harness".
 - `CUE_AGENT_CUE_BIN` — the `cue` binary used to write traces; defaults to
   `cue` on `PATH`.
-- `CUE_CONTEXT` — inherited as the context when `--context` is absent.
-- `CUE_STORE` — recorded in each run manifest, so state outside the store
-  knows which store it describes.
+- `CUE_STORE` — the cue store capture contexts must exist in; also recorded
+  in each run manifest, so state outside the store knows which store it
+  describes.
 - `XDG_STATE_HOME` — root of the run record; defaults to `~/.local/state`.
 - `XDG_CONFIG_HOME` — root of the global manifest; defaults to `~/.config`.
 - `CUE_AGENT_GRACE_MS` — SIGTERM-to-SIGKILL grace window in milliseconds,
   default 5000. Mainly for tests.
 
+`CUE_CONTEXT` has no special meaning to `cue-agent`: it is neither read as a
+capture context nor set for children; it is inherited, or set or removed
+through `env`, like any other variable.
+
 ## Deliberately absent
 
 No `Harness` trait, no streaming protocol, no queue, no session-wide admission
-tracking, no harness session persistence (`--no-session` is always passed) and
-no cue-review integration. Each is deferred with a reason recorded in the
-design notes, not forgotten.
+tracking, no dry-run, no harness session persistence (`--no-session` is
+always passed) and no cue-review integration. Worktree creation, cross-scope
+trace capture and the revised trace naming and metadata are pending follow-up
+work rather than deferred indefinitely. Each is recorded in the design notes,
+not forgotten.

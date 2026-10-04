@@ -103,7 +103,6 @@ impl Manifest {
     ///
     /// A relative root resolves against the target directory (the task's cwd
     /// or the invocation directory), never against the manifest.
-    #[allow(dead_code)] // consumed once worktree creation lands
     pub fn worktree_root(&self, target: &Path) -> Option<PathBuf> {
         self.worktree_root.as_ref().map(|root| target.join(root))
     }

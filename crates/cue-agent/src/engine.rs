@@ -14,6 +14,7 @@
 //! independent questions, answered by `try_wait` and by the file respectively.
 
 use anyhow::{Context, Result};
+use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::process::{Child, Command, Stdio};
 use std::sync::atomic::{AtomicBool, AtomicI32, Ordering};
@@ -65,10 +66,9 @@ pub struct RunPlan {
     pub program: PathBuf,
     pub argv: Vec<String>,
     pub cwd: PathBuf,
-    /// The caller's cue context, exported so a subagent's own cue writes land
-    /// there. When absent the variable is removed rather than left inherited,
-    /// so the child's cue writes fail loudly instead of guessing a context.
-    pub context: Option<String>,
+    /// Overlay on the inherited environment: `Some` sets a variable, `None`
+    /// removes it. Nothing else, `CUE_CONTEXT` included, is set implicitly.
+    pub env: BTreeMap<String, Option<String>>,
     pub events_path: PathBuf,
     pub stderr_path: PathBuf,
     pub deadline: Option<Duration>,
@@ -283,10 +283,12 @@ fn try_spawn(plan: &RunPlan) -> Result<State> {
         // Teardown signals the harness and descendants that stay in its group.
         // A descendant that detaches with setsid/setpgid is not contained.
         .process_group(0);
-    match &plan.context {
-        Some(context) => command.env("CUE_CONTEXT", context),
-        None => command.env_remove("CUE_CONTEXT"),
-    };
+    for (key, value) in &plan.env {
+        match value {
+            Some(value) => command.env(key, value),
+            None => command.env_remove(key),
+        };
+    }
 
     let started = Instant::now();
     let child = command

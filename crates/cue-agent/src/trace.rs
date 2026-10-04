@@ -77,6 +77,11 @@ pub fn frontmatter(
 }
 
 /// Write the trace by invoking `cue add`, returning the canonical address.
+///
+/// `context` is the canonical `<org>/<repo>/<context>` destination; `repo` is
+/// the directory the run executed in, which stamps the revision. `cue add`
+/// only writes into the scope of that directory, so a destination in another
+/// scope is reported as a trace error rather than redirected.
 pub fn write(
     repo: &Path,
     context: &str,
@@ -103,11 +108,7 @@ pub fn write(
         bail!("cue add failed: {stderr}");
     }
 
-    let scope = cuelib::store::repository_scope(repo)?;
-    Ok(format!(
-        "{}/{context}/trace/{name}",
-        scope.to_string_lossy()
-    ))
+    Ok(format!("{context}/trace/{name}"))
 }
 
 #[cfg(test)]
