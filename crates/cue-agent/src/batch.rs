@@ -137,7 +137,7 @@ pub fn execute(args: &RunArgs) -> Result<BatchOutcome> {
         let system_prompt_path = run_path.join("system-prompt.md");
         state::write_private(&system_prompt_path, &agent.system_prompt)?;
         let system_prompt_arg =
-            (!agent.system_prompt.trim().is_empty()).then(|| system_prompt_path.clone());
+            (!agent.system_prompt.is_empty()).then(|| system_prompt_path.clone());
 
         let argv = harness::argv(
             &run_id,
@@ -148,7 +148,7 @@ pub fn execute(args: &RunArgs) -> Result<BatchOutcome> {
         let timeout_secs = request
             .timeout_secs
             .or(args.timeout)
-            .or(agent.timeout_secs)
+            .or(Some(manifest.timeout))
             .filter(|secs| *secs > 0);
         let deadline = timeout_secs.map(Duration::from_secs);
 

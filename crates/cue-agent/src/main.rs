@@ -6,6 +6,7 @@ mod ids;
 mod manifest;
 mod receipt;
 mod state;
+mod string_source;
 mod trace;
 
 use crate::cli::{AgentCommands, Cli, Commands};
@@ -64,8 +65,12 @@ fn list_agents(json: bool) -> Result<()> {
                     "system_prompt": agent.system_prompt,
                     "tools": agent.tools,
                     "thinking": agent.thinking,
-                    "timeout_secs": agent.timeout_secs,
                     "source": agent.source.as_str(),
+                    "field_sources": agent
+                        .field_sources
+                        .iter()
+                        .map(|(field, source)| (field.to_string(), source.as_str().into()))
+                        .collect::<serde_json::Map<String, serde_json::Value>>(),
                 })
             })
             .collect();

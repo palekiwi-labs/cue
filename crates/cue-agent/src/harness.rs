@@ -129,9 +129,15 @@ pub fn argv(
         args.push("--thinking".to_string());
         args.push(thinking.clone());
     }
-    if !agent.tools.is_empty() {
-        args.push("--tools".to_string());
-        args.push(agent.tools.join(","));
+    // Unset tools leave pi's defaults alone; an explicit empty list disables
+    // every tool, extension tools included.
+    match agent.tools.as_deref() {
+        None => {}
+        Some([]) => args.push("--no-tools".to_string()),
+        Some(tools) => {
+            args.push("--tools".to_string());
+            args.push(tools.join(","));
+        }
     }
     if let Some(path) = system_prompt_path {
         args.push("--append-system-prompt".to_string());
@@ -357,10 +363,10 @@ mod tests {
             description: None,
             model: Some("anthropic/haiku".into()),
             system_prompt: "You explore.".into(),
-            tools: vec!["read".into(), "bash".into()],
+            tools: Some(vec!["read".into(), "bash".into()]),
             thinking: None,
-            timeout_secs: None,
             source: Source::User,
+            field_sources: Default::default(),
         }
     }
 
@@ -396,7 +402,7 @@ mod tests {
     fn an_agent_without_a_model_or_tools_inherits_the_harness_defaults() {
         let mut agent = agent();
         agent.model = None;
-        agent.tools.clear();
+        agent.tools = None;
         let args = argv("run-1", &agent, "hello", None);
         assert_eq!(
             args,
@@ -410,6 +416,15 @@ mod tests {
                 "hello"
             ]
         );
+    }
+
+    #[test]
+    fn an_explicitly_empty_tool_list_disables_every_tool() {
+        let mut agent = agent();
+        agent.model = None;
+        agent.tools = Some(Vec::new());
+        let args = argv("run-1", &agent, "hello", None);
+        assert_eq!(&args[6..], ["--no-tools", "hello"]);
     }
 
     #[test]

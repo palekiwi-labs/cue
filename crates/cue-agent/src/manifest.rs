@@ -1,13 +1,19 @@
-//! The agent manifest: one JSON file per layer, holding every agent.
+//! The agent manifest: one JSON file per layer, holding supervisor settings
+//! and every named agent.
 //!
 //! Two layers are read, global first and project-local second, and merged so
 //! the local layer overrides field by field. Agents are a JSON object keyed by
 //! agent name rather than an array, because a merge replaces an array wholesale
 //! and a project file would then wipe every global agent instead of overriding
 //! one field of one agent.
+//!
+//! Each layer is validated in full before merging, including fields a later
+//! layer overrides. String fields may be file references; those are located
+//! against the declaring manifest while parsing, and only the winning value
+//! of each field is read once the layers are merged.
 
-use anyhow::{bail, Context, Result};
-use serde::Deserialize;
+use crate::string_source::{Patch, StringSource, kind};
+use anyhow::{Context, Result, bail};
 use serde_json::{Map, Value};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -20,7 +26,10 @@ pub const PROJECT_MANIFEST: &str = "cue-agent.json";
 /// The global manifest, relative to the config home.
 const GLOBAL_MANIFEST: &str = "cue/cue-agent.json";
 
-/// Which layer last defined an agent.
+const ROOT_FIELDS: [&str; 3] = ["timeout", "worktree_root", "agents"];
+const AGENT_FIELDS: [&str; 5] = ["description", "model", "system_prompt", "tools", "thinking"];
+
+/// Which layer supplied an agent or one of its fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Source {
     User,
@@ -36,23 +45,31 @@ impl Source {
     }
 }
 
-/// One agent as the manifest defines it, after layering.
+/// One agent as the manifest defines it, after layering and file resolution.
 #[derive(Debug, Clone)]
 pub struct Agent {
     pub name: String,
     pub description: Option<String>,
     pub model: Option<String>,
+    /// Supplementary instructions appended to the harness's own prompt; empty
+    /// when unset or cleared.
     pub system_prompt: String,
-    pub tools: Vec<String>,
+    /// `None` leaves the harness defaults alone; `Some(vec![])` means no tools.
+    pub tools: Option<Vec<String>>,
     pub thinking: Option<String>,
-    pub timeout_secs: Option<u64>,
+    /// The last layer that mentioned the agent.
     pub source: Source,
+    /// The layer that supplied each field still set after merging.
+    pub field_sources: BTreeMap<&'static str, Source>,
 }
 
 /// The merged manifest and where its layers came from.
 #[derive(Debug, Clone, Default)]
 pub struct Manifest {
     agents: BTreeMap<String, Agent>,
+    /// Per-run timeout in seconds; 0 means unlimited.
+    pub timeout: u64,
+    worktree_root: Option<String>,
     pub global_path: Option<PathBuf>,
     pub project_path: Option<PathBuf>,
 }
@@ -81,34 +98,64 @@ impl Manifest {
             anyhow::anyhow!("Unknown agent '{name}'. Available agents: {available}")
         })
     }
+
+    /// The configured worktree root for one execution target.
+    ///
+    /// A relative root resolves against the target directory (the task's cwd
+    /// or the invocation directory), never against the manifest.
+    #[allow(dead_code)] // consumed once worktree creation lands
+    pub fn worktree_root(&self, target: &Path) -> Option<PathBuf> {
+        self.worktree_root.as_ref().map(|root| target.join(root))
+    }
 }
 
-#[derive(Debug, Deserialize)]
-#[serde(deny_unknown_fields)]
-struct RawAgent {
-    #[serde(default)]
-    description: Option<String>,
-    #[serde(default)]
-    model: Option<String>,
-    #[serde(default)]
-    system_prompt: Option<String>,
-    #[serde(default)]
-    system_prompt_file: Option<String>,
-    #[serde(default)]
-    tools: Option<Vec<String>>,
-    #[serde(default)]
-    thinking: Option<String>,
-    #[serde(default)]
-    timeout_secs: Option<u64>,
+/// One manifest layer, validated but with no referenced file read yet.
+#[derive(Debug, Default)]
+struct Layer {
+    timeout: Option<u64>,
+    worktree_root: Patch<StringSource>,
+    agents: BTreeMap<String, AgentLayer>,
+}
+
+#[derive(Debug, Default)]
+struct AgentLayer {
+    description: Patch<StringSource>,
+    model: Patch<StringSource>,
+    system_prompt: Patch<StringSource>,
+    tools: Patch<Vec<StringSource>>,
+    thinking: Patch<StringSource>,
+}
+
+/// A merged field: its unread value and the layer that set it.
+type Slot<T> = Option<(T, Source)>;
+
+#[derive(Debug)]
+struct MergedAgent {
+    description: Slot<StringSource>,
+    model: Slot<StringSource>,
+    system_prompt: Slot<StringSource>,
+    tools: Slot<Vec<StringSource>>,
+    thinking: Slot<StringSource>,
+    source: Source,
+}
+
+fn apply<T>(slot: &mut Slot<T>, patch: Patch<T>, source: Source) {
+    match patch {
+        Patch::Absent => {}
+        Patch::Clear => *slot = None,
+        Patch::Set(value) => *slot = Some((value, source)),
+    }
 }
 
 /// Load and merge both manifest layers for a working directory.
 pub fn load(cwd: &Path) -> Result<Manifest> {
-    let global_path = global_manifest_path();
-    let project_path = find_project_manifest(cwd);
+    load_from(global_manifest_path(), find_project_manifest(cwd))
+}
 
-    let mut merged = Map::new();
-    let mut sources: BTreeMap<String, Source> = BTreeMap::new();
+fn load_from(global_path: Option<PathBuf>, project_path: Option<PathBuf>) -> Result<Manifest> {
+    let mut timeout = 0;
+    let mut worktree_root: Slot<StringSource> = None;
+    let mut merged: BTreeMap<String, MergedAgent> = BTreeMap::new();
 
     for (path, source) in [
         (global_path.as_ref(), Source::User),
@@ -119,122 +166,205 @@ pub fn load(cwd: &Path) -> Result<Manifest> {
             continue;
         }
         let layer = read_layer(path)?;
-        for name in layer.keys() {
-            sources.insert(name.clone(), source);
+        if let Some(value) = layer.timeout {
+            timeout = value;
         }
-        merge_objects(&mut merged, layer);
+        apply(&mut worktree_root, layer.worktree_root, source);
+        for (name, patch) in layer.agents {
+            let agent = merged.entry(name).or_insert(MergedAgent {
+                description: None,
+                model: None,
+                system_prompt: None,
+                tools: None,
+                thinking: None,
+                source,
+            });
+            agent.source = source;
+            apply(&mut agent.description, patch.description, source);
+            apply(&mut agent.model, patch.model, source);
+            apply(&mut agent.system_prompt, patch.system_prompt, source);
+            apply(&mut agent.tools, patch.tools, source);
+            apply(&mut agent.thinking, patch.thinking, source);
+        }
     }
 
+    let worktree_root = worktree_root
+        .map(|(value, source)| {
+            let declared = match source {
+                Source::User => global_path.as_deref(),
+                Source::Project => project_path.as_deref(),
+            };
+            value.resolve().with_context(|| {
+                format!(
+                    "Agent manifest {}: worktree_root",
+                    declared.unwrap_or(Path::new("?")).display()
+                )
+            })
+        })
+        .transpose()?;
+
     let mut agents = BTreeMap::new();
-    for (name, value) in merged {
-        let raw: RawAgent = serde_json::from_value(value)
-            .with_context(|| format!("Invalid definition for agent '{name}'"))?;
-        let system_prompt = match (&raw.system_prompt, &raw.system_prompt_file) {
-            (Some(_), Some(_)) => bail!(
-                "Agent '{name}' sets both system_prompt and system_prompt_file; keep one of them"
-            ),
-            (Some(text), None) => text.clone(),
-            (None, Some(file)) => std::fs::read_to_string(file)
-                .with_context(|| format!("Agent '{name}': could not read system prompt {file}"))?,
-            (None, None) => String::new(),
-        };
-        let source = sources.get(&name).copied().unwrap_or(Source::User);
-        agents.insert(
-            name.clone(),
-            Agent {
-                name,
-                description: raw.description,
-                model: raw.model,
-                system_prompt,
-                tools: raw.tools.unwrap_or_default(),
-                thinking: raw.thinking,
-                timeout_secs: raw.timeout_secs,
-                source,
-            },
-        );
+    for (name, merged) in merged {
+        let agent = resolve_agent(&name, merged).with_context(|| format!("Agent '{name}'"))?;
+        agents.insert(name, agent);
     }
 
     Ok(Manifest {
         agents,
+        timeout,
+        worktree_root,
         global_path,
         project_path,
     })
 }
 
-/// Read one layer into its `agents` object, with `system_prompt_file` rewritten
-/// to an absolute path.
-///
-/// The rewrite happens per layer because merging erases which file supplied a
-/// field, and a relative prompt path only means something next to the manifest
-/// that wrote it.
-fn read_layer(path: &Path) -> Result<Map<String, Value>> {
+/// Read the winning value of every field, recording where each came from.
+fn resolve_agent(name: &str, merged: MergedAgent) -> Result<Agent> {
+    let mut field_sources = BTreeMap::new();
+    let mut text = |field: &'static str, slot: Slot<StringSource>| -> Result<Option<String>> {
+        let Some((value, source)) = slot else {
+            return Ok(None);
+        };
+        field_sources.insert(field, source);
+        value.resolve().context(field).map(Some)
+    };
+    let description = text("description", merged.description)?;
+    let model = text("model", merged.model)?;
+    let system_prompt = text("system_prompt", merged.system_prompt)?.unwrap_or_default();
+    let thinking = text("thinking", merged.thinking)?;
+    let tools = match merged.tools {
+        None => None,
+        Some((items, source)) => {
+            field_sources.insert("tools", source);
+            let resolved = items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| item.resolve().with_context(|| format!("tools[{index}]")))
+                .collect::<Result<Vec<_>>>()?;
+            Some(resolved)
+        }
+    };
+    Ok(Agent {
+        name: name.to_string(),
+        description,
+        model,
+        system_prompt,
+        tools,
+        thinking,
+        source: merged.source,
+        field_sources,
+    })
+}
+
+/// Read and validate one layer. Relative file references are located against
+/// the manifest's own directory here, because merging erases which file
+/// declared a value.
+fn read_layer(path: &Path) -> Result<Layer> {
     let raw = std::fs::read_to_string(path)
         .with_context(|| format!("Could not read agent manifest {}", path.display()))?;
     let value: Value = serde_json::from_str(&raw)
         .with_context(|| format!("Invalid JSON in agent manifest {}", path.display()))?;
-    let Value::Object(root) = value else {
-        bail!(
-            "Agent manifest {} must be a JSON object with an 'agents' key",
-            path.display()
-        );
-    };
-    let Some(agents) = root.get("agents") else {
-        return Ok(Map::new());
-    };
-    let Value::Object(agents) = agents else {
-        bail!(
-            "Agent manifest {}: 'agents' must be a JSON object keyed by agent name, not an array",
-            path.display()
-        );
-    };
-
-    let dir = path.parent().unwrap_or(Path::new("."));
-    let mut agents = agents.clone();
-    for (name, definition) in &mut agents {
-        let Some(entry) = definition.as_object_mut() else {
-            continue;
-        };
-        let inline = entry.get("system_prompt").is_some_and(|v| !v.is_null());
-        let file = entry
-            .get("system_prompt_file")
-            .is_some_and(|v| !v.is_null());
-        if inline && file {
-            bail!(
-                "Agent '{name}' in {} sets both system_prompt and system_prompt_file; keep one of them",
-                path.display()
-            );
-        }
-        // A prompt source is one logical field, regardless of its representation.
-        // Clear the inherited alternative without reading an overridden file.
-        if inline {
-            entry.insert("system_prompt_file".into(), Value::Null);
-        } else if file {
-            entry.insert("system_prompt".into(), Value::Null);
-        }
-        if let Some(Value::String(file)) = entry.get("system_prompt_file") {
-            let resolved = dir.join(file);
-            entry.insert(
-                "system_prompt_file".to_string(),
-                Value::String(resolved.to_string_lossy().into_owned()),
-            );
-        }
-    }
-    Ok(agents)
+    let base = path.parent().unwrap_or(Path::new("."));
+    parse_layer(&value, base).with_context(|| format!("Agent manifest {}", path.display()))
 }
 
-/// Recursively merge `overlay` into `base`: objects merge key by key, every
-/// other value (arrays included) is replaced outright.
-fn merge_objects(base: &mut Map<String, Value>, overlay: Map<String, Value>) {
-    for (key, value) in overlay {
-        match (base.get_mut(&key), value) {
-            (Some(Value::Object(existing)), Value::Object(incoming)) => {
-                merge_objects(existing, incoming);
-            }
-            (_, value) => {
-                base.insert(key, value);
+fn parse_layer(value: &Value, base: &Path) -> Result<Layer> {
+    let Value::Object(root) = value else {
+        bail!("must be a JSON object with an 'agents' key");
+    };
+    reject_unknown(root, &ROOT_FIELDS, "the root")?;
+
+    let mut layer = Layer::default();
+    if let Some(value) = root.get("timeout") {
+        let Some(secs) = value.as_u64() else {
+            bail!(
+                "timeout: expected a non-negative integer number of seconds, found {}",
+                kind(value)
+            );
+        };
+        layer.timeout = Some(secs);
+    }
+    if let Some(value) = root.get("worktree_root") {
+        layer.worktree_root = optional_string(value, base, "worktree_root")?;
+    }
+    match root.get("agents") {
+        None => {}
+        Some(Value::Object(agents)) => {
+            for (name, definition) in agents {
+                let agent = parse_agent(definition, base, &format!("agents.{name}"))?;
+                layer.agents.insert(name.clone(), agent);
             }
         }
+        Some(Value::Array(_)) => {
+            bail!("'agents' must be a JSON object keyed by agent name, not an array")
+        }
+        Some(other) => bail!(
+            "'agents' must be a JSON object keyed by agent name, found {}",
+            kind(other)
+        ),
     }
+    Ok(layer)
+}
+
+fn parse_agent(value: &Value, base: &Path, path: &str) -> Result<AgentLayer> {
+    let Value::Object(fields) = value else {
+        bail!(
+            "{path}: an agent definition must be a JSON object, found {}",
+            kind(value)
+        );
+    };
+    reject_unknown(fields, &AGENT_FIELDS, path)?;
+
+    let mut agent = AgentLayer::default();
+    let string = |field: &str| -> Result<Patch<StringSource>> {
+        match fields.get(field) {
+            None => Ok(Patch::Absent),
+            Some(value) => optional_string(value, base, &format!("{path}.{field}")),
+        }
+    };
+    agent.description = string("description")?;
+    agent.model = string("model")?;
+    agent.system_prompt = string("system_prompt")?;
+    agent.thinking = string("thinking")?;
+    agent.tools = match fields.get("tools") {
+        None => Patch::Absent,
+        Some(Value::Null) => Patch::Clear,
+        Some(Value::Array(items)) => Patch::Set(
+            items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| {
+                    StringSource::parse(item, base)
+                        .with_context(|| format!("{path}.tools[{index}]"))
+                })
+                .collect::<Result<_>>()?,
+        ),
+        Some(other) => bail!(
+            "{path}.tools: expected an array of strings or file references, found {}",
+            kind(other)
+        ),
+    };
+    Ok(agent)
+}
+
+/// A string field where null clears an inherited value.
+fn optional_string(value: &Value, base: &Path, path: &str) -> Result<Patch<StringSource>> {
+    if value.is_null() {
+        return Ok(Patch::Clear);
+    }
+    StringSource::parse(value, base)
+        .map(Patch::Set)
+        .with_context(|| path.to_string())
+}
+
+fn reject_unknown(object: &Map<String, Value>, allowed: &[&str], at: &str) -> Result<()> {
+    if let Some(key) = object.keys().find(|key| !allowed.contains(&key.as_str())) {
+        bail!(
+            "unknown field '{key}' in {at}; expected one of: {}",
+            allowed.join(", ")
+        );
+    }
+    Ok(())
 }
 
 fn global_manifest_path() -> Option<PathBuf> {
@@ -268,36 +398,69 @@ fn find_project_manifest(cwd: &Path) -> Option<PathBuf> {
 mod tests {
     use super::*;
 
-    fn object(json: &str) -> Map<String, Value> {
-        match serde_json::from_str(json).unwrap() {
-            Value::Object(map) => map,
-            other => panic!("not an object: {other}"),
-        }
+    fn layers(global: &str, project: &str) -> (tempfile::TempDir, Result<Manifest>) {
+        let dir = tempfile::tempdir().unwrap();
+        let global_dir = dir.path().join("global");
+        let project_dir = dir.path().join("project");
+        std::fs::create_dir_all(&global_dir).unwrap();
+        std::fs::create_dir_all(&project_dir).unwrap();
+        let global_path = global_dir.join(PROJECT_MANIFEST);
+        let project_path = project_dir.join(PROJECT_MANIFEST);
+        std::fs::write(&global_path, global).unwrap();
+        std::fs::write(&project_path, project).unwrap();
+        std::fs::write(project_dir.join("root.txt"), "trees").unwrap();
+        let manifest = load_from(Some(global_path), Some(project_path));
+        (dir, manifest)
     }
 
     #[test]
-    fn merging_overrides_fields_rather_than_filling_gaps() {
-        let mut base = object(r#"{"explore": {"model": "sonnet", "system_prompt": "p"}}"#);
-        merge_objects(&mut base, object(r#"{"explore": {"model": "haiku"}}"#));
-
-        assert_eq!(base["explore"]["model"], "haiku");
-        assert_eq!(base["explore"]["system_prompt"], "p");
+    fn root_settings_default_to_no_timeout_and_no_worktree_root() {
+        let manifest = load_from(None, None).unwrap();
+        assert_eq!(manifest.timeout, 0);
+        assert_eq!(manifest.worktree_root(Path::new("/target")), None);
+        let (_dir, manifest) = layers("{}", "{}");
+        let manifest = manifest.unwrap();
+        assert_eq!(manifest.timeout, 0);
+        assert_eq!(manifest.worktree_root(Path::new("/target")), None);
     }
 
     #[test]
-    fn merging_replaces_arrays_wholesale() {
-        let mut base = object(r#"{"explore": {"tools": ["read", "bash"]}}"#);
-        merge_objects(&mut base, object(r#"{"explore": {"tools": ["read"]}}"#));
-
-        assert_eq!(base["explore"]["tools"], serde_json::json!(["read"]));
+    fn the_project_timeout_overrides_the_global_one() {
+        let (_dir, manifest) = layers(r#"{"timeout": 30}"#, r#"{"timeout": 0}"#);
+        assert_eq!(manifest.unwrap().timeout, 0);
+        let (_dir, manifest) = layers(r#"{"timeout": 30}"#, "{}");
+        assert_eq!(manifest.unwrap().timeout, 30);
     }
 
     #[test]
-    fn merging_keeps_agents_the_overlay_never_mentions() {
-        let mut base = object(r#"{"explore": {}, "consultant": {}}"#);
-        merge_objects(&mut base, object(r#"{"explore": {"model": "haiku"}}"#));
+    fn a_relative_worktree_root_resolves_against_the_target_not_the_manifest() {
+        let (_dir, manifest) = layers("{}", r#"{"worktree_root": "../trees"}"#);
+        assert_eq!(
+            manifest.unwrap().worktree_root(Path::new("/repo")),
+            Some(PathBuf::from("/repo/../trees"))
+        );
+        let (_dir, manifest) = layers("{}", r#"{"worktree_root": "/abs/trees"}"#);
+        assert_eq!(
+            manifest.unwrap().worktree_root(Path::new("/repo")),
+            Some(PathBuf::from("/abs/trees"))
+        );
+    }
 
-        assert_eq!(base.len(), 2);
-        assert!(base.contains_key("consultant"));
+    #[test]
+    fn a_file_sourced_worktree_root_is_still_relative_to_the_target() {
+        let (_dir, manifest) = layers("{}", r#"{"worktree_root": {"file": "root.txt"}}"#);
+        assert_eq!(
+            manifest.unwrap().worktree_root(Path::new("/repo")),
+            Some(PathBuf::from("/repo/trees"))
+        );
+    }
+
+    #[test]
+    fn null_clears_an_inherited_worktree_root() {
+        let (_dir, manifest) = layers(
+            r#"{"worktree_root": {"file": "missing.txt"}}"#,
+            r#"{"worktree_root": null}"#,
+        );
+        assert_eq!(manifest.unwrap().worktree_root(Path::new("/repo")), None);
     }
 }

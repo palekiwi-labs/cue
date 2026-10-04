@@ -36,6 +36,7 @@ instead of overriding one field of one agent.
 
 ```json
 {
+  "timeout": 900,
   "agents": {
     "explore": {
       "description": "Surveys unfamiliar code and reports what is where",
@@ -46,8 +47,7 @@ instead of overriding one field of one agent.
     "consultant-opus": {
       "description": "Consults on hard design questions",
       "model": "anthropic/claude-opus-4",
-      "system_prompt_file": "prompts/consultant.md",
-      "timeout_secs": 900
+      "system_prompt": { "file": "prompts/consultant.md" }
     },
     "diff-reviewer-flash": {
       "description": "Reviews a diff and lists defects",
@@ -58,17 +58,40 @@ instead of overriding one field of one agent.
 }
 ```
 
-Fields, all optional except the agent's own key:
+The root accepts only `timeout`, `worktree_root`, and `agents`:
+
+- `timeout` — non-negative integer seconds, default `0` (unlimited).
+- `worktree_root` — optional parent path for future worktree preparation.
+  Absolute paths are kept; relative paths resolve against each execution
+  target's directory, not the manifest directory. Loading this setting does
+  not yet create worktrees.
+- `agents` — named reusable definitions, with the fields below.
+
+Agent fields, all optional except the agent's own key:
 
 - `description` — what the agent is for; this is what a calling model reads.
 - `model` — passed as `--model`; omit to inherit the harness default.
-- `system_prompt` / `system_prompt_file` — one or the other, never both. A
-  file path is resolved against the manifest that declared it. A project
-  prompt replaces the global prompt even when it uses the other form. Setting
-  both non-null forms in one manifest layer is an error.
-- `tools` — passed as a comma-separated `--tools` list.
+- `system_prompt` — supplementary instructions passed via
+  `--append-system-prompt`, preserving Pi's base prompt. Omission means no
+  supplementary instructions.
+- `tools` — omit or set to `null` for Pi defaults; `[]` passes `--no-tools`,
+  disabling all tools including extension tools. A nonempty array passes a
+  comma-separated `--tools` selection.
 - `thinking` — passed as `--thinking`.
-- `timeout_secs` — default deadline for runs of this agent.
+
+Every string value also accepts a single-key `{ "file": "path" }` object,
+including individual elements of `tools`, but not the whole array. Locate the
+file relative to the declaring manifest; use its contents verbatim without
+trimming, JSON parsing, or recursive expansion. For file-sourced
+`worktree_root`, locate the file this way, then interpret its contents as a
+path relative to the execution target.
+
+Fields and arrays replace inherited values atomically. `null` clears optional
+values; clearing `system_prompt` removes supplementary instructions. Root
+`timeout`, `agents`, and whole agent definitions cannot be null. Unknown keys,
+legacy `system_prompt_file`/`timeout_secs`, and task defaults such as `prompt`,
+`env`, or `cwd` in agent definitions are rejected. Each layer is type-checked
+even for overridden fields; only winning file references are read.
 
 A project file overrides one field without restating the agent:
 
@@ -82,6 +105,12 @@ Inspect the result:
 cue-agent agents list
 cue-agent agents list --json
 ```
+
+JSON discovery returns an object with `agents`, `global_manifest`, and
+`project_manifest`. Each resolved agent includes its name and reusable fields,
+`source` (the last layer mentioning the agent), and `field_sources` (the layer
+supplying each non-cleared field). Layers are named `user` and `project`.
+Unspecified or cleared tools are `null`, distinct from explicit `[]`.
 
 ## Running agents
 
@@ -135,7 +164,7 @@ passing such content. Pi does not support a `--` separator workaround.
 - `--label <TEXT>` — short description, recorded on the trace and used in its
   filename.
 - `--timeout <SECS>` — deadline for every run in the batch; a batch entry's
-  `timeout_secs` wins, then this flag, then the agent's default. Zero disables
+  `timeout_secs` wins, then this flag, then root manifest `timeout`. Zero disables
   the deadline; the effective unlimited setting is recorded as JSON `null`.
 - `--cwd <PATH>` — working directory for the harness.
 - `--harness <PATH>` — the harness executable. Relative paths containing `/`

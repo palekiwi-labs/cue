@@ -110,12 +110,21 @@ impl Sandbox {
 
     /// A `cue-agent` invocation wired to this sandbox.
     pub fn cmd(&self) -> Command {
+        // Exercise normal Pi lookup, rather than depending on the prototype's
+        // harness override. Keep fake-pi for the explicit-path regression tests.
+        self.harness();
+        write_executable(&self.dir.path().join("pi"), FAKE_HARNESS);
+        let mut paths = vec![self.dir.path().to_path_buf()];
+        if let Some(path) = std::env::var_os("PATH") {
+            paths.extend(std::env::split_paths(&path));
+        }
         let mut cmd = Command::new(bin());
         cmd.current_dir(self.project())
             .env("XDG_STATE_HOME", self.state())
             .env("XDG_CONFIG_HOME", self.config())
             .env("CUE_STORE", self.store())
-            .env("CUE_AGENT_HARNESS", self.harness())
+            .env("PATH", std::env::join_paths(paths).expect("sandbox PATH"))
+            .env_remove("CUE_AGENT_HARNESS")
             .env("FAKE_HARNESS_LOG", self.harness_log())
             .env_remove("CUE_CONTEXT");
         cmd

@@ -1,4 +1,5 @@
 {
+  "timeout": 900,
   "agents": {
     "explore": {
       "description": "Surveys unfamiliar code and reports what is where",
@@ -9,8 +10,7 @@
     "consultant-opus": {
       "description": "Consults on hard design questions",
       "model": "anthropic/claude-opus-4",
-      "system_prompt": "You are a consultant. Argue from the evidence given, name your assumptions, and say what would change your mind.",
-      "timeout_secs": 900
+      "system_prompt": "You are a consultant. Argue from the evidence given, name your assumptions, and say what would change your mind."
     },
     "diff-reviewer-flash": {
       "description": "Reviews a diff and lists defects, most severe first",

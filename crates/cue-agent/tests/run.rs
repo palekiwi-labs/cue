@@ -356,6 +356,95 @@ fn an_agent_with_no_model_or_system_prompt_inherits_the_harness_defaults() {
     );
 }
 
+/// The tool arguments pi received for one run of `agent`.
+fn tool_args(sandbox: &Sandbox, agent: &str) -> Vec<String> {
+    let output = sandbox
+        .cmd()
+        .args(["run", agent, "--prompt", "hello"])
+        .output()
+        .expect("run cue-agent");
+    assert!(output.status.success(), "{output:?}");
+    let receipt = receipt(&output.stdout);
+    let run_id = run_of(&receipt, agent)["run_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let argv = sandbox.recorded_argv(&run_id);
+    let mut tools = Vec::new();
+    let mut iter = argv.iter();
+    while let Some(arg) = iter.next() {
+        match arg.as_str() {
+            "--no-tools" => tools.push(arg.clone()),
+            "--tools" => {
+                tools.push(arg.clone());
+                tools.push(iter.next().unwrap().clone());
+            }
+            _ => {}
+        }
+    }
+    tools
+}
+
+#[test]
+fn tools_select_pi_defaults_none_or_an_explicit_list() {
+    let sandbox = Sandbox::new();
+    sandbox.global_manifest(
+        r#"{"agents":{
+          "unset":{},
+          "none":{"tools":[]},
+          "some":{"tools":["read",{"file":"tool.txt"}]},
+          "cleared":{"tools":["read"]}
+        }}"#,
+    );
+    std::fs::write(sandbox.config().join("cue/tool.txt"), "grep").unwrap();
+    sandbox.local_manifest(r#"{"agents":{"cleared":{"tools":null}}}"#);
+
+    assert!(tool_args(&sandbox, "unset").is_empty());
+    assert_eq!(tool_args(&sandbox, "none"), vec!["--no-tools"]);
+    assert_eq!(tool_args(&sandbox, "some"), vec!["--tools", "read,grep"]);
+    assert!(tool_args(&sandbox, "cleared").is_empty());
+}
+
+#[test]
+fn a_file_sourced_system_prompt_is_appended_verbatim() {
+    assert_appended_prompt("# Role\n\nSay \"hi\" \\ and {\"file\": \"x.md\"}\n\n");
+}
+
+#[test]
+fn whitespace_only_file_instructions_are_appended_verbatim() {
+    assert_appended_prompt(" \t\n\n");
+}
+
+fn assert_appended_prompt(text: &str) {
+    let sandbox = Sandbox::new();
+    std::fs::write(sandbox.project().join("role.md"), text).unwrap();
+    sandbox.local_manifest(r#"{"agents":{"a":{"system_prompt":{"file":"role.md"}}}}"#);
+
+    let output = sandbox
+        .cmd()
+        .args(["run", "a", "--prompt", "hello"])
+        .output()
+        .expect("run cue-agent");
+    assert!(output.status.success(), "{output:?}");
+    let receipt = receipt(&output.stdout);
+    let run = run_of(&receipt, "a");
+    let run_path = std::path::PathBuf::from(run["run_path"].as_str().unwrap());
+    let argv = sandbox.recorded_argv(run["run_id"].as_str().unwrap());
+    let position = argv
+        .iter()
+        .position(|arg| arg == "--append-system-prompt")
+        .expect("appended system prompt");
+    assert_eq!(
+        argv[position + 1],
+        run_path.join("system-prompt.md").display().to_string()
+    );
+    assert!(!argv.iter().any(|arg| arg == "--system-prompt"), "{argv:?}");
+    assert_eq!(
+        std::fs::read_to_string(run_path.join("system-prompt.md")).unwrap(),
+        text
+    );
+}
+
 #[test]
 fn an_unknown_agent_is_refused_before_anything_is_spawned() {
     let sandbox = Sandbox::new();

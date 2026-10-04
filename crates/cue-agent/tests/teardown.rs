@@ -38,6 +38,36 @@ fn a_run_past_its_deadline_is_torn_down_and_reported_as_a_timeout() {
 }
 
 #[test]
+fn the_manifest_root_timeout_applies_unless_the_cli_overrides_it() {
+    let sandbox = Sandbox::new();
+    sandbox.global_manifest(r#"{"timeout": 1, "agents": {"alpha": {}}}"#);
+
+    let output = sandbox
+        .cmd()
+        .args(["run", "alpha", "--prompt", "SLEEP=30"])
+        .output()
+        .expect("run cue-agent");
+    let receipt_value = receipt(&output.stdout);
+    let run = run_of(&receipt_value, "alpha");
+    assert_eq!(run["outcome"], "timeout", "{output:?}");
+    let path = std::path::Path::new(run["run_path"].as_str().unwrap());
+    let recorded: serde_json::Value =
+        serde_json::from_slice(&std::fs::read(path.join("manifest.json")).unwrap()).unwrap();
+    assert_eq!(recorded["timeout_secs"], 1);
+
+    let output = sandbox
+        .cmd()
+        .args(["run", "alpha", "--prompt", "SLEEP=2", "--timeout", "0"])
+        .output()
+        .expect("run cue-agent");
+    assert!(output.status.success(), "{output:?}");
+    assert_eq!(
+        run_of(&receipt(&output.stdout), "alpha")["outcome"],
+        "completed"
+    );
+}
+
+#[test]
 fn a_child_that_ignores_sigterm_is_escalated_to_sigkill() {
     let sandbox = Sandbox::new();
     sandbox.global_manifest(MANIFEST);
