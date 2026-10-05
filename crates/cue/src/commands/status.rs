@@ -20,8 +20,8 @@ pub fn handle(
     store_root: Option<&Path>,
 ) -> Result<()> {
     let store_root = store::root(store_root)?;
-    let scope = store::repository_scope(cwd)?;
-    let Some(context) = head::resolve_active_context(cwd, context.as_deref())? else {
+    let cwd_scope = store::repository_scope(cwd)?;
+    let Some(resolved) = head::resolve_active_context(cwd, context.as_deref())? else {
         if json_output {
             println!(
                 "{}",
@@ -29,21 +29,27 @@ pub fn handle(
                     "context": null,
                     "address": null,
                     "store": store_root.display().to_string(),
-                    "scope": scope.display().to_string(),
+                    "scope": cwd_scope.display().to_string(),
                 })
             );
         } else {
             println!("active context: unset");
             println!("  store: {}", store_root.display());
-            println!("  scope: {}", scope.display());
+            println!("  scope: {}", cwd_scope.display());
         }
         return Ok(());
     };
     // A bare slug identifies a context only to someone who already knows the
     // repository. The canonical address is the form that survives being
     // copied out of this repository, so it is emitted alongside the slug
-    // rather than left for a caller to concatenate.
-    let address = format!("{}/{}", scope.display(), context);
+    // rather than left for a caller to concatenate. A canonical selector
+    // addresses its own scope; a bare slug keeps the cwd scope.
+    let scope = match &resolved.scope {
+        Some(addressed) => addressed.clone(),
+        None => cwd_scope.display().to_string(),
+    };
+    let context = resolved.slug;
+    let address = format!("{scope}/{context}");
     let context_path = store_root.join(&scope).join(&context).join("context.md");
     let frontmatter = extract_frontmatter_yaml(&context_path).with_context(|| {
         format!(
@@ -65,7 +71,7 @@ pub fn handle(
                 "mode": metadata.mode,
                 "parent": metadata.parent,
                 "store": store_root.display().to_string(),
-                "scope": scope.display().to_string(),
+                "scope": scope,
             })
         );
     } else {
@@ -82,7 +88,7 @@ pub fn handle(
             println!("  parent: {parent}");
         }
         println!("  store: {}", store_root.display());
-        println!("  scope: {}", scope.display());
+        println!("  scope: {scope}");
     }
 
     Ok(())

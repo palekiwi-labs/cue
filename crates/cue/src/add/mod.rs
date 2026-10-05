@@ -85,7 +85,7 @@ fn add_central_markdown(
     validate_filename(filename)?;
     validate_reference_fields(&frontmatter, &store::root(store_root)?)?;
 
-    let context_dir = central_context_dir(root, context, store_root)?;
+    let (context_dir, _resolved) = central_context_dir(root, context, store_root)?;
 
     // A task is the only artifact that can be done, so it is the only type
     // given lifecycle defaults. A task is created deliberately with a defined
@@ -154,7 +154,7 @@ fn add_central_json(
         store_root,
     } = write;
     validate_filename(filename)?;
-    let context_dir = central_context_dir(root, context, store_root)?;
+    let (context_dir, _resolved) = central_context_dir(root, context, store_root)?;
     let filename = if Path::new(filename).extension().is_none() {
         format!("{filename}.json")
     } else {
@@ -211,7 +211,7 @@ fn add_central_bin(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> 
     }
     validate_filename(filename)?;
 
-    let context_dir = central_context_dir(root, context, store_root)?;
+    let (context_dir, _resolved) = central_context_dir(root, context, store_root)?;
     let file_path = context_dir.join("bin").join(filename);
     write_new_executable(&file_path, force, content)?;
 
@@ -232,7 +232,7 @@ fn add_central_tmp(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> 
     }
     validate_filename(filename)?;
 
-    let context_dir = central_context_dir(root, context, store_root)?;
+    let (context_dir, _resolved) = central_context_dir(root, context, store_root)?;
     let commit_hash = git::get_short_head_hash(root)
         .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
     let tmp_dir = context_dir.join("tmp");
@@ -257,19 +257,24 @@ fn add_central_tmp(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> 
     Ok(file_path)
 }
 
+/// Resolve the destination context directory, requiring both a selected
+/// context and an existing one.
+///
+/// The selection travels with the directory: a canonical address names the
+/// scope it addressed, and the trace stamping rule needs to know whether that
+/// scope differs from the working directory's.
 fn central_context_dir(
     root: &Path,
     context: Option<&str>,
     store_root: Option<&Path>,
-) -> Result<PathBuf> {
-    let context = cuelib::head::resolve_active_context(root, context)?
+) -> Result<(PathBuf, cuelib::head::ResolvedContext)> {
+    let resolved = cuelib::head::resolve_active_context(root, context)?
         .context("No context selected; pass --context <context>")?;
-    let repository_dir = store::root(store_root)?.join(store::repository_scope(root)?);
-    let context_dir = repository_dir.join(&context);
+    let context_dir = resolved.context_dir(root, store_root)?;
     if !context_dir.join("context.md").is_file() {
-        bail!("Context does not exist: {context}");
+        bail!("Context does not exist: {}", resolved.address(root)?);
     }
-    Ok(context_dir)
+    Ok((context_dir, resolved))
 }
 
 fn write_new_file<F>(file_path: &Path, force: bool, content: F) -> Result<()>

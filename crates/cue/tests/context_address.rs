@@ -3,9 +3,9 @@
 //! `cue status` prints a canonical `<org>/<repo>/<slug>` address so a context
 //! has one copyable identity. These tests hold the other half of that
 //! contract: the address it prints can be handed straight back to any
-//! context-accepting surface. The address must name the current repository
-//! scope, because the scope a write lands in is derived from the working
-//! directory and nothing else selects it.
+//! context-accepting surface. The address form is authoritative for
+//! destination resolution, so it names any scope of the selected store,
+//! matching the cwd scope or not; a bare slug keeps the cwd scope.
 
 mod helpers;
 
@@ -166,16 +166,146 @@ fn branch_configuration_accepts_a_canonical_address() {
         .stdout(predicate::str::contains("\"context\":\"release\""));
 }
 
+/// A context under a foreign scope, planted directly in the store: no
+/// checkout of that repository exists, which is precisely the situation
+/// `-C` cannot serve.
+fn plant_foreign_context(env: &helpers::TestEnv, scope: &str, slug: &str) -> anyhow::Result<()> {
+    let context_dir = env.cue_store().join(scope).join(slug);
+    std::fs::create_dir_all(context_dir.join("spec"))?;
+    std::fs::write(
+        context_dir.join("context.md"),
+        "---\ntitle: Foreign\nkind: work\ncreated_at: 1\n---\n",
+    )?;
+    std::fs::write(context_dir.join("spec/index.md"), "Foreign spec\n")?;
+    Ok(())
+}
+
 #[test]
-fn an_address_in_another_scope_is_rejected() {
+fn a_cross_scope_address_lists_the_addressed_context() -> anyhow::Result<()> {
+    let env = env_with_context();
+    plant_foreign_context(&env, "other/repo", "guest")?;
+
+    env.command()
+        .args(["list", "--context", "other/repo/guest"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("spec/index.md"));
+
+    Ok(())
+}
+
+#[test]
+fn a_cross_scope_address_reports_the_addressed_scope() -> anyhow::Result<()> {
+    let env = env_with_context();
+    plant_foreign_context(&env, "other/repo", "guest")?;
+
+    env.command()
+        .args(["status", "--context", "other/repo/guest", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"context\":\"guest\""))
+        .stdout(predicate::str::contains("\"address\":\"other/repo/guest\""))
+        .stdout(predicate::str::contains("\"scope\":\"other/repo\""));
+
+    Ok(())
+}
+
+#[test]
+fn a_cross_scope_address_renders_the_addressed_context() -> anyhow::Result<()> {
+    let env = env_with_context();
+    plant_foreign_context(&env, "other/repo", "guest")?;
+
+    let stdout = env
+        .command()
+        .args(["render", "spec/index.md", "--context", "other/repo/guest"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let path = env.cue_store().join("other/repo/guest/spec/index.md");
+    let content = std::fs::read_to_string(&path)?;
+    assert_eq!(
+        String::from_utf8(stdout)?,
+        format!(
+            "<artifact path=\"{}\">\n{content}\n</artifact>\n\n",
+            path.display()
+        )
+    );
+
+    Ok(())
+}
+
+#[test]
+fn a_cross_scope_address_writes_into_the_addressed_scope() -> anyhow::Result<()> {
+    let env = env_with_context();
+    plant_foreign_context(&env, "other/repo", "guest")?;
+
+    env.command()
+        .args([
+            "add",
+            "rollout",
+            "Rollout steps",
+            "--type",
+            "plan",
+            "--context",
+            "other/repo/guest",
+        ])
+        .assert()
+        .success();
+
+    assert!(
+        env.cue_store()
+            .join("other/repo/guest/plan/rollout.md")
+            .is_file(),
+        "the addressed scope is authoritative for the destination"
+    );
+    assert!(
+        !env.cue_store()
+            .join("acme/widgets/guest/plan/rollout.md")
+            .exists(),
+        "a cross-scope write must not land in the cwd scope"
+    );
+
+    Ok(())
+}
+
+#[test]
+fn a_cross_scope_address_logs_into_the_addressed_scope() -> anyhow::Result<()> {
+    let env = env_with_context();
+    plant_foreign_context(&env, "other/repo", "guest")?;
+
+    env.command()
+        .args([
+            "log",
+            "add",
+            "--title",
+            "Visited from another repository",
+            "--context",
+            "other/repo/guest",
+        ])
+        .assert()
+        .success();
+
+    env.command()
+        .args(["log", "list", "--context", "other/repo/guest"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("Visited from another repository"));
+
+    Ok(())
+}
+
+#[test]
+fn a_missing_context_in_another_scope_names_the_address() {
     let env = env_with_context();
 
     env.command()
-        .args(["status", "--context", "other/repo/release"])
+        .args(["status", "--context", "other/repo/absent"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("other/repo"))
-        .stderr(predicate::str::contains("acme/widgets"));
+        .stderr(predicate::str::contains("other/repo/absent"));
 }
 
 #[test]
