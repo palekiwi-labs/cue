@@ -513,6 +513,59 @@ fn add_honors_explicit_trace_revision_metadata() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A trace written into another scope documents a revision of some other
+/// repository, which cue cannot infer: stamping from the cwd would
+/// misattribute it. Both revision fields must be named explicitly.
+#[test]
+fn a_cross_scope_trace_requires_explicit_revision_metadata() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    let guest = env.cue_store().join("other/repo/guest");
+    std::fs::create_dir_all(&guest)?;
+    std::fs::write(
+        guest.join("context.md"),
+        "---\ntitle: Foreign\nkind: work\ncreated_at: 1\n---\n",
+    )?;
+
+    env.command()
+        .args([
+            "add",
+            "handoff",
+            "Observed output",
+            "--type",
+            "trace",
+            "--context",
+            "other/repo/guest",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("repo_id"))
+        .stderr(predicate::str::contains("commit_hash"));
+
+    env.command()
+        .args([
+            "add",
+            "handoff",
+            "Observed output",
+            "--type",
+            "trace",
+            "--context",
+            "other/repo/guest",
+            "--frontmatter",
+            "repo_id=other/repo",
+            "--frontmatter",
+            "commit_hash=0badcafe",
+        ])
+        .assert()
+        .success();
+
+    let metadata = read_frontmatter(&guest.join("trace/handoff.md"))?;
+    assert_eq!(metadata["repo_id"], "other/repo");
+    assert_eq!(metadata["commit_hash"], "0badcafe");
+
+    Ok(())
+}
+
 /// A bin artifact is a script, so the fixtures are scripts. The shebang is
 /// the portable `/usr/bin/env` form because cue stores what it is given.
 const SCRIPT: &str = "#!/usr/bin/env bash\nset -euo pipefail\necho ready\n";

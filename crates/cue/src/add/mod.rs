@@ -85,7 +85,7 @@ fn add_central_markdown(
     validate_filename(filename)?;
     validate_reference_fields(&frontmatter, &store::root(store_root)?)?;
 
-    let (context_dir, _resolved) = central_context_dir(root, context, store_root)?;
+    let (context_dir, resolved) = central_context_dir(root, context, store_root)?;
 
     // A task is the only artifact that can be done, so it is the only type
     // given lifecycle defaults. A task is created deliberately with a defined
@@ -105,6 +105,32 @@ fn add_central_markdown(
     // current repository, but an explicit value wins: a coordination context
     // records evidence about a revision of some other repository.
     if cue_type == "trace" {
+        // A trace selected into another scope documents a revision cue cannot
+        // infer: the cwd revision would misattribute it to the wrong
+        // repository. Both fields must be named explicitly.
+        if let Some(addressed) = &resolved.scope {
+            let cwd_scope = store::repository_scope(root)?
+                .to_string_lossy()
+                .into_owned();
+            if addressed != &cwd_scope {
+                let missing: Vec<&str> = ["repo_id", "commit_hash"]
+                    .into_iter()
+                    .filter(|key| !frontmatter.iter().any(|(existing, _)| existing == key))
+                    .collect();
+                if !missing.is_empty() {
+                    bail!(
+                        "A trace written into scope '{addressed}' must name its revision \
+                         explicitly; missing: {}. Pass --frontmatter {}.",
+                        missing.join(", "),
+                        missing
+                            .iter()
+                            .map(|key| format!("{key}=<value>"))
+                            .collect::<Vec<_>>()
+                            .join(" --frontmatter ")
+                    );
+                }
+            }
+        }
         if !frontmatter.iter().any(|(key, _)| key == "repo_id") {
             let scope = store::repository_scope(root)?;
             frontmatter.push(("repo_id".into(), scope.to_string_lossy().into_owned()));
