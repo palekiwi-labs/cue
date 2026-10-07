@@ -83,6 +83,24 @@ impl TestEnv {
         std::fs::remove_dir_all(self.root().join(".test-mem"))
             .expect("Failed to remove legacy custom test store");
     }
+
+    /// Strip an already-configured fixture repository's origin remote: cue
+    /// can derive neither a scope nor a revision from the checkout
+    /// afterwards, so only canonical addresses that name their own scope
+    /// still resolve.
+    #[allow(dead_code)]
+    pub fn remove_origin(&self) {
+        let output = Command::new("git")
+            .args(["remote", "remove", "origin"])
+            .current_dir(self.root())
+            .output()
+            .expect("Failed to remove remote origin");
+        assert!(
+            output.status.success(),
+            "Failed to remove remote origin: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
 }
 
 #[allow(dead_code)]

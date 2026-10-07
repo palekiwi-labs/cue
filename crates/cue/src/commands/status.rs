@@ -20,8 +20,10 @@ pub fn handle(
     store_root: Option<&Path>,
 ) -> Result<()> {
     let store_root = store::root(store_root)?;
-    let cwd_scope = store::repository_scope(cwd)?;
     let Some(resolved) = head::resolve_active_context(cwd, context.as_deref())? else {
+        // Nothing is selected, so no selection names a scope: only the cwd
+        // repository's scope can be reported.
+        let cwd_scope = store::repository_scope(cwd)?;
         if json_output {
             println!(
                 "{}",
@@ -43,10 +45,11 @@ pub fn handle(
     // repository. The canonical address is the form that survives being
     // copied out of this repository, so it is emitted alongside the slug
     // rather than left for a caller to concatenate. A canonical selector
-    // addresses its own scope; a bare slug keeps the cwd scope.
+    // addresses its own scope, so the cwd repository is consulted only for
+    // the bare-slug form: answering an address needs nothing from it.
     let scope = match &resolved.scope {
         Some(addressed) => addressed.clone(),
-        None => cwd_scope.display().to_string(),
+        None => store::repository_scope(cwd)?.display().to_string(),
     };
     let context = resolved.slug;
     let address = format!("{scope}/{context}");

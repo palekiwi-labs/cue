@@ -210,6 +210,27 @@ fn a_cross_scope_address_reports_the_addressed_scope() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A canonical address names its own scope, so answering it must not
+/// consult the working repository: an origin-less checkout suffices, the
+/// same way add, list, log and render answer the same selector.
+#[test]
+fn a_canonical_address_status_needs_no_cwd_origin() -> anyhow::Result<()> {
+    let env = env_with_context();
+    env.remove_origin();
+
+    env.command()
+        .args(["status", "--context", ADDRESS, "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("\"context\":\"release\""))
+        .stdout(predicate::str::contains(
+            "\"address\":\"acme/widgets/release\"",
+        ))
+        .stdout(predicate::str::contains("\"scope\":\"acme/widgets\""));
+
+    Ok(())
+}
+
 #[test]
 fn a_cross_scope_address_renders_the_addressed_context() -> anyhow::Result<()> {
     let env = env_with_context();
