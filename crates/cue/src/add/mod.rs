@@ -107,15 +107,22 @@ fn add_central_markdown(
     if cue_type == "trace" {
         // A trace selected into another scope documents a revision cue cannot
         // infer: the cwd revision would misattribute it to the wrong
-        // repository. Both fields must be named explicitly.
+        // repository. Both fields must be named explicitly. A checkout with
+        // no derivable scope of its own is foreign to any addressed scope.
         if let Some(addressed) = &resolved.scope {
-            let cwd_scope = store::repository_scope(root)?
-                .to_string_lossy()
-                .into_owned();
-            if addressed != &cwd_scope {
+            let same_scope = store::repository_scope(root)
+                .map(|cwd| cwd.to_string_lossy() == addressed.as_str())
+                .unwrap_or(false);
+            if !same_scope {
+                // A named field carries a value: an explicitly empty
+                // `commit_hash=` is an absent revision, not a named one.
                 let missing: Vec<&str> = ["repo_id", "commit_hash"]
                     .into_iter()
-                    .filter(|key| !frontmatter.iter().any(|(existing, _)| existing == key))
+                    .filter(|key| {
+                        !frontmatter
+                            .iter()
+                            .any(|(existing, value)| existing == key && !value.trim().is_empty())
+                    })
                     .collect();
                 if !missing.is_empty() {
                     bail!(
@@ -132,8 +139,16 @@ fn add_central_markdown(
             }
         }
         if !frontmatter.iter().any(|(key, _)| key == "repo_id") {
-            let scope = store::repository_scope(root)?;
-            frontmatter.push(("repo_id".into(), scope.to_string_lossy().into_owned()));
+            // Reaching the stamp with an addressed scope means the gate
+            // proved it the cwd's own (a foreign one demands repo_id), so
+            // the addressed scope is the stamp: no second scope lookup.
+            let scope = match &resolved.scope {
+                Some(addressed) => addressed.clone(),
+                None => store::repository_scope(root)?
+                    .to_string_lossy()
+                    .into_owned(),
+            };
+            frontmatter.push(("repo_id".into(), scope));
         }
         if !frontmatter.iter().any(|(key, _)| key == "commit_hash") {
             let hash = git::get_short_head_hash(root)
