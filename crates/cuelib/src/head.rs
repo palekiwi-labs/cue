@@ -1,312 +1,199 @@
-use anyhow::{Result, bail};
-use serde::{Deserialize, Serialize};
-use std::fs;
-use std::path::{Component, Path};
+use anyhow::{bail, Result};
+use std::path::{Component, Path, PathBuf};
 
-/// Provenance of the resolved active scope.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "lowercase")]
-pub enum ScopeProvenance {
-    Flag,
-    Env,
-    Head,
-    Default,
-}
+use crate::git;
 
-impl ScopeProvenance {
-    pub fn as_str(&self) -> &'static str {
-        match self {
-            Self::Flag => "flag",
-            Self::Env => "env",
-            Self::Head => "head",
-            Self::Default => "default",
-        }
-    }
+/// The accepted forms of a context selector, quoted back in every error so the
+/// message names the shape that was expected.
+const SELECTOR_FORM: &str = "expected a context slug in the current repository scope \
+     or a canonical '<org>/<repo>/<slug>' address";
 
-    pub fn label(&self) -> &'static str {
-        match self {
-            Self::Flag => "(flag)",
-            Self::Env => "(env)",
-            Self::Head => "(head)",
-            Self::Default => "(default)",
-        }
-    }
-}
-
-/// The result of resolving active scope precedence.
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct ResolvedScope {
+/// A context selection resolved against the store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedContext {
+    /// The context slug.
     pub slug: String,
-    pub provenance: ScopeProvenance,
+    /// The `<org>/<repo>` scope the selector addressed explicitly. `None`
+    /// means the working directory's repository scope selects it.
+    pub scope: Option<String>,
 }
 
-impl std::fmt::Display for ResolvedScope {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", self.slug)
-    }
-}
-
-impl std::ops::Deref for ResolvedScope {
-    type Target = str;
-    fn deref(&self) -> &Self::Target {
-        &self.slug
-    }
-}
-
-impl AsRef<str> for ResolvedScope {
-    fn as_ref(&self) -> &str {
-        &self.slug
-    }
-}
-
-impl AsRef<Path> for ResolvedScope {
-    fn as_ref(&self) -> &Path {
-        Path::new(&self.slug)
-    }
-}
-
-/// Read the active task slug from `<cue_dir>/HEAD`.
-/// Returns `None` if the file is absent, unreadable, or empty.
-pub fn read_head(cue_dir: &Path) -> Option<String> {
-    let head_path = cue_dir.join("HEAD");
-    let content = fs::read_to_string(&head_path).ok()?;
-    let slug = content.trim().to_string();
-    if slug.is_empty() { None } else { Some(slug) }
-}
-
-/// Write `slug` to `<cue_dir>/HEAD`.
-pub fn write_head(cue_dir: &Path, slug: &str) -> Result<()> {
-    let head_path = cue_dir.join("HEAD");
-    fs::create_dir_all(cue_dir)?;
-    fs::write(&head_path, slug)?;
-    Ok(())
-}
-
-/// Resolve the active scope following precedence:
-/// 1. `--task <slug>` flag override (if provided, validated via [`validate_slug`])
-/// 2. `$CUE_TASK` environment variable (if set and non-empty, validated via [`validate_slug`])
-/// 3. `<cue_dir>/HEAD` file (if present and non-empty)
-/// 4. `"master"` default
-pub fn resolve_scope(cue_dir: &Path, flag: Option<&str>) -> Result<ResolvedScope> {
-    if let Some(flag_slug) = flag {
-        validate_slug(flag_slug)?;
-        return Ok(ResolvedScope {
-            slug: flag_slug.to_string(),
-            provenance: ScopeProvenance::Flag,
-        });
-    }
-
-    if let Ok(env_val) = std::env::var("CUE_TASK") {
-        let trimmed = env_val.trim();
-        if !trimmed.is_empty() {
-            validate_slug(trimmed)?;
-            return Ok(ResolvedScope {
-                slug: trimmed.to_string(),
-                provenance: ScopeProvenance::Env,
-            });
+impl ResolvedContext {
+    /// The canonical address of the selected context: the addressed scope
+    /// when the selector named one, the cwd repository scope otherwise.
+    pub fn address(&self, root: &Path) -> Result<String> {
+        match &self.scope {
+            Some(scope) => Ok(format!("{scope}/{}", self.slug)),
+            None => Ok(format!(
+                "{}/{}",
+                crate::store::repository_scope(root)?.to_string_lossy(),
+                self.slug
+            )),
         }
     }
 
-    if let Some(head_slug) = read_head(cue_dir) {
-        validate_slug(&head_slug)?;
-        return Ok(ResolvedScope {
-            slug: head_slug,
-            provenance: ScopeProvenance::Head,
-        });
+    /// The scope directory of this selection inside the store.
+    pub fn scope_dir(&self, root: &Path, store_root: Option<&Path>) -> Result<PathBuf> {
+        let scope = match &self.scope {
+            Some(scope) => PathBuf::from(scope),
+            None => crate::store::repository_scope(root)?,
+        };
+        Ok(crate::store::root(store_root)?.join(scope))
     }
 
-    Ok(ResolvedScope {
-        slug: "master".to_string(),
-        provenance: ScopeProvenance::Default,
-    })
+    /// The context directory of this selection inside the store.
+    pub fn context_dir(&self, root: &Path, store_root: Option<&Path>) -> Result<PathBuf> {
+        Ok(self.scope_dir(root, store_root)?.join(&self.slug))
+    }
 }
 
-/// Validate that a task slug is a single, safe path segment.
+/// Resolve the active context for the central store model.
 ///
-/// Rejects traversal (`..`), separators (`/`, `\`), absolute paths, and the
-/// current-dir marker (`.`). A valid slug is exactly one `Component::Normal`
-/// with nothing else.
+/// Precedence is an explicit context, `$CUE_CONTEXT`, then the current branch's
+/// `branch.<name>.cue-context` Git configuration. Detached HEAD and absent values
+/// leave the context unset.
+pub fn resolve_active_context(
+    root: &Path,
+    explicit: Option<&str>,
+) -> Result<Option<ResolvedContext>> {
+    if let Some(selector) = explicit {
+        return Ok(Some(resolve_selector(selector)?));
+    }
+
+    if let Ok(value) = std::env::var("CUE_CONTEXT") {
+        let selector = value.trim();
+        if !selector.is_empty() {
+            return Ok(Some(resolve_selector(selector)?));
+        }
+    }
+
+    let Some(branch) = git::current_branch(root) else {
+        return Ok(None);
+    };
+    let Some(selector) = git::get_branch_context(root, &branch) else {
+        return Ok(None);
+    };
+    Ok(Some(resolve_selector(&selector)?))
+}
+
+/// Resolve a context selector to the context it names.
+///
+/// A selector is either a bare slug or the canonical `<org>/<repo>/<slug>`
+/// address `cue status` prints, so the one identity cue emits for a context can
+/// be handed straight back to any surface that accepts a context.
+///
+/// The address form is authoritative for destination resolution: it names the
+/// scope the command operates on, matching the cwd scope or not. A canonical
+/// address therefore reaches any scope of the selected store without a
+/// checkout of that repository, for reads and writes alike. A bare slug keeps
+/// the working directory's scope, so nothing changes for anyone who does not
+/// type an address.
+pub fn resolve_selector(selector: &str) -> Result<ResolvedContext> {
+    // Checked on the whole value rather than per segment: `~` is a shell and
+    // path convention, and a value leading with it is a path being passed
+    // where a context belongs.
+    if selector.starts_with('~') {
+        bail!(
+            "Invalid context '{selector}': home-relative paths are not addresses; {SELECTOR_FORM}"
+        );
+    }
+
+    let segments: Vec<&str> = selector.split('/').collect();
+    match segments.as_slice() {
+        [slug] => {
+            validate_segment(selector, slug)?;
+            Ok(ResolvedContext {
+                slug: slug.to_string(),
+                scope: None,
+            })
+        }
+        [org, repo, slug] => {
+            for segment in [org, repo, slug] {
+                validate_segment(selector, segment)?;
+            }
+            Ok(ResolvedContext {
+                slug: slug.to_string(),
+                scope: Some(format!("{org}/{repo}")),
+            })
+        }
+        _ => bail!("Invalid context '{selector}': {SELECTOR_FORM}"),
+    }
+}
+
+/// Validate one segment of a selector, naming the whole value in the error so
+/// the operator sees what they typed rather than the fragment that failed.
+fn validate_segment(selector: &str, segment: &str) -> Result<()> {
+    validate_slug(segment)
+        .map_err(|_| anyhow::anyhow!("Invalid context '{selector}': {SELECTOR_FORM}"))
+}
+
+/// Validate that a context slug is a single, safe path segment.
+///
+/// Path semantics alone are too permissive: a line break would split one
+/// address across two lines wherever cue prints it back, and a whitespace-only
+/// slug would print as a gap that names nothing, so both are rejected on top of
+/// the path rules. An ordinary internal space is left alone: it is a character
+/// of the slug.
 pub fn validate_slug(slug: &str) -> Result<()> {
+    let invalid = || {
+        anyhow::anyhow!(
+            "Invalid context slug '{}': must be a single path segment with no '..', '/', or absolute path",
+            slug
+        )
+    };
+    if slug.contains(['\n', '\r']) || slug.trim().is_empty() {
+        return Err(invalid());
+    }
     let mut comps = Path::new(slug).components();
     match (comps.next(), comps.next()) {
         (Some(Component::Normal(_)), None) => Ok(()),
-        _ => bail!(
-            "Invalid task slug '{}': must be a single path segment with no '..', '/', or absolute path",
-            slug
-        ),
+        _ => Err(invalid()),
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::fs;
-    use tempfile::tempdir;
 
     #[test]
-    fn resolve_scope_returns_master_when_head_absent() {
-        let dir = tempdir().unwrap();
-        let cue_dir = dir.path().join(".cue");
-        fs::create_dir_all(&cue_dir).unwrap();
-        temp_env::with_var_unset("CUE_TASK", || {
-            let res = resolve_scope(&cue_dir, None).unwrap();
-            assert_eq!(res.slug, "master");
-            assert_eq!(res.provenance, ScopeProvenance::Default);
-        });
-    }
-
-    #[test]
-    fn resolve_scope_returns_master_when_head_empty() {
-        let dir = tempdir().unwrap();
-        let cue_dir = dir.path().join(".cue");
-        fs::create_dir_all(&cue_dir).unwrap();
-        fs::write(cue_dir.join("HEAD"), "").unwrap();
-        temp_env::with_var_unset("CUE_TASK", || {
-            let res = resolve_scope(&cue_dir, None).unwrap();
-            assert_eq!(res.slug, "master");
-            assert_eq!(res.provenance, ScopeProvenance::Default);
-        });
-    }
-
-    #[test]
-    fn resolve_scope_returns_slug_from_head() {
-        let dir = tempdir().unwrap();
-        let cue_dir = dir.path().join(".cue");
-        fs::create_dir_all(&cue_dir).unwrap();
-        fs::write(cue_dir.join("HEAD"), "auth-login\n").unwrap();
-        temp_env::with_var_unset("CUE_TASK", || {
-            let res = resolve_scope(&cue_dir, None).unwrap();
-            assert_eq!(res.slug, "auth-login");
-            assert_eq!(res.provenance, ScopeProvenance::Head);
-        });
-    }
-
-    #[test]
-    fn resolve_scope_returns_master_when_head_contains_master() {
-        let dir = tempdir().unwrap();
-        let cue_dir = dir.path().join(".cue");
-        fs::create_dir_all(&cue_dir).unwrap();
-        fs::write(cue_dir.join("HEAD"), "master").unwrap();
-        temp_env::with_var_unset("CUE_TASK", || {
-            let res = resolve_scope(&cue_dir, None).unwrap();
-            assert_eq!(res.slug, "master");
-            assert_eq!(res.provenance, ScopeProvenance::Head);
-        });
-    }
-
-    #[test]
-    fn resolve_scope_flag_wins_over_env_and_head() {
-        let dir = tempdir().unwrap();
-        let cue_dir = dir.path().join(".cue");
-        fs::create_dir_all(&cue_dir).unwrap();
-        fs::write(cue_dir.join("HEAD"), "head-task").unwrap();
-        temp_env::with_var("CUE_TASK", Some("env-task"), || {
-            let res = resolve_scope(&cue_dir, Some("flag-task")).unwrap();
-            assert_eq!(res.slug, "flag-task");
-            assert_eq!(res.provenance, ScopeProvenance::Flag);
-        });
-    }
-
-    #[test]
-    fn resolve_scope_env_wins_over_head() {
-        let dir = tempdir().unwrap();
-        let cue_dir = dir.path().join(".cue");
-        fs::create_dir_all(&cue_dir).unwrap();
-        fs::write(cue_dir.join("HEAD"), "head-task").unwrap();
-        temp_env::with_var("CUE_TASK", Some("env-task"), || {
-            let res = resolve_scope(&cue_dir, None).unwrap();
-            assert_eq!(res.slug, "env-task");
-            assert_eq!(res.provenance, ScopeProvenance::Env);
-        });
-    }
-
-    #[test]
-    fn resolve_scope_empty_env_falls_to_head() {
-        let dir = tempdir().unwrap();
-        let cue_dir = dir.path().join(".cue");
-        fs::create_dir_all(&cue_dir).unwrap();
-        fs::write(cue_dir.join("HEAD"), "head-task").unwrap();
-        temp_env::with_var("CUE_TASK", Some("   "), || {
-            let res = resolve_scope(&cue_dir, None).unwrap();
-            assert_eq!(res.slug, "head-task");
-            assert_eq!(res.provenance, ScopeProvenance::Head);
-        });
-    }
-
-    #[test]
-    fn resolve_scope_env_invalid_slug_errors() {
-        let dir = tempdir().unwrap();
-        let cue_dir = dir.path().join(".cue");
-        fs::create_dir_all(&cue_dir).unwrap();
-        temp_env::with_var("CUE_TASK", Some("odd/path..task"), || {
-            let err = resolve_scope(&cue_dir, None).unwrap_err();
-            assert!(err.to_string().contains("Invalid task slug"));
-        });
-    }
-
-    #[test]
-    fn resolve_scope_flag_invalid_slug_errors() {
-        let dir = tempdir().unwrap();
-        let cue_dir = dir.path().join(".cue");
-        fs::create_dir_all(&cue_dir).unwrap();
-        let err = resolve_scope(&cue_dir, Some("../bad")).unwrap_err();
-        assert!(err.to_string().contains("Invalid task slug"));
-    }
-
-    #[test]
-    fn resolve_scope_head_invalid_slug_errors() {
-        let dir = tempdir().unwrap();
-        let cue_dir = dir.path().join(".cue");
-        fs::create_dir_all(&cue_dir).unwrap();
-        fs::write(cue_dir.join("HEAD"), "../bad").unwrap();
-        temp_env::with_var_unset("CUE_TASK", || {
-            let err = resolve_scope(&cue_dir, None).unwrap_err();
-            assert!(err.to_string().contains("Invalid task slug"));
-        });
-    }
-
-    #[test]
-    fn write_and_read_head_roundtrip() {
-        let dir = tempdir().unwrap();
-        let cue_dir = dir.path().join(".cue");
-        write_head(&cue_dir, "my-task").unwrap();
-        assert_eq!(read_head(&cue_dir).unwrap(), "my-task");
-    }
-
-    #[test]
-    fn validate_slug_accepts_simple_slug() {
+    fn validate_slug_accepts_a_single_segment() {
         assert!(validate_slug("auth-login").is_ok());
-    }
-
-    #[test]
-    fn validate_slug_accepts_master() {
         assert!(validate_slug("master").is_ok());
     }
 
     #[test]
-    fn validate_slug_rejects_parent_dir() {
-        assert!(validate_slug("..").is_err());
-        assert!(validate_slug("../../foo").is_err());
+    fn validate_slug_rejects_unsafe_paths() {
+        for slug in ["", ".", "..", "../../foo", "/etc/x", "/", "a/b"] {
+            assert!(validate_slug(slug).is_err(), "accepted unsafe slug: {slug}");
+        }
     }
 
     #[test]
-    fn validate_slug_rejects_absolute_path() {
-        assert!(validate_slug("/etc/x").is_err());
-        assert!(validate_slug("/").is_err());
+    fn validate_slug_rejects_unprintable_segments() {
+        for slug in [" ", "\t", "auth\nlogin", "auth\rlogin"] {
+            assert!(
+                validate_slug(slug).is_err(),
+                "accepted unprintable slug: {slug:?}"
+            );
+        }
+        assert!(
+            validate_slug("auth login").is_ok(),
+            "an internal space is a character of the slug"
+        );
     }
 
     #[test]
-    fn validate_slug_rejects_multi_segment() {
-        assert!(validate_slug("a/b").is_err());
-    }
-
-    #[test]
-    fn validate_slug_rejects_current_dir() {
-        assert!(validate_slug(".").is_err());
-    }
-
-    #[test]
-    fn validate_slug_rejects_empty() {
-        assert!(validate_slug("").is_err());
+    fn resolve_selector_rejects_shapes_that_are_not_a_context() {
+        for selector in [
+            "",
+            "widgets/release",
+            "acme/widgets/release/spec/index.md",
+            "~/cue/acme/widgets/release",
+        ] {
+            assert!(
+                resolve_selector(selector).is_err(),
+                "accepted non-context selector: {selector}"
+            );
+        }
     }
 }
