@@ -1,5 +1,5 @@
-use anyhow::{Context as _, Result, bail};
-use std::path::{Component, Path};
+use anyhow::{bail, Result};
+use std::path::{Component, Path, PathBuf};
 
 use crate::git;
 
@@ -8,20 +8,62 @@ use crate::git;
 const SELECTOR_FORM: &str = "expected a context slug in the current repository scope \
      or a canonical '<org>/<repo>/<slug>' address";
 
+/// A context selection resolved against the store.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ResolvedContext {
+    /// The context slug.
+    pub slug: String,
+    /// The `<org>/<repo>` scope the selector addressed explicitly. `None`
+    /// means the working directory's repository scope selects it.
+    pub scope: Option<String>,
+}
+
+impl ResolvedContext {
+    /// The canonical address of the selected context: the addressed scope
+    /// when the selector named one, the cwd repository scope otherwise.
+    pub fn address(&self, root: &Path) -> Result<String> {
+        match &self.scope {
+            Some(scope) => Ok(format!("{scope}/{}", self.slug)),
+            None => Ok(format!(
+                "{}/{}",
+                crate::store::repository_scope(root)?.to_string_lossy(),
+                self.slug
+            )),
+        }
+    }
+
+    /// The scope directory of this selection inside the store.
+    pub fn scope_dir(&self, root: &Path, store_root: Option<&Path>) -> Result<PathBuf> {
+        let scope = match &self.scope {
+            Some(scope) => PathBuf::from(scope),
+            None => crate::store::repository_scope(root)?,
+        };
+        Ok(crate::store::root(store_root)?.join(scope))
+    }
+
+    /// The context directory of this selection inside the store.
+    pub fn context_dir(&self, root: &Path, store_root: Option<&Path>) -> Result<PathBuf> {
+        Ok(self.scope_dir(root, store_root)?.join(&self.slug))
+    }
+}
+
 /// Resolve the active context for the central store model.
 ///
 /// Precedence is an explicit context, `$CUE_CONTEXT`, then the current branch's
 /// `branch.<name>.cue-context` Git configuration. Detached HEAD and absent values
 /// leave the context unset.
-pub fn resolve_active_context(root: &Path, explicit: Option<&str>) -> Result<Option<String>> {
+pub fn resolve_active_context(
+    root: &Path,
+    explicit: Option<&str>,
+) -> Result<Option<ResolvedContext>> {
     if let Some(selector) = explicit {
-        return Ok(Some(resolve_selector(root, selector)?));
+        return Ok(Some(resolve_selector(selector)?));
     }
 
     if let Ok(value) = std::env::var("CUE_CONTEXT") {
         let selector = value.trim();
         if !selector.is_empty() {
-            return Ok(Some(resolve_selector(root, selector)?));
+            return Ok(Some(resolve_selector(selector)?));
         }
     }
 
@@ -31,22 +73,22 @@ pub fn resolve_active_context(root: &Path, explicit: Option<&str>) -> Result<Opt
     let Some(selector) = git::get_branch_context(root, &branch) else {
         return Ok(None);
     };
-    Ok(Some(resolve_selector(root, &selector)?))
+    Ok(Some(resolve_selector(&selector)?))
 }
 
-/// Resolve a context selector to the slug it names.
+/// Resolve a context selector to the context it names.
 ///
 /// A selector is either a bare slug or the canonical `<org>/<repo>/<slug>`
 /// address `cue status` prints, so the one identity cue emits for a context can
 /// be handed straight back to any surface that accepts a context.
 ///
-/// The address form is a spelling of the current repository's context, not a
-/// way to reach across scopes. Scope is derived from the working directory and
-/// nothing else selects it: a write filed under another scope would still be
-/// stamped from this repository. An address naming a different scope is
-/// therefore an error rather than a cross-scope selection, and `-C <path>` is
-/// the supported way to address another repository.
-pub fn resolve_selector(root: &Path, selector: &str) -> Result<String> {
+/// The address form is authoritative for destination resolution: it names the
+/// scope the command operates on, matching the cwd scope or not. A canonical
+/// address therefore reaches any scope of the selected store without a
+/// checkout of that repository, for reads and writes alike. A bare slug keeps
+/// the working directory's scope, so nothing changes for anyone who does not
+/// type an address.
+pub fn resolve_selector(selector: &str) -> Result<ResolvedContext> {
     // Checked on the whole value rather than per segment: `~` is a shell and
     // path convention, and a value leading with it is a path being passed
     // where a context belongs.
@@ -60,24 +102,19 @@ pub fn resolve_selector(root: &Path, selector: &str) -> Result<String> {
     match segments.as_slice() {
         [slug] => {
             validate_segment(selector, slug)?;
-            Ok(slug.to_string())
+            Ok(ResolvedContext {
+                slug: slug.to_string(),
+                scope: None,
+            })
         }
         [org, repo, slug] => {
             for segment in [org, repo, slug] {
                 validate_segment(selector, segment)?;
             }
-            let scope = crate::store::repository_scope(root)?;
-            let scope = scope
-                .to_str()
-                .context("repository scope is not valid UTF-8")?;
-            let addressed = format!("{org}/{repo}");
-            if addressed != scope {
-                bail!(
-                    "Context '{selector}' names scope '{addressed}', but the current repository \
-                     scope is '{scope}'; run cue from that repository or pass -C <path>"
-                );
-            }
-            Ok(slug.to_string())
+            Ok(ResolvedContext {
+                slug: slug.to_string(),
+                scope: Some(format!("{org}/{repo}")),
+            })
         }
         _ => bail!("Invalid context '{selector}': {SELECTOR_FORM}"),
     }
@@ -147,7 +184,6 @@ mod tests {
 
     #[test]
     fn resolve_selector_rejects_shapes_that_are_not_a_context() {
-        let cwd = Path::new(".");
         for selector in [
             "",
             "widgets/release",
@@ -155,7 +191,7 @@ mod tests {
             "~/cue/acme/widgets/release",
         ] {
             assert!(
-                resolve_selector(cwd, selector).is_err(),
+                resolve_selector(selector).is_err(),
                 "accepted non-context selector: {selector}"
             );
         }

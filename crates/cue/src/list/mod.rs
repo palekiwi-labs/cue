@@ -225,12 +225,18 @@ pub fn list(root: &Path, opts: ListOptions) -> Result<Vec<CueFile>> {
     // Parse metadata once when either filtering or outputting it requires it.
     let need_metadata = frontmatter || !filters.is_empty();
 
-    // 1. Resolve the current repository's directory in the central store.
-    let store_dir = store::root(store_root.as_deref())?.join(store::repository_scope(root)?);
+    // 1. Resolve the scan base in the central store. A canonical address
+    // names the scope it addresses; with no context the listing widens over
+    // the cwd repository's scope.
+    let active_context = cuelib::head::resolve_active_context(root, context.as_deref())?;
+    let store_dir = match &active_context {
+        Some(resolved) => resolved.scope_dir(root, store_root.as_deref())?,
+        None => store::root(store_root.as_deref())?.join(store::repository_scope(root)?),
+    };
 
     // 2. Determine scan directory/directories
-    let active_context = cuelib::head::resolve_active_context(root, context.as_deref())?;
-    let mut paths = resolve_central_scan_paths(&store_dir, active_context.as_deref())?;
+    let mut paths =
+        resolve_central_scan_paths(&store_dir, active_context.as_ref().map(|r| r.slug.as_str()))?;
 
     // 3. Sort
     paths.sort();

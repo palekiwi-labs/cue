@@ -210,7 +210,11 @@ fn render_rejects_a_nonexistent_context() {
         .args(["render", "context.md", "--context", "missing"])
         .assert()
         .failure()
-        .stderr(predicate::str::contains("Context does not exist: missing"));
+        // The error names the canonical address so the operator sees exactly
+        // which store directory was searched.
+        .stderr(predicate::str::contains(
+            "Context does not exist: acme/widgets/missing",
+        ));
 }
 
 #[test]

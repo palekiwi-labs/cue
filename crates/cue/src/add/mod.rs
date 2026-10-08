@@ -85,7 +85,7 @@ fn add_central_markdown(
     validate_filename(filename)?;
     validate_reference_fields(&frontmatter, &store::root(store_root)?)?;
 
-    let context_dir = central_context_dir(root, context, store_root)?;
+    let (context_dir, resolved) = central_context_dir(root, context, store_root)?;
 
     // A task is the only artifact that can be done, so it is the only type
     // given lifecycle defaults. A task is created deliberately with a defined
@@ -105,9 +105,50 @@ fn add_central_markdown(
     // current repository, but an explicit value wins: a coordination context
     // records evidence about a revision of some other repository.
     if cue_type == "trace" {
+        // A trace selected into another scope documents a revision cue cannot
+        // infer: the cwd revision would misattribute it to the wrong
+        // repository. Both fields must be named explicitly. A checkout with
+        // no derivable scope of its own is foreign to any addressed scope.
+        if let Some(addressed) = &resolved.scope {
+            let same_scope = store::repository_scope(root)
+                .map(|cwd| cwd.to_string_lossy() == addressed.as_str())
+                .unwrap_or(false);
+            if !same_scope {
+                // A named field carries a value: an explicitly empty
+                // `commit_hash=` is an absent revision, not a named one.
+                let missing: Vec<&str> = ["repo_id", "commit_hash"]
+                    .into_iter()
+                    .filter(|key| {
+                        !frontmatter
+                            .iter()
+                            .any(|(existing, value)| existing == key && !value.trim().is_empty())
+                    })
+                    .collect();
+                if !missing.is_empty() {
+                    bail!(
+                        "A trace written into scope '{addressed}' must name its revision \
+                         explicitly; missing: {}. Pass --frontmatter {}.",
+                        missing.join(", "),
+                        missing
+                            .iter()
+                            .map(|key| format!("{key}=<value>"))
+                            .collect::<Vec<_>>()
+                            .join(" --frontmatter ")
+                    );
+                }
+            }
+        }
         if !frontmatter.iter().any(|(key, _)| key == "repo_id") {
-            let scope = store::repository_scope(root)?;
-            frontmatter.push(("repo_id".into(), scope.to_string_lossy().into_owned()));
+            // Reaching the stamp with an addressed scope means the gate
+            // proved it the cwd's own (a foreign one demands repo_id), so
+            // the addressed scope is the stamp: no second scope lookup.
+            let scope = match &resolved.scope {
+                Some(addressed) => addressed.clone(),
+                None => store::repository_scope(root)?
+                    .to_string_lossy()
+                    .into_owned(),
+            };
+            frontmatter.push(("repo_id".into(), scope));
         }
         if !frontmatter.iter().any(|(key, _)| key == "commit_hash") {
             let hash = git::get_short_head_hash(root)
@@ -154,7 +195,7 @@ fn add_central_json(
         store_root,
     } = write;
     validate_filename(filename)?;
-    let context_dir = central_context_dir(root, context, store_root)?;
+    let (context_dir, _resolved) = central_context_dir(root, context, store_root)?;
     let filename = if Path::new(filename).extension().is_none() {
         format!("{filename}.json")
     } else {
@@ -211,7 +252,7 @@ fn add_central_bin(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> 
     }
     validate_filename(filename)?;
 
-    let context_dir = central_context_dir(root, context, store_root)?;
+    let (context_dir, _resolved) = central_context_dir(root, context, store_root)?;
     let file_path = context_dir.join("bin").join(filename);
     write_new_executable(&file_path, force, content)?;
 
@@ -232,7 +273,7 @@ fn add_central_tmp(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> 
     }
     validate_filename(filename)?;
 
-    let context_dir = central_context_dir(root, context, store_root)?;
+    let (context_dir, _resolved) = central_context_dir(root, context, store_root)?;
     let commit_hash = git::get_short_head_hash(root)
         .context("Could not determine HEAD hash. Have you made your first commit yet?")?;
     let tmp_dir = context_dir.join("tmp");
@@ -257,19 +298,24 @@ fn add_central_tmp(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> 
     Ok(file_path)
 }
 
+/// Resolve the destination context directory, requiring both a selected
+/// context and an existing one.
+///
+/// The selection travels with the directory: a canonical address names the
+/// scope it addressed, and the trace stamping rule needs to know whether that
+/// scope differs from the working directory's.
 fn central_context_dir(
     root: &Path,
     context: Option<&str>,
     store_root: Option<&Path>,
-) -> Result<PathBuf> {
-    let context = cuelib::head::resolve_active_context(root, context)?
+) -> Result<(PathBuf, cuelib::head::ResolvedContext)> {
+    let resolved = cuelib::head::resolve_active_context(root, context)?
         .context("No context selected; pass --context <context>")?;
-    let repository_dir = store::root(store_root)?.join(store::repository_scope(root)?);
-    let context_dir = repository_dir.join(&context);
+    let context_dir = resolved.context_dir(root, store_root)?;
     if !context_dir.join("context.md").is_file() {
-        bail!("Context does not exist: {context}");
+        bail!("Context does not exist: {}", resolved.address(root)?);
     }
-    Ok(context_dir)
+    Ok((context_dir, resolved))
 }
 
 fn write_new_file<F>(file_path: &Path, force: bool, content: F) -> Result<()>

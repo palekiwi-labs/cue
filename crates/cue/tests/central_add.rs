@@ -513,6 +513,206 @@ fn add_honors_explicit_trace_revision_metadata() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// A context under a foreign scope, planted directly in the store: no
+/// checkout of that repository exists.
+fn plant_guest_context(env: &helpers::TestEnv) -> anyhow::Result<()> {
+    let guest = env.cue_store().join("other/repo/guest");
+    std::fs::create_dir_all(&guest)?;
+    std::fs::write(
+        guest.join("context.md"),
+        "---\ntitle: Foreign\nkind: work\ncreated_at: 1\n---\n",
+    )?;
+    Ok(())
+}
+
+/// A trace written into another scope documents a revision of some other
+/// repository, which cue cannot infer: stamping from the cwd would
+/// misattribute it. Both revision fields must be named explicitly.
+#[test]
+fn a_cross_scope_trace_requires_explicit_revision_metadata() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    plant_guest_context(&env)?;
+
+    env.command()
+        .args([
+            "add",
+            "handoff",
+            "Observed output",
+            "--type",
+            "trace",
+            "--context",
+            "other/repo/guest",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("repo_id"))
+        .stderr(predicate::str::contains("commit_hash"));
+
+    env.command()
+        .args([
+            "add",
+            "handoff",
+            "Observed output",
+            "--type",
+            "trace",
+            "--context",
+            "other/repo/guest",
+            "--frontmatter",
+            "repo_id=other/repo",
+            "--frontmatter",
+            "commit_hash=0badcafe",
+        ])
+        .assert()
+        .success();
+
+    let metadata = read_frontmatter(&env.cue_store().join("other/repo/guest/trace/handoff.md"))?;
+    assert_eq!(metadata["repo_id"], "other/repo");
+    assert_eq!(metadata["commit_hash"], "0badcafe");
+
+    Ok(())
+}
+
+/// A checkout with no derivable scope is foreign to any addressed scope,
+/// and a trace naming its revision explicitly is complete without the cwd
+/// repository: an origin-less checkout neither blocks the write nor masks
+/// the actionable missing-field message.
+#[test]
+fn a_cross_scope_trace_needs_no_cwd_origin() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.remove_origin();
+    plant_guest_context(&env)?;
+
+    env.command()
+        .args([
+            "add",
+            "handoff",
+            "Observed output",
+            "--type",
+            "trace",
+            "--context",
+            "other/repo/guest",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("missing: repo_id, commit_hash"));
+
+    env.command()
+        .args([
+            "add",
+            "handoff",
+            "Observed output",
+            "--type",
+            "trace",
+            "--context",
+            "other/repo/guest",
+            "--frontmatter",
+            "repo_id=other/repo",
+            "--frontmatter",
+            "commit_hash=0badcafe",
+        ])
+        .assert()
+        .success();
+
+    let metadata = read_frontmatter(&env.cue_store().join("other/repo/guest/trace/handoff.md"))?;
+    assert_eq!(metadata["repo_id"], "other/repo");
+    assert_eq!(metadata["commit_hash"], "0badcafe");
+
+    Ok(())
+}
+
+/// An explicitly empty value does not name a revision: the gate asks for
+/// the field rather than writing `commit_hash: ''` into a foreign trace.
+#[test]
+fn an_empty_revision_value_does_not_name_a_revision() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    plant_guest_context(&env)?;
+
+    env.command()
+        .args([
+            "add",
+            "handoff",
+            "Observed output",
+            "--type",
+            "trace",
+            "--context",
+            "other/repo/guest",
+            "--frontmatter",
+            "repo_id=other/repo",
+            "--frontmatter",
+            "commit_hash=",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("missing: commit_hash"));
+
+    Ok(())
+}
+
+/// A canonical address naming the cwd scope is a spelling of the same
+/// context, not a foreign one: the trace is stamped from the repository
+/// exactly as a bare slug would be.
+#[test]
+fn a_same_scope_address_still_stamps_trace_revisions() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "release"])
+        .assert()
+        .success();
+
+    env.command()
+        .args([
+            "add",
+            "smoke-run",
+            "Observed output",
+            "--type",
+            "trace",
+            "--context",
+            "acme/widgets/release",
+        ])
+        .assert()
+        .success();
+
+    let path = env
+        .cue_store()
+        .join("acme/widgets/release/trace/smoke-run.md");
+    let metadata = read_frontmatter(&path)?;
+    assert_eq!(metadata["repo_id"], "acme/widgets");
+    assert_eq!(metadata["commit_hash"], head_hash(env.root())?);
+
+    Ok(())
+}
+
+/// The error names only the field that is actually missing, so a caller
+/// fixing a partial submission is told exactly what to add.
+#[test]
+fn a_cross_scope_trace_names_only_the_missing_field() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    plant_guest_context(&env)?;
+
+    env.command()
+        .args([
+            "add",
+            "handoff",
+            "Observed output",
+            "--type",
+            "trace",
+            "--context",
+            "other/repo/guest",
+            "--frontmatter",
+            "repo_id=other/repo",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("missing: commit_hash"));
+
+    Ok(())
+}
+
 /// A bin artifact is a script, so the fixtures are scripts. The shebang is
 /// the portable `/usr/bin/env` form because cue stores what it is given.
 const SCRIPT: &str = "#!/usr/bin/env bash\nset -euo pipefail\necho ready\n";

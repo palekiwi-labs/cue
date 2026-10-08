@@ -52,14 +52,15 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
 
     // 2. Resolve the context in the central store. A log entry is a memory
     // and communication event, not a revision-correlated artifact, so no
-    // repository revision is read or stamped here.
-    let context = cuelib::head::resolve_active_context(root, context.as_deref())?
+    // repository revision is read or stamped here. A canonical address names
+    // the scope it addresses; a bare slug keeps the cwd scope.
+    let resolved = cuelib::head::resolve_active_context(root, context.as_deref())?
         .context("No context selected; pass --context <context>")?;
     let store_root = store::root(store_root.as_deref())?;
-    let repository_dir = store_root.join(store::repository_scope(root)?);
-    let context_dir = repository_dir.join(&context);
+    let repository_dir = resolved.scope_dir(root, Some(store_root.as_path()))?;
+    let context_dir = resolved.context_dir(root, Some(store_root.as_path()))?;
     if !context_dir.join("context.md").is_file() {
-        bail!("Context does not exist: {context}");
+        bail!("Context does not exist: {}", resolved.address(root)?);
     }
 
     if let Some(trace) = &entry.trace {
@@ -67,7 +68,7 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
             trace,
             &store_root,
             &repository_dir,
-            &context,
+            &resolved.slug,
         )?);
     }
 
@@ -109,13 +110,11 @@ pub fn list_entries(
     context: Option<&str>,
     store_root: Option<&Path>,
 ) -> Result<Vec<StoredLogEntry>> {
-    let context = cuelib::head::resolve_active_context(root, context)?
+    let resolved = cuelib::head::resolve_active_context(root, context)?
         .context("No context selected; pass --context <context>")?;
-    let context_dir = store::root(store_root)?
-        .join(store::repository_scope(root)?)
-        .join(&context);
+    let context_dir = resolved.context_dir(root, store_root)?;
     if !context_dir.join("context.md").is_file() {
-        bail!("Context does not exist: {context}");
+        bail!("Context does not exist: {}", resolved.address(root)?);
     }
 
     let log_dir = context_dir.join("log");

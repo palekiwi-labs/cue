@@ -1,5 +1,4 @@
 use anyhow::{Context, Result, bail};
-use cuelib::store;
 use std::path::{Path, PathBuf};
 
 pub struct RenderOptions {
@@ -15,13 +14,11 @@ fn resolve_context_dir(
     context: Option<&str>,
     store_root: Option<&Path>,
 ) -> Result<PathBuf> {
-    let context = cuelib::head::resolve_active_context(root, context)?
+    let resolved = cuelib::head::resolve_active_context(root, context)?
         .context("No context selected; pass --context <context>")?;
-    let context_dir = store::root(store_root)?
-        .join(store::repository_scope(root)?)
-        .join(&context);
+    let context_dir = resolved.context_dir(root, store_root)?;
     if !context_dir.join("context.md").is_file() {
-        bail!("Context does not exist: {context}");
+        bail!("Context does not exist: {}", resolved.address(root)?);
     }
     Ok(context_dir)
 }
