@@ -281,6 +281,49 @@ fn a_run_with_no_response_writes_no_trace_but_still_records_the_run() {
 }
 
 #[test]
+fn a_run_cut_short_after_a_tool_use_message_promotes_no_response() {
+    let sandbox = Sandbox::new();
+    sandbox.global_manifest(MANIFEST);
+    sandbox.init_git_repo("git@github.com:acme/widgets.git");
+    sandbox.context("acme/widgets/auth");
+    sandbox.install_pi(concat!(
+        "#!/usr/bin/env bash\n",
+        "[[ \"${1:-}\" == --version ]] && { echo 'fake-pi 9.9.9'; exit 0; }\n",
+        "printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",",
+        "\"stopReason\":\"toolUse\",\"content\":[{\"type\":\"text\",\"text\":\"Let me look\"},",
+        "{\"type\":\"toolCall\",\"id\":\"t1\",\"name\":\"read\",\"arguments\":{}}],",
+        "\"usage\":{\"input\":5,\"output\":7,\"cost\":{\"total\":0.25}}}}'\n",
+        "exit 3\n",
+    ));
+
+    let output = sandbox
+        .cmd()
+        .env("CUE_AGENT_CUE_BIN", sandbox.fake_cue())
+        .args(["run", "--json"])
+        .arg(
+            json!({"tasks": [{"agent": "explore", "prompt": "hello",
+                              "context": "acme/widgets/auth"}]})
+            .to_string(),
+        )
+        .output()
+        .expect("run cue-agent");
+    assert_eq!(output.status.code(), Some(1), "{output:?}");
+
+    let receipt = receipt(&output.stdout);
+    let run = run_of(&receipt, "explore");
+    assert_eq!(run["outcome"], "failed", "{run}");
+    assert_eq!(run["response"], "", "{run}");
+    assert_eq!(run["trace"], serde_json::Value::Null, "{run}");
+    assert_eq!(run["turns"], 1, "{run}");
+    assert_eq!(run["tokens_input"], 5, "{run}");
+    assert_eq!(run["tokens_output"], 7, "{run}");
+    assert!(
+        !sandbox.harness_log().join("cue.argv").exists(),
+        "a tool-use preamble is never promoted into a trace"
+    );
+}
+
+#[test]
 fn the_trace_lands_in_the_store_with_its_frontmatter_stamped() {
     let sandbox = Sandbox::new();
     sandbox.global_manifest(MANIFEST);

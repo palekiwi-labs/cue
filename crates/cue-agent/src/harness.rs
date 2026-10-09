@@ -325,7 +325,14 @@ fn absorb_line(capture: &mut Capture, line: &str) {
                 .get("errorMessage")
                 .and_then(|v| v.as_str())
                 .map(str::to_owned);
-            capture.response = assistant_text(message).unwrap_or_default();
+            // A tool-use message is followed by another turn, so its text is
+            // a preamble, not an answer, even when the run ends before that
+            // turn arrives.
+            capture.response = if capture.stop_reason.as_deref() == Some("toolUse") {
+                String::new()
+            } else {
+                assistant_text(message).unwrap_or_default()
+            };
         }
         _ => {}
     }
@@ -431,6 +438,48 @@ mod tests {
         )
         .unwrap();
         assert!(capture(&path).response.is_empty());
+    }
+
+    #[test]
+    fn a_tool_use_message_is_not_a_final_response_and_clears_an_earlier_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        let message = |stop: &str, text: &str, input: u64| {
+            format!(
+                "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"stopReason\":\"{stop}\",\
+                 \"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}},{{\"type\":\"toolCall\",\"id\":\"t\",\"name\":\"read\",\"arguments\":{{}}}}],\
+                 \"usage\":{{\"input\":{input},\"output\":1,\"cost\":{{\"total\":0.5}}}}}}}}\n"
+            )
+        };
+        std::fs::write(
+            &path,
+            message("stop", "earlier", 1) + &message("toolUse", "Let me look", 2),
+        )
+        .unwrap();
+
+        let cut_short = capture(&path);
+        assert_eq!(cut_short.response, "", "neither preamble nor earlier text");
+        assert_eq!(cut_short.stop_reason.as_deref(), Some("toolUse"));
+        assert_eq!(cut_short.turns, 2);
+        assert_eq!(cut_short.tokens_input, 3);
+        assert_eq!(cut_short.tokens_output, 2);
+        assert_eq!(cut_short.cost_usd, 1.0);
+
+        use std::io::Write;
+        write!(
+            std::fs::OpenOptions::new()
+                .append(true)
+                .open(&path)
+                .unwrap(),
+            "{}",
+            message("stop", "final", 4)
+        )
+        .unwrap();
+        let finished = capture(&path);
+        assert_eq!(finished.response, "final");
+        assert_eq!(finished.stop_reason.as_deref(), Some("stop"));
+        assert_eq!(finished.turns, 3);
+        assert_eq!(finished.tokens_input, 7);
     }
 
     fn agent() -> Agent {
