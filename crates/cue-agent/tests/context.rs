@@ -280,26 +280,31 @@ fn a_run_with_no_response_writes_no_trace_but_still_records_the_run() {
     );
 }
 
-#[test]
-fn a_run_cut_short_after_a_tool_use_message_promotes_no_response() {
+/// Run a fake pi that emits one tool-use message with text, then `ending`,
+/// and return the receipt's run and the sandbox.
+fn run_ending_on_a_tool_call(ending: &str, extra_args: &[&str]) -> (Sandbox, serde_json::Value) {
     let sandbox = Sandbox::new();
     sandbox.global_manifest(MANIFEST);
     sandbox.init_git_repo("git@github.com:acme/widgets.git");
     sandbox.context("acme/widgets/auth");
-    sandbox.install_pi(concat!(
-        "#!/usr/bin/env bash\n",
-        "[[ \"${1:-}\" == --version ]] && { echo 'fake-pi 9.9.9'; exit 0; }\n",
-        "printf '%s\\n' '{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",",
-        "\"stopReason\":\"toolUse\",\"content\":[{\"type\":\"text\",\"text\":\"Let me look\"},",
-        "{\"type\":\"toolCall\",\"id\":\"t1\",\"name\":\"read\",\"arguments\":{}}],",
-        "\"usage\":{\"input\":5,\"output\":7,\"cost\":{\"total\":0.25}}}}'\n",
-        "exit 3\n",
+    sandbox.install_pi(&format!(
+        concat!(
+            "#!/usr/bin/env bash\n",
+            "[[ \"${{1:-}}\" == --version ]] && {{ echo 'fake-pi 9.9.9'; exit 0; }}\n",
+            "printf '%s\\n' '{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",",
+            "\"stopReason\":\"toolUse\",\"content\":[{{\"type\":\"text\",\"text\":\"Let me look\"}},",
+            "{{\"type\":\"toolCall\",\"id\":\"t1\",\"name\":\"read\",\"arguments\":{{}}}}],",
+            "\"usage\":{{\"input\":5,\"output\":7,\"cost\":{{\"total\":0.25}}}}}}}}'\n",
+            "{}\n",
+        ),
+        ending
     ));
 
     let output = sandbox
         .cmd()
         .env("CUE_AGENT_CUE_BIN", sandbox.fake_cue())
         .args(["run", "--json"])
+        .args(extra_args)
         .arg(
             json!({"tasks": [{"agent": "explore", "prompt": "hello",
                               "context": "acme/widgets/auth"}]})
@@ -307,20 +312,40 @@ fn a_run_cut_short_after_a_tool_use_message_promotes_no_response() {
         )
         .output()
         .expect("run cue-agent");
-    assert_eq!(output.status.code(), Some(1), "{output:?}");
+    let run = run_of(&receipt(&output.stdout), "explore").clone();
+    (sandbox, run)
+}
 
-    let receipt = receipt(&output.stdout);
-    let run = run_of(&receipt, "explore");
-    assert_eq!(run["outcome"], "failed", "{run}");
-    assert_eq!(run["response"], "", "{run}");
-    assert_eq!(run["trace"], serde_json::Value::Null, "{run}");
+#[test]
+fn a_run_cut_short_after_a_tool_use_message_promotes_no_response() {
+    for (ending, args, outcome) in [
+        ("exit 3", &[][..], "failed"),
+        ("exec sleep 30", &["--timeout", "1"][..], "timeout"),
+    ] {
+        let (sandbox, run) = run_ending_on_a_tool_call(ending, args);
+        assert_eq!(run["outcome"], outcome, "{run}");
+        assert_eq!(run["response"], "", "{run}");
+        assert_eq!(run["trace"], serde_json::Value::Null, "{run}");
+        assert_eq!(run["turns"], 1, "{run}");
+        assert_eq!(run["tokens_input"], 5, "{run}");
+        assert_eq!(run["tokens_output"], 7, "{run}");
+        assert!(
+            !sandbox.harness_log().join("cue.argv").exists(),
+            "a tool-use preamble is never promoted into a trace ({outcome})"
+        );
+    }
+}
+
+#[test]
+fn a_run_a_tool_call_terminates_promotes_that_message() {
+    let (sandbox, run) = run_ending_on_a_tool_call("exit 0", &[]);
+    assert_eq!(run["outcome"], "completed", "{run}");
+    assert_eq!(run["error"], serde_json::Value::Null, "{run}");
+    assert_eq!(run["response"], "Let me look", "{run}");
+    assert!(run["trace"].is_string(), "{run}");
     assert_eq!(run["turns"], 1, "{run}");
-    assert_eq!(run["tokens_input"], 5, "{run}");
-    assert_eq!(run["tokens_output"], 7, "{run}");
-    assert!(
-        !sandbox.harness_log().join("cue.argv").exists(),
-        "a tool-use preamble is never promoted into a trace"
-    );
+    let body = std::fs::read_to_string(sandbox.harness_log().join("cue.body")).expect("body");
+    assert_eq!(body, "Let me look");
 }
 
 #[test]

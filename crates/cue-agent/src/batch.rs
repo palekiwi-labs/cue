@@ -246,7 +246,7 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
             tokens_input: capture.tokens_input,
             tokens_output: capture.tokens_output,
             cost_usd: capture.cost_usd,
-            response: capture.response.clone(),
+            response: capture.final_response(result == Outcome::Completed),
             error,
             stderr_excerpt,
             events_malformed: capture.malformed_lines,

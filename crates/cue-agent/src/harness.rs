@@ -226,7 +226,12 @@ pub fn argv(
 /// What one run's `events.jsonl` yielded.
 #[derive(Debug, Default, Clone)]
 pub struct Capture {
+    /// Text of the last assistant message, when that message made no tool
+    /// call.
     pub response: String,
+    /// Text of the last assistant message, when that message made a tool
+    /// call. Whether it is the answer depends on how the run ended.
+    pub tool_call_response: Option<String>,
     pub turns: u64,
     pub tokens_input: u64,
     pub tokens_output: u64,
@@ -240,6 +245,21 @@ pub struct Capture {
     pub malformed_lines: u64,
     pub oversized_lines: u64,
     pub truncated: bool,
+}
+
+impl Capture {
+    /// The run's final response, given whether it completed.
+    ///
+    /// A message that makes tool calls is normally followed by another turn,
+    /// but a tool can end the run instead, and then that message is the last
+    /// thing the model said. Only a completed run shows that no turn was cut
+    /// off, so only it may promote such a message.
+    pub fn final_response(&self, completed: bool) -> String {
+        match &self.tool_call_response {
+            Some(text) if completed => text.clone(),
+            _ => self.response.clone(),
+        }
+    }
 }
 
 /// Read a finished run's events.
@@ -325,14 +345,17 @@ fn absorb_line(capture: &mut Capture, line: &str) {
                 .get("errorMessage")
                 .and_then(|v| v.as_str())
                 .map(str::to_owned);
-            // A tool-use message is followed by another turn, so its text is
-            // a preamble, not an answer, even when the run ends before that
-            // turn arrives.
-            capture.response = if capture.stop_reason.as_deref() == Some("toolUse") {
-                String::new()
+            // pi continues after any message carrying tool calls, whatever its
+            // stop reason, unless a tool terminates the run. Which happened is
+            // known only from how the run ended, so the text is held apart.
+            let text = assistant_text(message).unwrap_or_default();
+            if has_tool_call(message) || capture.stop_reason.as_deref() == Some("toolUse") {
+                capture.response = String::new();
+                capture.tool_call_response = Some(text);
             } else {
-                assistant_text(message).unwrap_or_default()
-            };
+                capture.response = text;
+                capture.tool_call_response = None;
+            }
         }
         _ => {}
     }
@@ -348,6 +371,17 @@ fn assistant_text(message: &serde_json::Value) -> Option<String> {
             .filter_map(|part| part.get("text").and_then(|v| v.as_str()))
             .collect(),
     )
+}
+
+fn has_tool_call(message: &serde_json::Value) -> bool {
+    message
+        .get("content")
+        .and_then(|content| content.as_array())
+        .is_some_and(|parts| {
+            parts
+                .iter()
+                .any(|part| part.get("type").and_then(|v| v.as_str()) == Some("toolCall"))
+        })
 }
 
 fn number(value: &serde_json::Value, key: &str) -> u64 {
@@ -440,46 +474,88 @@ mod tests {
         assert!(capture(&path).response.is_empty());
     }
 
-    #[test]
-    fn a_tool_use_message_is_not_a_final_response_and_clears_an_earlier_one() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("events.jsonl");
-        let message = |stop: &str, text: &str, input: u64| {
-            format!(
-                "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"stopReason\":\"{stop}\",\
-                 \"content\":[{{\"type\":\"text\",\"text\":\"{text}\"}},{{\"type\":\"toolCall\",\"id\":\"t\",\"name\":\"read\",\"arguments\":{{}}}}],\
-                 \"usage\":{{\"input\":{input},\"output\":1,\"cost\":{{\"total\":0.5}}}}}}}}\n"
-            )
-        };
-        std::fs::write(
-            &path,
-            message("stop", "earlier", 1) + &message("toolUse", "Let me look", 2),
+    const TOOL_CALL: &str = r#"{"type":"toolCall","id":"t","name":"read","arguments":{}}"#;
+
+    /// One assistant `message_end` line with the given content parts.
+    fn message_end(stop: &str, error: Option<&str>, parts: &[String], input: u64) -> String {
+        let error = error
+            .map(|error| format!("\"errorMessage\":\"{error}\","))
+            .unwrap_or_default();
+        format!(
+            "{{\"type\":\"message_end\",\"message\":{{\"role\":\"assistant\",\"stopReason\":\"{stop}\",{error}\
+             \"content\":[{}],\"usage\":{{\"input\":{input},\"output\":1,\"cost\":{{\"total\":0.5}}}}}}}}\n",
+            parts.join(",")
         )
-        .unwrap();
+    }
 
-        let cut_short = capture(&path);
-        assert_eq!(cut_short.response, "", "neither preamble nor earlier text");
-        assert_eq!(cut_short.stop_reason.as_deref(), Some("toolUse"));
-        assert_eq!(cut_short.turns, 2);
-        assert_eq!(cut_short.tokens_input, 3);
-        assert_eq!(cut_short.tokens_output, 2);
-        assert_eq!(cut_short.cost_usd, 1.0);
+    fn text(text: &str) -> String {
+        format!("{{\"type\":\"text\",\"text\":\"{text}\"}}")
+    }
 
+    fn append(path: &Path, line: &str) {
         use std::io::Write;
         write!(
-            std::fs::OpenOptions::new()
-                .append(true)
-                .open(&path)
-                .unwrap(),
-            "{}",
-            message("stop", "final", 4)
+            std::fs::OpenOptions::new().append(true).open(path).unwrap(),
+            "{line}"
         )
         .unwrap();
+    }
+
+    #[test]
+    fn a_message_with_tool_calls_is_final_only_for_a_completed_run() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        std::fs::write(
+            &path,
+            message_end("error", Some("old"), &[text("earlier")], 1)
+                + &message_end("toolUse", None, &[text("Let me look"), TOOL_CALL.into()], 2),
+        )
+        .unwrap();
+
+        let ended = capture(&path);
+        assert_eq!(ended.response, "", "an earlier message never leaks");
+        assert_eq!(ended.final_response(false), "", "cut short: a preamble");
+        assert_eq!(
+            ended.final_response(true),
+            "Let me look",
+            "a terminating tool call"
+        );
+        assert_eq!(ended.stop_reason.as_deref(), Some("toolUse"));
+        assert_eq!(
+            ended.error_message, None,
+            "a later message clears the error"
+        );
+        assert_eq!(ended.turns, 2);
+        assert_eq!(ended.tokens_input, 3);
+        assert_eq!(ended.tokens_output, 2);
+        assert_eq!(ended.cost_usd, 1.0);
+
+        append(&path, &message_end("stop", None, &[text("final")], 4));
         let finished = capture(&path);
         assert_eq!(finished.response, "final");
+        assert_eq!(finished.final_response(false), "final");
+        assert_eq!(finished.final_response(true), "final");
         assert_eq!(finished.stop_reason.as_deref(), Some("stop"));
         assert_eq!(finished.turns, 3);
         assert_eq!(finished.tokens_input, 7);
+    }
+
+    #[test]
+    fn tool_call_content_marks_a_message_non_final_whatever_its_stop_reason() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        std::fs::write(
+            &path,
+            message_end("stop", None, &[text("earlier")], 1)
+                + &message_end("length", None, &[text("Truncated"), TOOL_CALL.into()], 1),
+        )
+        .unwrap();
+
+        let ended = capture(&path);
+        assert_eq!(ended.response, "");
+        assert_eq!(ended.final_response(false), "");
+        assert_eq!(ended.final_response(true), "Truncated");
+        assert_eq!(ended.stop_reason.as_deref(), Some("length"));
     }
 
     fn agent() -> Agent {
