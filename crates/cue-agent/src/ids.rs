@@ -44,12 +44,6 @@ pub fn run_id(batch_id: &str, agent: &str, index: usize) -> String {
     format!("{batch_id}-{}-{index}", sanitize(agent))
 }
 
-/// The short form used in the trace filename, derived deterministically from
-/// the run id so the same run always names the same trace.
-pub fn short(run_id: &str) -> String {
-    format!("{:08x}", fnv1a64(run_id.as_bytes()) as u32)
-}
-
 /// Reduce an arbitrary name to an id-safe segment.
 pub fn sanitize(name: &str) -> String {
     let mut out = String::with_capacity(name.len());
@@ -111,13 +105,5 @@ mod tests {
         }
         assert!(is_valid("a"));
         assert!(is_valid("a.b_c-d1"));
-    }
-
-    #[test]
-    fn the_short_form_is_derived_from_the_run_id() {
-        let short = short("20260918-120301-3f9a2b-explore-1");
-        assert_eq!(short.len(), 8);
-        assert_eq!(short, super::short("20260918-120301-3f9a2b-explore-1"));
-        assert_ne!(short, super::short("20260918-120301-3f9a2b-explore-2"));
     }
 }

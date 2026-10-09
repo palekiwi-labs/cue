@@ -331,11 +331,16 @@ like any other variable, and a task controls it through `env`, for example
 `"env": { "CUE_CONTEXT": null }`. Context selection is also independent of
 the task's cwd.
 
-Current limitation: the trace is written by running `cue -C <task cwd> add`,
-which writes only into the scope of the repository at the task's cwd and
-stamps that repository's revision. A destination context in another scope is
-not redirected: the write fails and is reported as `trace_error`. Cross-scope
-capture is follow-up work.
+The trace is written by running `cue -C <execution directory> add` with the
+canonical destination address, so the destination may lie in any scope,
+independently of the repository the task ran in. Before writing, and before
+an ephemeral checkout is removed, `cue-agent` reads the execution directory's
+repository scope (from its `origin`) and short `HEAD` revision and passes them
+explicitly as `repo_id` and `commit_hash`. cue requires both for a trace
+written into a scope other than the execution directory's own; when either
+cannot be read (no repository, no `origin`, no commit), a cross-scope write is
+refused and reported as `trace_error` rather than stamped with an invented
+revision. In the same scope, cue stamps whatever was not supplied.
 
 ### Worktrees
 
@@ -449,18 +454,20 @@ There is no queue, so nothing is silently split, truncated or deferred.
 - `1` — the batch ran but at least one run failed, timed out or was aborted
   (including a task whose `pi` could not be found or whose worktree could not
   be prepared), or a trace, receipt or index write or a worktree cleanup
-  failed. The receipt is still printed. Execution outcome and
+  failed. A local run record (the batch or run directory, `prompt.md`,
+  `system-prompt.md` or `manifest.json`) that cannot be written before launch
+  fails only its own task, which is not launched and reports the reason in
+  `error`; anything it created is cleaned up and the other tasks still run.
+  When the state directory itself is unavailable, every task fails this way.
+  The receipt is still printed. Execution outcome and
   storage outcome stay separate: a completed run whose trace failed keeps
   `outcome: "completed"` and reports `trace_error`; storage failures appear in
   `persistence_errors`. A failed receipt write can only be reported in
   stdout; an index error is also recorded in the receipt file when writable.
 - `2` — the request was rejected before any run launched: bad arguments, an
   invalid specification, an unknown agent, an oversized batch, an unreadable
-  manifest, an invalid capture context, an unresolvable worktree request.
-  Failure to create the local run record before launch also ends here, after
-  every worktree already created for the batch has been removed. A diagnostic
-  prefixed
-  `cue-agent:` goes to stderr and nothing is printed on stdout, with or
+  manifest, an invalid capture context, an unresolvable worktree request. A
+  diagnostic prefixed `cue-agent:` goes to stderr and nothing is printed on stdout, with or
   without `--json`.
 
 ### Interrupts and deadlines
@@ -495,19 +502,26 @@ concatenated in order, without adding separators or including thinking/tool
 blocks.
 
 ```
-<org>/<repo>/<context>/trace/agent/<label-slug>-<agent>-<short-run-id>.md
+<org>/<repo>/<context>/trace/agent/<batch-label-slug>-<batch-id>/<position>-<agent>.md
 ```
 
-The label is the task's label, else the batch label, else `run`. This naming
-is the current one; the batch-qualified, position-numbered naming and revised
-metadata described in the program specification are follow-up work.
+Every task of a batch shares one directory in whichever context it captures
+to. Its prefix is the slugged batch label, or `batch` when there is no batch
+label or the label has no letters or digits; task labels never choose the
+directory. `<position>` is the task's one-based position in the original
+`tasks` array, zero-padded to three digits, so repeated agents stay apart and
+names follow specification order rather than completion order. For example,
+the second task of an unlabelled batch running `explore` writes
+`agent/batch-20260918-120301-3f9a2b/002-explore.md`.
 
 Frontmatter carries `kind: agent-run`, the agent, model, harness and harness
-version, `description` (the effective label), the outcome, exit code and
+version, `description` (the task's effective label: its own, else the batch
+label), `batch_label` when the batch has one, the outcome, exit code and
 duration, usage (`turns`, `tokens_input`, `tokens_output`, `cost_usd`) and
-`run_id`, `batch_id` and `run_path` as forward pointers into plane 2. cue
-stamps `repo_id` and `commit_hash` from the task's cwd. The prompt is
-deliberately not frontmatter: prompts are long and multi-line, and
+`run_id`, `batch_id` and `run_path` as forward pointers into plane 2.
+`repo_id` and `commit_hash` describe the repository and revision the run
+executed, as read from its execution directory (see "Capture context"). The
+prompt is deliberately not frontmatter: prompts are long and multi-line, and
 `prompt.md` in the run directory holds it verbatim.
 
 ### Plane 2: the run directory
@@ -590,7 +604,7 @@ names its own destination.
       "events_oversized": 0,
       "events_truncated": false,
       "run_path": ".../20260918-120301-3f9a2b/explore-1",
-      "trace": "acme/widgets/cue-agent-runtime-mvp/trace/agent/review-the-branch-diff-explore-4f1a9c02.md",
+      "trace": "acme/widgets/cue-agent-runtime-mvp/trace/agent/review-the-branch-diff-20260918-120301-3f9a2b/001-explore.md",
       "trace_error": null,
       "persistence_errors": [],
       "cleanup_errors": []
@@ -646,7 +660,5 @@ through `env`, like any other variable.
 
 No `Harness` trait, no streaming protocol, no queue, no session-wide admission
 tracking, no dry-run, no harness session persistence (`--no-session` is
-always passed) and no cue-review integration. Cross-scope trace capture and
-the revised trace naming and metadata are pending follow-up
-work rather than deferred indefinitely. Each is recorded in the design notes,
-not forgotten.
+always passed) and no cue-review integration. Each is recorded in the design
+notes, not forgotten.

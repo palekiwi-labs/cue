@@ -11,7 +11,7 @@ use crate::run_spec::{self, Bases, MAX_TASKS, ResolvedBatch};
 use crate::state;
 use crate::trace;
 use crate::worktree;
-use anyhow::{Context, Result, bail};
+use anyhow::{Context, Result, anyhow, bail};
 use std::io::{Read, Seek, SeekFrom};
 use std::path::{Path, PathBuf};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
@@ -101,6 +101,8 @@ fn read_specification(args: &RunArgs, invocation: &Path) -> Result<(String, Path
 /// One task, with its run directory written and its launch decided.
 struct Prepared {
     plan: RunPlan,
+    /// One-based position in the original tasks array.
+    position: usize,
     agent: Agent,
     run_path: PathBuf,
     context: Option<String>,
@@ -114,6 +116,9 @@ struct Prepared {
     worktree: Option<worktree::Owned>,
     /// Resources a failed preparation could not remove.
     cleanup_errors: Vec<String>,
+    /// Local records that could not be written for a task already failing
+    /// for another reason.
+    record_errors: Vec<String>,
     /// The request record as written before launch, completed with the
     /// checkout's final revision before the checkout may be removed.
     manifest: serde_json::Value,
@@ -127,6 +132,8 @@ type Probes = Vec<((PathBuf, PathBuf, harness::EnvOverlay), Option<String>)>;
 struct Records<'a> {
     batch_id: &'a str,
     batch_path: &'a Path,
+    /// Why the batch directory could not be created, if it could not.
+    unavailable: Option<&'a str>,
     now_secs: i64,
     store_root: Option<&'a Path>,
     timeout_secs: Option<u64>,
@@ -134,8 +141,9 @@ struct Records<'a> {
 }
 
 /// Everything after admission. Preparation and launch failures are isolated
-/// per task. Local record preparation errors still fail the whole batch, but
-/// only after removing every worktree already created for it.
+/// per task, including a local run record that cannot be written: that task
+/// fails before launch, anything it created is cleaned up at finalization,
+/// and the others continue.
 fn run(admitted: Admitted) -> Result<BatchOutcome> {
     let Admitted {
         request,
@@ -151,16 +159,26 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
     let now = SystemTime::now();
     let now_secs = now.duration_since(UNIX_EPOCH).unwrap_or_default().as_secs() as i64;
     let batch_id = ids::batch_id(now);
-    let agent_root = state::agent_root()?;
-    state::private_dir(&agent_root)?;
-    let batch_path = state::batch_dir(&agent_root, now_secs, &batch_id);
-    state::private_dir(&batch_path)
-        .with_context(|| format!("Could not create {}", batch_path.display()))?;
+    // Without a batch directory no task has a record to run from; every task
+    // then fails preparation and the batch still reports its results.
+    let agent_root = state::agent_root();
+    let batch_path = agent_root
+        .as_ref()
+        .map(|root| state::batch_dir(root, now_secs, &batch_id))
+        .unwrap_or_default();
+    let unavailable = match &agent_root {
+        Err(err) => Some(format!("{err:#}")),
+        Ok(root) => state::private_dir(root)
+            .and_then(|()| state::private_dir(&batch_path))
+            .err()
+            .map(|err| format!("could not create {}: {err}", batch_path.display())),
+    };
 
     let store_root = cuelib::store::root(None).ok();
     let records = Records {
         batch_id: &batch_id,
         batch_path: &batch_path,
+        unavailable: unavailable.as_deref(),
         now_secs,
         store_root: store_root.as_deref(),
         timeout_secs,
@@ -169,32 +187,13 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
 
     let mut probes: Probes = Vec::new();
     let mut prepared = Vec::with_capacity(request.tasks.len());
-    if let Err(err) = prepare_all(
+    prepare_all(
         &request,
         worktree_roots,
         &records,
         &mut probes,
         &mut prepared,
-    ) {
-        // Nothing will be reported for these tasks, so nothing they created
-        // may be presented as retained work: every owned worktree goes.
-        let mut errors: Vec<String> = prepared
-            .iter()
-            .flat_map(|run| run.cleanup_errors.clone())
-            .collect();
-        for run in &prepared {
-            if let Some(owned) = &run.worktree {
-                errors.extend(worktree::remove(owned));
-            }
-        }
-        if errors.is_empty() {
-            return Err(err);
-        }
-        return Err(err.context(format!(
-            "worktree cleanup also failed: {}",
-            errors.join("; ")
-        )));
-    }
+    );
 
     let mut versions = probes.iter().map(|(_, version)| version);
     let harness_version = match versions.next() {
@@ -256,14 +255,15 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
             run_path: prepared.run_path.clone(),
             trace: None,
             trace_error: None,
-            persistence_errors: Vec::new(),
+            persistence_errors: prepared.record_errors.clone(),
             cleanup_errors: prepared.cleanup_errors.clone(),
             worktree: None,
         };
 
-        // Capture reads the checkout, so it happens before any removal.
+        // Capture snapshots the checkout's provenance, so it happens before
+        // any removal.
         if let Some(context) = &prepared.context {
-            match write_trace(&run, &prepared, context) {
+            match write_trace(&run, &prepared, context, request.label.as_deref()) {
                 Ok(address) => run.trace = address,
                 Err(err) => run.trace_error = Some(format!("{err:#}")),
             }
@@ -307,24 +307,27 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
             }));
         }
 
-        if let Err(err) = state::append_index(
-            &agent_root,
-            &serde_json::json!({
-                "timestamp": now_secs,
-                "run_id": run.run_id,
-                "batch_id": run.batch_id,
-                "agent": run.agent,
-                "model": run.model,
-                "context": prepared.context,
-                "cwd": prepared.plan.cwd,
-                "worktree": worktree_record,
-                "outcome": run.outcome.as_str(),
-                "exit_code": run.exit_code,
-                "duration_ms": run.duration_ms,
-                "cost_usd": run.cost_usd,
-                "path": run.run_path,
-            }),
-        ) {
+        let indexed = agent_root.as_ref().map_err(|err| anyhow!("{err:#}"));
+        if let Err(err) = indexed.and_then(|agent_root| {
+            state::append_index(
+                agent_root,
+                &serde_json::json!({
+                    "timestamp": now_secs,
+                    "run_id": run.run_id,
+                    "batch_id": run.batch_id,
+                    "agent": run.agent,
+                    "model": run.model,
+                    "context": prepared.context,
+                    "cwd": prepared.plan.cwd,
+                    "worktree": worktree_record,
+                    "outcome": run.outcome.as_str(),
+                    "exit_code": run.exit_code,
+                    "duration_ms": run.duration_ms,
+                    "cost_usd": run.cost_usd,
+                    "path": run.run_path,
+                }),
+            )
+        }) {
             run.persistence_errors.push(format!("index.jsonl: {err:#}"));
         }
         let persist = || -> Result<()> {
@@ -374,45 +377,54 @@ fn aborted_before_launch(trigger: i32) -> Disposition {
 
 /// Persist before spawn and prepare each task in specification order:
 /// prompt and system prompt are on disk before its worktree or harness, and
-/// the request manifest records the checkout it will run in. Each prepared
-/// task is pushed before its manifest is written, so a failure here leaves
-/// every created worktree reachable for cleanup.
+/// the request manifest records the checkout it will run in. A record that
+/// cannot be written fails only its own task, before launch: its worktree,
+/// if one was created, stays owned and is removed at finalization.
 fn prepare_all(
     request: &ResolvedBatch,
     worktree_roots: Vec<Option<PathBuf>>,
     records: &Records,
     probes: &mut Probes,
     prepared: &mut Vec<Prepared>,
-) -> Result<()> {
+) {
     for (index, (task, root)) in request.tasks.iter().zip(worktree_roots).enumerate() {
         let number = index + 1;
         let agent = task.agent.clone();
         let run_id = ids::run_id(records.batch_id, &agent.name, number);
-        // The id names a harness session as well as a directory, so it is
-        // checked against the harness's own rule rather than assumed valid.
-        if !ids::is_valid(&run_id) {
-            bail!("Generated run id '{run_id}' is not a valid harness session id");
-        }
         let run_path = records
             .batch_path
             .join(format!("{}-{number}", ids::sanitize(&agent.name)));
-        state::private_dir(&run_path)
-            .with_context(|| format!("Could not create {}", run_path.display()))?;
-
-        let prompt_path = run_path.join("prompt.md");
-        state::write_private(&prompt_path, &task.prompt)?;
         let system_prompt_path = run_path.join("system-prompt.md");
-        state::write_private(&system_prompt_path, &agent.system_prompt)?;
         let system_prompt_arg =
             (!agent.system_prompt.is_empty()).then(|| system_prompt_path.clone());
         let argv = harness::argv(&run_id, &agent, &task.prompt, system_prompt_arg.as_deref());
         let label = task.label.clone().or_else(|| request.label.clone());
 
         let mut not_launched = None;
+        // The id names a harness session as well as a directory, so it is
+        // checked against the harness's own rule rather than assumed valid.
+        if !ids::is_valid(&run_id) {
+            not_launched = Some(failed_before_launch(format!(
+                "generated run id '{run_id}' is not a valid harness session id"
+            )));
+        }
+        let recorded = not_launched.is_none()
+            && match write_request(records, &run_path, &task.prompt, &agent.system_prompt) {
+                Ok(()) => true,
+                Err(err) => {
+                    not_launched = Some(failed_before_launch(format!(
+                        "could not write the local run record: {err:#}"
+                    )));
+                    false
+                }
+            };
+
         let mut owned = None;
         let mut cleanup_errors = Vec::new();
         let mut cwd = task.cwd.clone();
-        if let Some(signal) = engine::abort_requested() {
+        if not_launched.is_some() {
+            // Nothing is created for a task that cannot be recorded.
+        } else if let Some(signal) = engine::abort_requested() {
             not_launched = Some(aborted_before_launch(signal));
         } else if let Some(requested) = &task.worktree {
             // Finalization removes checkouts in specification order, so one
@@ -427,9 +439,7 @@ fn prepare_all(
                     owned = Some(created);
                 }
                 Err(failure) => {
-                    not_launched = Some(Disposition::SpawnFailed {
-                        message: failure.message,
-                    });
+                    not_launched = Some(failed_before_launch(failure.message));
                     cleanup_errors = failure.cleanup_errors;
                 }
             }
@@ -459,9 +469,7 @@ fn prepare_all(
                     program = Some(found);
                 }
                 Err(err) => {
-                    not_launched = Some(Disposition::SpawnFailed {
-                        message: format!("{err:#}"),
-                    });
+                    not_launched = Some(failed_before_launch(format!("{err:#}")));
                 }
             }
         }
@@ -475,6 +483,7 @@ fn prepare_all(
 
         // Environment values are deliberately absent: an overlay may carry
         // secrets, and no persistence policy for them exists yet.
+        let source = trace::provenance(&cwd);
         let manifest_json = serde_json::json!({
             "run_id": run_id,
             "batch_id": records.batch_id,
@@ -489,13 +498,35 @@ fn prepare_all(
             "context": task.context,
             "label": label,
             "batch_label": request.label,
-            "repo": cuelib::store::repository_scope(&cwd).ok(),
-            "commit": cuelib::git::get_short_head_hash(&cwd).ok(),
+            "repo": source.repo_id,
+            "commit": source.commit_hash,
             "store_root": records.store_root,
             "timeout_secs": records.timeout_secs,
             "launch_error": launch_error,
             "created_at": records.now_secs,
         });
+
+        // The request record is the last step before launch. A task that
+        // cannot have one is not launched; one already failing keeps its own
+        // error and reports the missing record alongside it.
+        let mut record_errors = Vec::new();
+        if recorded {
+            let written = serde_json::to_vec_pretty(&manifest_json)
+                .map_err(anyhow::Error::from)
+                .and_then(|bytes| {
+                    state::write_private(run_path.join("manifest.json"), bytes)
+                        .map_err(anyhow::Error::from)
+                });
+            if let Err(err) = written {
+                let message =
+                    format!("could not write the local run record manifest.json: {err:#}");
+                if not_launched.is_none() {
+                    not_launched = Some(failed_before_launch(message));
+                } else {
+                    record_errors.push(format!("manifest.json: {err:#}"));
+                }
+            }
+        }
 
         prepared.push(Prepared {
             plan: RunPlan {
@@ -508,21 +539,41 @@ fn prepare_all(
                 stderr_path: run_path.join("stderr.log"),
                 deadline: records.deadline,
             },
+            position: number,
             agent,
-            run_path: run_path.clone(),
+            run_path,
             context: task.context.clone(),
             label,
             harness_version: version,
             not_launched,
             worktree: owned,
             cleanup_errors,
+            record_errors,
             manifest: manifest_json,
         });
-        let manifest_json = &prepared.last().expect("just pushed").manifest;
-        state::write_private(
-            run_path.join("manifest.json"),
-            serde_json::to_vec_pretty(manifest_json)?,
-        )?;
+    }
+}
+
+fn failed_before_launch(message: String) -> Disposition {
+    Disposition::SpawnFailed { message }
+}
+
+/// Write the task's run directory, prompt and system prompt.
+fn write_request(
+    records: &Records,
+    run_path: &Path,
+    prompt: &str,
+    system_prompt: &str,
+) -> Result<()> {
+    if let Some(reason) = records.unavailable {
+        bail!("{reason}");
+    }
+    state::private_dir(run_path)
+        .with_context(|| format!("could not create {}", run_path.display()))?;
+    for (name, text) in [("prompt.md", prompt), ("system-prompt.md", system_prompt)] {
+        let path = run_path.join(name);
+        state::write_private(&path, text)
+            .with_context(|| format!("could not write {}", path.display()))?;
     }
     Ok(())
 }
@@ -575,7 +626,12 @@ fn classify(
 }
 
 /// Promote the final response into the task's capture context.
-fn write_trace(run: &RunReceipt, prepared: &Prepared, context: &str) -> Result<Option<String>> {
+fn write_trace(
+    run: &RunReceipt,
+    prepared: &Prepared,
+    context: &str,
+    batch_label: Option<&str>,
+) -> Result<Option<String>> {
     // The body is the final message verbatim and nothing else, so a run that
     // produced no message gets no trace. Plane 2 preserves the run either way,
     // and the trace can be materialised later from it.
@@ -584,19 +640,23 @@ fn write_trace(run: &RunReceipt, prepared: &Prepared, context: &str) -> Result<O
     }
     let body_path = prepared.run_path.join("response.body");
     state::write_private(&body_path, &run.response)?;
-    let label = prepared.label.as_deref();
     let name = trace::artifact_name(
-        label.unwrap_or("run"),
+        batch_label,
+        &run.batch_id,
+        prepared.position,
         &prepared.agent.name,
-        &ids::short(&run.run_id),
     );
+    // The repository and revision the run executed, read now, while an
+    // ephemeral checkout still exists, and stamped explicitly.
+    let source = trace::provenance(&prepared.plan.cwd);
     let fields = trace::frontmatter(
         run,
         harness::PROGRAM,
         prepared.harness_version.as_deref(),
-        label,
+        prepared.label.as_deref(),
+        batch_label,
+        &source,
     );
-    // Stamped from the directory the run executed in.
     let address = trace::write(&prepared.plan.cwd, context, &name, &body_path, &fields);
     // The body file is a transport detail for `cue add`, not a third copy of
     // the response, so it does not survive the write.

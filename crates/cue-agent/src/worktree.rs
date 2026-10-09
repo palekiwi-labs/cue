@@ -50,7 +50,7 @@ const HELPER_LIMIT: Duration = Duration::from_secs(60);
 /// `git rev-parse --local-env-vars` (Git 2.55), plus `GIT_NAMESPACE`.
 /// Inherited values would make Git act on another repository, work tree,
 /// index or ref namespace than the task's target.
-const REPOSITORY_ENV: &[&str] = &[
+pub const REPOSITORY_ENV: &[&str] = &[
     "GIT_ALTERNATE_OBJECT_DIRECTORIES",
     "GIT_CONFIG",
     "GIT_CONFIG_PARAMETERS",
@@ -638,6 +638,16 @@ fn remove_unclaimed_leaf(owned: &Owned) -> Option<String> {
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => None,
         Err(err) => survives(format!("partial checkout could not be removed: {err}")),
     }
+}
+
+/// Run one bounded, non-interruptible inspection command from `dir` with the
+/// same isolation as every worktree command, returning its trimmed stdout.
+pub fn inspect<I, S>(dir: &Path, args: I) -> Result<String>
+where
+    I: IntoIterator<Item = S>,
+    S: AsRef<OsStr>,
+{
+    git(dir, args, false)
 }
 
 /// Run one git command from `dir`, returning its trimmed stdout.

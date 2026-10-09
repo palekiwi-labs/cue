@@ -82,20 +82,20 @@ fn a_capture_context_names_the_trace_but_never_assigns_cue_context() {
     let run_id = run["run_id"].as_str().unwrap();
     assert_eq!(child_context(&sandbox, run_id), "<unset>");
 
-    let address = run["trace"].as_str().expect("trace address");
-    assert!(
-        address.starts_with("acme/widgets/auth-redesign/trace/agent/review-the-diff-explore-"),
-        "{address}"
+    let name = format!(
+        "agent/review-the-diff-{}/001-explore.md",
+        receipt["batch_id"].as_str().unwrap()
+    );
+    assert_eq!(
+        run["trace"],
+        format!("acme/widgets/auth-redesign/trace/{name}")
     );
 
     let argv = sandbox.recorded_cue_argv();
     assert_eq!(argv[0], "-C");
     assert_eq!(argv[1], sandbox.project().display().to_string());
     assert_eq!(argv[2], "add");
-    assert!(
-        argv[3].starts_with("agent/review-the-diff-explore-") && argv[3].ends_with(".md"),
-        "{argv:?}"
-    );
+    assert_eq!(argv[3], name, "{argv:?}");
     assert_eq!(argv[4], "--file");
     let context_at = argv
         .iter()

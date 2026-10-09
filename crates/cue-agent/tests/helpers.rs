@@ -436,6 +436,13 @@ finish() {
 trap finish EXIT
 
 case "$prompt" in
+  *EMIT=*)
+    # Replay prepared event lines verbatim from the named file.
+    file="${prompt##*EMIT=}"
+    file="${file%% *}"
+    emit_session
+    cat "$file"
+    ;;
   *BLOCK_RECEIPT*)
     for ((i = 0; i < ${#args[@]}; i++)); do
       if [[ "${args[i]}" == "--append-system-prompt" ]]; then
