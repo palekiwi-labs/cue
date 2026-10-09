@@ -41,10 +41,10 @@ use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
 const POLL_INTERVAL: Duration = Duration::from_millis(15);
-/// The longest an inspection or cleanup command may run before its group is
-/// killed. Once the batch is interrupted, the grace window applies instead
-/// when it is shorter.
-const HELPER_LIMIT: Duration = Duration::from_secs(60);
+/// The longest an inspection, cleanup or trace-writing command may run
+/// before its group is killed. Once the batch is interrupted, the grace
+/// window applies instead when it is shorter.
+pub const HELPER_LIMIT: Duration = Duration::from_secs(60);
 
 /// Variables that select or redirect a repository, as listed by
 /// `git rev-parse --local-env-vars` (Git 2.55), plus `GIT_NAMESPACE`.
