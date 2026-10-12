@@ -9,8 +9,12 @@ use std::io::Write;
 use std::process::Stdio;
 
 const MANIFEST: &str = r#"{
+  "models": {
+    "haiku": { "id": "anthropic/haiku", "provider": "anthropic" },
+    "opus": { "id": "anthropic/opus", "provider": "anthropic" }
+  },
   "agents": {
-    "explore": { "model": "anthropic/haiku", "system_prompt": "You explore." },
+    "explore": { "models": ["haiku", "opus"], "system_prompt": "You explore." },
     "bare": {}
   }
 }"#;
@@ -204,6 +208,14 @@ fn invalid_requests_are_refused_whole_before_any_side_effect() {
         ),
         (json!({"agent": "bare", "prompt": "p", "bogus": 1}), "bogus"),
         (
+            json!({"agent": "bare", "prompt": "p", "model": "haiku"}),
+            "no models allowlist",
+        ),
+        (
+            json!({"agent": "explore", "prompt": "p", "model": "made/up"}),
+            "tasks[1].model",
+        ),
+        (
             json!({"agent": "bare", "prompt": "p",
                    "worktree": {"base": "main", "ephemeral": true}}),
             "worktree_root",
@@ -332,7 +344,7 @@ fn repeated_agents_run_independently_and_report_in_specification_order() {
 fn defaults_and_task_overrides_reach_the_harness() {
     let sandbox = sandbox();
     let output = sandbox.run_json(&json!({
-        "defaults": {"model": "default/model", "tools": [], "thinking": "low"},
+        "defaults": {"model": "opus", "tools": [], "thinking": "low"},
         "tasks": [
             {"agent": "explore", "prompt": "a"},
             {"agent": "explore", "prompt": "b", "model": null, "tools": ["grep"],
@@ -355,7 +367,7 @@ fn defaults_and_task_overrides_reach_the_harness() {
             "--session-id",
             first,
             "--model",
-            "default/model",
+            "anthropic/opus",
             "--thinking",
             "low",
             "--no-tools",
@@ -364,7 +376,7 @@ fn defaults_and_task_overrides_reach_the_harness() {
             "a",
         ]
     );
-    assert_eq!(runs[0]["model"], "default/model");
+    assert_eq!(runs[0]["model"], "anthropic/opus");
 
     let second = runs[1]["run_id"].as_str().unwrap();
     assert_eq!(
@@ -376,6 +388,9 @@ fn defaults_and_task_overrides_reach_the_harness() {
             "--no-session",
             "--session-id",
             second,
+            // A null model falls back to the agent's default alias.
+            "--model",
+            "anthropic/haiku",
             "--tools",
             "grep",
             "b",
@@ -507,12 +522,15 @@ fn cwd_is_per_task_and_defaults_to_the_invocation_directory() {
 #[test]
 fn agents_come_from_the_invocation_manifest_not_the_task_cwd() {
     let sandbox = Sandbox::new();
-    sandbox.local_manifest(r#"{"agents": {"bare": {"model": "invocation/model"}}}"#);
+    sandbox.local_manifest(
+        r#"{"models": {"m": {"id": "invocation/model"}}, "agents": {"bare": {"models": ["m"]}}}"#,
+    );
     let other = sandbox.dir.path().join("other-repo");
     std::fs::create_dir_all(other.join(".git")).unwrap();
     std::fs::write(
         other.join("cue-agent.json"),
-        r#"{"timeout": 1, "agents": {"bare": {"model": "other/model"}, "local-only": {}}}"#,
+        r#"{"timeout": 1, "models": {"m": {"id": "other/model"}},
+            "agents": {"bare": {"models": ["m"]}, "local-only": {}}}"#,
     )
     .unwrap();
 

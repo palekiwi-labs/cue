@@ -562,6 +562,8 @@ mod tests {
         Agent {
             name: "explore".into(),
             description: None,
+            models: None,
+            model_alias: None,
             model: Some("anthropic/haiku".into()),
             system_prompt: "You explore.".into(),
             tools: Some(vec!["read".into(), "bash".into()]),

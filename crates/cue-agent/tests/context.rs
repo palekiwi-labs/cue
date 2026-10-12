@@ -7,8 +7,12 @@ use helpers::{Sandbox, receipt, run_of, spec};
 use serde_json::json;
 
 const MANIFEST: &str = r#"{
+  "models": {
+    "haiku": { "id": "anthropic/haiku", "provider": "anthropic" },
+    "opus": { "id": "anthropic/opus", "provider": "anthropic" }
+  },
   "agents": {
-    "explore": { "description": "Explores", "model": "anthropic/haiku" }
+    "explore": { "description": "Explores", "models": ["haiku"] }
   }
 }"#;
 

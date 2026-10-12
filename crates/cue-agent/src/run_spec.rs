@@ -373,7 +373,18 @@ fn resolve_task(
     override_field(&mut agent, "description", description, |a, v| {
         a.description = v
     });
-    override_field(&mut agent, "model", model, |a, v| a.model = v);
+    // A model override selects a registry profile, which also brings its
+    // thinking level; an explicit task thinking still wins below. Null keeps
+    // the agent's default model.
+    if let Patch::Set(requested) = model {
+        let (alias, profile) = manifest
+            .select_model(&agent, &requested)
+            .with_context(|| format!("{at}.model"))?;
+        agent.field_sources.remove("model");
+        agent.model = Some(profile.id);
+        agent.model_alias = Some(alias);
+        agent.thinking = profile.thinking;
+    }
     override_field(&mut agent, "system_prompt", system_prompt, |a, v| {
         a.system_prompt = v.unwrap_or_default()
     });
@@ -567,10 +578,16 @@ mod tests {
     impl Fixture {
         fn new() -> Self {
             Self::with_manifest(
-                r#"{"agents": {
-                    "scout": {"model": "m1", "system_prompt": "be brief",
-                              "tools": ["read"], "thinking": "low",
-                              "description": "looks around"},
+                r#"{"models": {
+                    "m1": {"id": "p/m1", "thinking": "low"},
+                    "m2": {"id": "p/m2"},
+                    "m3": {"id": "p/m3", "thinking": "high"},
+                    "other": {"id": "q/other"}
+                },
+                "agents": {
+                    "scout": {"models": ["m1", "m2", "m3"], "system_prompt": "be brief",
+                              "tools": ["read"], "description": "looks around"},
+                    "solo": {"models": ["other"]},
                     "plain": {}
                 }}"#,
             )
@@ -639,7 +656,9 @@ mod tests {
         assert_eq!(batch.tasks.len(), 1);
         let task = &batch.tasks[0];
         assert_eq!(task.agent.name, "scout");
-        assert_eq!(task.agent.model.as_deref(), Some("m1"));
+        assert_eq!(task.agent.model.as_deref(), Some("p/m1"));
+        assert_eq!(task.agent.model_alias.as_deref(), Some("m1"));
+        assert_eq!(task.agent.thinking.as_deref(), Some("low"));
         assert_eq!(task.agent.system_prompt, "be brief");
         assert_eq!(task.agent.tools, Some(vec!["read".to_string()]));
         assert_eq!(task.prompt, "look");
@@ -772,23 +791,26 @@ mod tests {
                 {"agent": "scout", "prompt": "p", "model": "m3", "tools": []},
                 {"agent": "scout", "prompt": "p", "tools": null, "model": null,
                  "system_prompt": null, "thinking": null, "description": null},
-                {"agent": "plain", "prompt": "p", "system_prompt": "extra",
+                {"agent": "plain", "prompt": "p", "system_prompt": "extra", "model": null,
                  "thinking": "high", "description": "d"}
             ]}"#,
         );
         let agents: Vec<_> = batch.tasks.iter().map(|t| &t.agent).collect();
 
-        assert_eq!(agents[0].model.as_deref(), Some("m2"));
+        // Selecting a profile brings its thinking level, even when unset.
+        assert_eq!(agents[0].model.as_deref(), Some("p/m2"));
+        assert_eq!(agents[0].model_alias.as_deref(), Some("m2"));
         assert_eq!(agents[0].tools, Some(vec!["grep".into(), "ls".into()]));
         assert_eq!(agents[0].system_prompt, "be brief");
-        assert_eq!(agents[0].thinking.as_deref(), Some("low"));
-        assert!(!agents[0].field_sources.contains_key("model"));
-        assert!(agents[0].field_sources.contains_key("thinking"));
+        assert_eq!(agents[0].thinking, None);
+        assert!(agents[0].field_sources.contains_key("models"));
 
-        assert_eq!(agents[1].model.as_deref(), Some("m3"));
+        assert_eq!(agents[1].model.as_deref(), Some("p/m3"));
+        assert_eq!(agents[1].thinking.as_deref(), Some("high"));
         assert_eq!(agents[1].tools, Some(vec![]));
 
-        assert_eq!(agents[2].model, None);
+        // A null model keeps the agent default; null thinking clears it.
+        assert_eq!(agents[2].model.as_deref(), Some("p/m1"));
         assert_eq!(agents[2].tools, None);
         assert_eq!(agents[2].system_prompt, "");
         assert_eq!(agents[2].thinking, None);
@@ -1135,35 +1157,81 @@ mod tests {
     }
 
     #[test]
+    fn a_task_model_accepts_an_allowed_alias_or_full_id() {
+        let fx = Fixture::new();
+        let batch = fx.ok(r#"{"tasks": [
+                {"agent": "scout", "prompt": "p", "model": "m3"},
+                {"agent": "scout", "prompt": "p", "model": "p/m3"},
+                {"agent": "scout", "prompt": "p", "model": "m3", "thinking": "off"},
+                {"agent": "scout", "prompt": "p", "model": "m3"}
+            ]}"#);
+        for task in &batch.tasks {
+            assert_eq!(task.agent.model.as_deref(), Some("p/m3"));
+            assert_eq!(task.agent.model_alias.as_deref(), Some("m3"));
+        }
+        assert_eq!(batch.tasks[1].agent.thinking.as_deref(), Some("high"));
+        // Task thinking beats the profile's.
+        assert_eq!(batch.tasks[2].agent.thinking.as_deref(), Some("off"));
+    }
+
+    #[test]
+    fn a_disallowed_model_names_the_allowlist_and_the_agents_allowing_it() {
+        let fx = Fixture::new();
+        let error = fx.err(r#"{"tasks": [{"agent": "scout", "prompt": "p", "model": "other"}]}"#);
+        assert!(error.contains("tasks[0].model"), "{error}");
+        assert!(error.contains("m1, m2, m3"), "{error}");
+        assert!(error.contains("agents allowing 'other': solo"), "{error}");
+
+        let error = fx.err(r#"{"tasks": [{"agent": "plain", "prompt": "p", "model": "m1"}]}"#);
+        assert!(error.contains("no models allowlist"), "{error}");
+        assert!(error.contains("scout"), "{error}");
+
+        let error = fx.err(r#"{"tasks": [{"agent": "scout", "prompt": "p", "model": "made/up"}]}"#);
+        assert!(
+            error.contains("registry aliases: m1, m2, m3, other"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn one_disallowed_model_rejects_the_whole_batch() {
+        let fx = Fixture::new();
+        let error = fx.err(
+            r#"{"tasks": [
+                {"agent": "scout", "prompt": "p", "model": "m2"},
+                {"agent": "solo", "prompt": "p", "model": "m1"}
+            ]}"#,
+        );
+        assert!(error.contains("tasks[1].model"), "{error}");
+        // A shared default applies to every task and is checked for each.
+        let error = fx.err(
+            r#"{"defaults": {"model": "m2"}, "tasks": [
+                {"agent": "scout", "prompt": "p"},
+                {"agent": "solo", "prompt": "p"}
+            ]}"#,
+        );
+        assert!(error.contains("tasks[1].model"), "{error}");
+    }
+
+    #[test]
     fn inherited_agent_argv_strings_with_nul_reject_the_whole_request() {
         let fx = Fixture::with_manifest(
             r#"{"agents": {
                 "ok": {},
-                "bad-model": {"model": "m\u0000"},
-                "bad-thinking": {"thinking": "t\u0000"},
                 "bad-tools": {"tools": ["read", "g\u0000"]}
             }}"#,
         );
-        for (agent, expected) in [
-            ("bad-model", "tasks[1].model"),
-            ("bad-thinking", "tasks[1].thinking"),
-            ("bad-tools", "tasks[1].tools[1]"),
-        ] {
-            let json = format!(
-                r#"{{"tasks": [{{"agent": "ok", "prompt": "p"}},
-                    {{"agent": "{agent}", "prompt": "p"}}]}}"#
-            );
-            let error = fx.err(&json);
-            assert!(error.contains(expected), "{agent}: {error}");
-            assert!(error.contains("NUL"), "{agent}: {error}");
-        }
+        let error = fx.err(
+            r#"{"tasks": [{"agent": "ok", "prompt": "p"},
+                {"agent": "bad-tools", "prompt": "p"}]}"#,
+        );
+        assert!(error.contains("tasks[1].tools[1]"), "{error}");
+        assert!(error.contains("NUL"), "{error}");
         // Only effective values matter: an override replaces the bad value.
         let batch = fx.ok(r#"{"tasks": [
-                {"agent": "bad-model", "prompt": "p", "model": "m"},
-                {"agent": "bad-thinking", "prompt": "p", "thinking": null},
                 {"agent": "bad-tools", "prompt": "p", "tools": []}
             ]}"#);
-        assert_eq!(batch.tasks.len(), 3);
+        assert_eq!(batch.tasks.len(), 1);
     }
 
     #[test]

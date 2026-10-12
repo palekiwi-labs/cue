@@ -38,47 +38,65 @@ instead of overriding one field of one agent.
 ```json
 {
   "timeout": 900,
+  "models": {
+    "haiku":        { "id": "anthropic/claude-haiku-4", "provider": "anthropic" },
+    "opus":         { "id": "anthropic/claude-opus-4", "thinking": "high",
+                      "provider": "anthropic" },
+    "gemini-flash": { "id": "google/gemini-flash", "thinking": "medium",
+                      "provider": "google" }
+  },
   "agents": {
     "explore": {
       "description": "Surveys unfamiliar code and reports what is where",
-      "model": "anthropic/claude-haiku-4",
+      "models": ["haiku"],
       "system_prompt": "You explore code and answer with findings only.",
       "tools": ["read", "bash"]
     },
-    "consultant-opus": {
+    "consultant": {
       "description": "Consults on hard design questions",
-      "model": "anthropic/claude-opus-4",
+      "models": ["opus", "gemini-flash"],
       "system_prompt": { "file": "prompts/consultant.md" }
     },
-    "diff-reviewer-flash": {
+    "diff-reviewer": {
       "description": "Reviews a diff and lists defects",
-      "model": "google/gemini-flash",
+      "models": ["gemini-flash", "opus"],
       "system_prompt": "You review diffs. List defects, most severe first."
     }
   }
 }
 ```
 
-The root accepts only `timeout`, `worktree_root`, and `agents`:
+The root accepts only `timeout`, `worktree_root`, `models`, and `agents`:
 
 - `timeout` — non-negative integer seconds, default `0` (unlimited).
 - `worktree_root` — optional parent directory for generated worktree
   checkouts (see "Worktrees" below). Absolute paths are kept; relative paths
   resolve against each execution target's directory, not the manifest
   directory or the Git root.
+- `models` — the model alias registry, an object keyed by alias. Each
+  profile has a required `id` (the full model ID passed as `--model`), an
+  optional `thinking` level (passed as `--thinking` whenever the profile is
+  selected) and an optional informational `provider` tag. Profile values are
+  plain strings, not file references. A layer replaces an alias's profile
+  whole; `null` removes the alias.
 - `agents` — named reusable definitions, with the fields below.
 
 Agent fields, all optional except the agent's own key:
 
 - `description` — what the agent is for; this is what a calling model reads.
-- `model` — passed as `--model`; omit to inherit the harness default.
+- `models` — ordered, nonempty, duplicate-free allowlist of registry
+  aliases; the first entry is the default model. Every alias must exist in
+  the merged registry. Omit it (or clear it with `null`) to run on the harness
+  default model; such an agent rejects every task-level model override.
 - `system_prompt` — supplementary instructions passed via
   `--append-system-prompt`, preserving Pi's base prompt. Omission means no
   supplementary instructions.
 - `tools` — omit or set to `null` for Pi defaults; `[]` passes `--no-tools`,
   disabling all tools including extension tools. A nonempty array passes a
   comma-separated `--tools` selection.
-- `thinking` — passed as `--thinking`.
+
+Agents carry no `model` or `thinking` field: the selected profile supplies
+both, so a model and its thinking level always travel together.
 
 Every string value also accepts a single-key `{ "file": "path" }` object,
 including individual elements of `tools`, but not the whole array. Locate the
@@ -97,7 +115,7 @@ even for overridden fields; only winning file references are read.
 A project file overrides one field without restating the agent:
 
 ```json
-{ "agents": { "explore": { "model": "anthropic/claude-sonnet-4" } } }
+{ "agents": { "explore": { "models": ["gemini-flash", "haiku"] } } }
 ```
 
 Inspect the result:
@@ -107,8 +125,11 @@ cue-agent agents list
 cue-agent agents list --json
 ```
 
-JSON discovery returns an object with `agents`, `global_manifest`, and
-`project_manifest`. Each resolved agent includes its name and reusable fields,
+JSON discovery returns an object with `models` (the merged registry, keyed by
+alias), `agents`, `global_manifest`, and `project_manifest`. Each resolved
+agent includes its name and reusable fields, its `models` allowlist,
+`default_model` (the default alias), and the effective `model` ID and
+`thinking` level of that default,
 `source` (the last layer mentioning the agent), and `field_sources` (the layer
 supplying each non-cleared field). Layers are named `user` and `project`.
 Unspecified or cleared tools are `null`, distinct from explicit `[]`.
@@ -168,10 +189,10 @@ Repeating an agent name requests separate, independent executions:
     "context": "acme/widgets/cue-agent-runtime-mvp"
   },
   "tasks": [
-    { "agent": "diff-reviewer-flash" },
-    { "agent": "diff-reviewer-flash", "model": "google/gemini-pro",
+    { "agent": "diff-reviewer" },
+    { "agent": "diff-reviewer", "model": "opus",
       "label": "Second opinion" },
-    { "agent": "consultant-opus",
+    { "agent": "consultant",
       "prompt": "Is the teardown order correct under an interrupt during the grace window?" }
   ]
 }
@@ -189,9 +210,18 @@ Fields accepted on a task (and, except `agent`, in `defaults`):
 - `env` — optional environment overlay object.
 - `context` — optional canonical capture context address.
 - `worktree` — optional request to run in a new worktree (see below).
-- `description`, `model`, `system_prompt`, `tools`, `thinking` — overrides
-  of the named agent's manifest fields, with the same meaning and types as in
-  the manifest.
+- `description`, `system_prompt`, `tools` — overrides of the named agent's
+  manifest fields, with the same meaning and types as in the manifest.
+- `model` — a registry alias or full model ID, normalized to the profile's
+  full ID. It must belong to the agent's allowlist; the selected profile also
+  supplies its `thinking` level. `null` keeps the agent's default model.
+- `thinking` — overrides the selected profile's thinking level; `null`
+  clears it.
+
+Model selection is checked for every task during admission, before anything
+runs: one disallowed model rejects the whole request. The error names the
+aliases the agent allows and the agents that allow the requested model, so a
+single retry can fix it. Two tasks on the same model are permitted.
 
 There is no timeout field anywhere in the specification: `timeout` and the
 legacy `timeout_secs` are rejected as unknown fields. The bare-array form,
@@ -207,7 +237,8 @@ from the specification alone.
 
 - Omitting a field inherits it.
 - An explicit `null` clears an inherited optional value: `"label": null`,
-  `"context": null`, `"model": null` and so on. Clearing `system_prompt`
+  `"context": null`, `"thinking": null` and so on (`"model": null` instead
+  restores the agent's default model). Clearing `system_prompt`
   removes supplementary instructions; clearing `tools` returns to Pi defaults.
   `null` never satisfies a required field: a task with `"prompt": null` is
   rejected even if `defaults` has a prompt.

@@ -41,11 +41,11 @@ fn rejection(sandbox: &Sandbox) -> String {
 fn inline_and_file_prompts_override_each_other_atomically() {
     for (global, local) in [
         (
-            r#"{"system_prompt":{"file":"missing.md"},"model":"test"}"#,
+            r#"{"system_prompt":{"file":"missing.md"},"tools":["test"]}"#,
             r#"{"system_prompt":"local"}"#,
         ),
         (
-            r#"{"system_prompt":"global","model":"test"}"#,
+            r#"{"system_prompt":"global","tools":["test"]}"#,
             r#"{"system_prompt":{"file":"local.md"}}"#,
         ),
     ] {
@@ -55,21 +55,21 @@ fn inline_and_file_prompts_override_each_other_atomically() {
         std::fs::write(sandbox.project().join("local.md"), "local").unwrap();
         let value = listing(&sandbox);
         assert_eq!(value["agents"][0]["system_prompt"], "local");
-        assert_eq!(value["agents"][0]["model"], "test");
+        assert_eq!(value["agents"][0]["tools"], json!(["test"]));
     }
 }
 
 #[test]
 fn a_shadowed_invalid_field_is_still_rejected() {
     for global in [
-        r#"{"model":5}"#,
+        r#"{"models":5}"#,
         r#"{"system_prompt":{"file":"x.md","extra":true}}"#,
         r#"{"tools":["read",7]}"#,
     ] {
         let sandbox = Sandbox::new();
         sandbox.global_manifest(&format!(r#"{{"agents":{{"a":{global}}}}}"#));
         sandbox.local_manifest(
-            r#"{"agents":{"a":{"model":"m","system_prompt":"local","tools":["read"]}}}"#,
+            r#"{"agents":{"a":{"models":null,"system_prompt":"local","tools":["read"]}}}"#,
         );
         let error = rejection(&sandbox);
         assert!(error.contains("cue-agent.json"), "{error}");
@@ -82,15 +82,20 @@ fn project_manifest_overrides_global_fields_without_restating_the_agent() {
     let sandbox = Sandbox::new();
     sandbox.global_manifest(
         r#"{
+          "models": {
+            "sonnet": {"id": "anthropic/sonnet"},
+            "opus": {"id": "anthropic/opus", "thinking": "high"},
+            "haiku": {"id": "anthropic/haiku"}
+          },
           "agents": {
             "explore": {
               "description": "Explores the codebase",
-              "model": "anthropic/sonnet",
+              "models": ["sonnet"],
               "system_prompt": "You explore."
             },
             "consultant-opus": {
               "description": "Consults on hard problems",
-              "model": "anthropic/opus",
+              "models": ["opus", "sonnet"],
               "system_prompt": "You consult."
             }
           }
@@ -99,7 +104,7 @@ fn project_manifest_overrides_global_fields_without_restating_the_agent() {
     sandbox.local_manifest(
         r#"{
           "agents": {
-            "explore": { "model": "anthropic/haiku" }
+            "explore": { "models": ["haiku", "sonnet"] }
           }
         }"#,
     );
@@ -109,6 +114,8 @@ fn project_manifest_overrides_global_fields_without_restating_the_agent() {
 
     let explore = agent(&listed, "explore");
     assert_eq!(explore["model"], "anthropic/haiku", "local layer overrides");
+    assert_eq!(explore["models"], json!(["haiku", "sonnet"]));
+    assert_eq!(explore["default_model"], "haiku");
     assert_eq!(
         explore["description"], "Explores the codebase",
         "unstated fields survive the override"
@@ -117,11 +124,16 @@ fn project_manifest_overrides_global_fields_without_restating_the_agent() {
     assert_eq!(explore["source"], "project");
     assert_eq!(
         explore["field_sources"],
-        json!({"description": "user", "model": "project", "system_prompt": "user"})
+        json!({"description": "user", "models": "project", "system_prompt": "user"})
     );
 
     let consultant = agent(&listed, "consultant-opus");
     assert_eq!(consultant["model"], "anthropic/opus");
+    assert_eq!(consultant["thinking"], "high");
+    assert_eq!(
+        listed["models"]["opus"],
+        json!({"id": "anthropic/opus", "thinking": "high", "provider": null})
+    );
     assert_eq!(consultant["source"], "user");
 }
 
@@ -148,7 +160,6 @@ fn file_values_resolve_against_the_manifest_that_declared_them() {
     );
     sandbox.local_manifest(
         r#"{"agents":{"explore":{
-          "model":{"file":"tool.txt"},
           "tools":[{"file":"tool.txt"},"bash"]
         }}}"#,
     );
@@ -156,7 +167,6 @@ fn file_values_resolve_against_the_manifest_that_declared_them() {
     let listed = listing(&sandbox);
     let explore = agent(&listed, "explore");
     assert_eq!(explore["system_prompt"], "From a file.\n");
-    assert_eq!(explore["model"], "read");
     assert_eq!(explore["tools"], json!(["read", "bash"]));
     assert_eq!(explore["field_sources"]["system_prompt"], "user");
     assert_eq!(explore["field_sources"]["tools"], "project");
@@ -219,8 +229,8 @@ fn agent_definitions_accept_only_reusable_fields() {
 fn agent_field_types_are_validated() {
     for definition in [
         r#"{"description":1}"#,
-        r#"{"model":true}"#,
-        r#"{"thinking":["high"]}"#,
+        r#"{"models":true}"#,
+        r#"{"models":[1]}"#,
         r#"{"system_prompt":{"path":"x.md"}}"#,
         r#"{"tools":"read"}"#,
         r#"{"tools":{"file":"tools.txt"}}"#,
@@ -305,14 +315,14 @@ fn null_clears_inherited_optional_values() {
     let sandbox = Sandbox::new();
     sandbox.global_manifest(
         r#"{"agents":{"a":{
-          "description":"d","model":"m","system_prompt":{"file":"missing.md"},
-          "thinking":"high","tools":["read"]
-        }}}"#,
+          "description":"d","models":["m"],"system_prompt":{"file":"missing.md"},
+          "tools":["read"]
+        }},"models":{"m":{"id":"p/m","thinking":"high"}}}"#,
     );
     sandbox.local_manifest(
         r#"{"agents":{"a":{
-          "description":null,"model":null,"system_prompt":null,
-          "thinking":null,"tools":null
+          "description":null,"models":null,"system_prompt":null,
+          "tools":null
         }}}"#,
     );
 
@@ -320,6 +330,7 @@ fn null_clears_inherited_optional_values() {
     let a = agent(&listed, "a");
     assert_eq!(a["description"], Value::Null);
     assert_eq!(a["model"], Value::Null);
+    assert_eq!(a["models"], Value::Null);
     assert_eq!(a["system_prompt"], "");
     assert_eq!(a["thinking"], Value::Null);
     assert_eq!(a["tools"], Value::Null);
@@ -332,4 +343,31 @@ fn listing_with_no_manifest_anywhere_is_empty_rather_than_an_error() {
     let sandbox = Sandbox::new();
     let listed = listing(&sandbox);
     assert_eq!(listed["agents"].as_array().unwrap().len(), 0);
+}
+
+#[test]
+fn listing_exposes_the_registry_and_each_allowlist() {
+    let sandbox = Sandbox::new();
+    sandbox.local_manifest(
+        r#"{"models":{"opus":{"id":"a/opus","thinking":"high","provider":"anthropic"},
+                      "flash":{"id":"g/flash","provider":"google"}},
+            "agents":{"reviewer":{"description":"Reviews","models":["opus","flash"]},
+                      "bare":{}}}"#,
+    );
+    let listed = listing(&sandbox);
+    assert_eq!(
+        listed["models"]["flash"],
+        json!({"id": "g/flash", "thinking": null, "provider": "google"})
+    );
+    let reviewer = agent(&listed, "reviewer");
+    assert_eq!(reviewer["models"], json!(["opus", "flash"]));
+    assert_eq!(reviewer["default_model"], "opus");
+    assert_eq!(reviewer["model"], "a/opus");
+    assert_eq!(reviewer["thinking"], "high");
+    assert_eq!(agent(&listed, "bare")["default_model"], Value::Null);
+
+    let output = sandbox.cmd().args(["agents", "list"]).output().unwrap();
+    let text = String::from_utf8_lossy(&output.stdout);
+    assert!(text.contains("reviewer  [opus*, flash]  Reviews"), "{text}");
+    assert!(text.contains("bare  [(harness default)]"), "{text}");
 }

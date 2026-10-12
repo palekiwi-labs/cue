@@ -1,20 +1,52 @@
 {
   "timeout": 900,
+  "models": {
+    "haiku": {
+      "id": "anthropic/claude-haiku-4",
+      "provider": "anthropic"
+    },
+    "opus": {
+      "id": "anthropic/claude-opus-4",
+      "thinking": "high",
+      "provider": "anthropic"
+    },
+    "gemini-flash": {
+      "id": "google/gemini-flash",
+      "thinking": "medium",
+      "provider": "google"
+    },
+    "gemini-pro": {
+      "id": "google/gemini-pro",
+      "provider": "google"
+    }
+  },
   "agents": {
     "explore": {
       "description": "Surveys unfamiliar code and reports what is where",
-      "model": "anthropic/claude-haiku-4",
+      "models": [
+        "haiku"
+      ],
       "system_prompt": "You explore code. Answer with findings and file:line references only.",
-      "tools": ["read", "bash"]
+      "tools": [
+        "read",
+        "bash"
+      ]
     },
-    "consultant-opus": {
+    "consultant": {
       "description": "Consults on hard design questions",
-      "model": "anthropic/claude-opus-4",
+      "models": [
+        "opus",
+        "gemini-pro"
+      ],
       "system_prompt": "You are a consultant. Argue from the evidence given, name your assumptions, and say what would change your mind."
     },
-    "diff-reviewer-flash": {
+    "diff-reviewer": {
       "description": "Reviews a diff and lists defects, most severe first",
-      "model": "google/gemini-flash",
+      "models": [
+        "gemini-flash",
+        "opus",
+        "gemini-pro"
+      ],
       "system_prompt": "You review diffs. List defects, most severe first, with file:line references. Say nothing about style unless it changes behaviour."
     }
   }

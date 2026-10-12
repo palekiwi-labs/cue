@@ -67,6 +67,8 @@ fn list_agents(json: bool) -> Result<()> {
                 serde_json::json!({
                     "name": agent.name,
                     "description": agent.description,
+                    "models": agent.models,
+                    "default_model": agent.model_alias,
                     "model": agent.model,
                     "system_prompt": agent.system_prompt,
                     "tools": agent.tools,
@@ -80,7 +82,20 @@ fn list_agents(json: bool) -> Result<()> {
                 })
             })
             .collect();
+        let models: serde_json::Map<String, serde_json::Value> = manifest
+            .models()
+            .iter()
+            .map(|(alias, profile)| {
+                let entry = serde_json::json!({
+                    "id": profile.id,
+                    "thinking": profile.thinking,
+                    "provider": profile.provider,
+                });
+                (alias.clone(), entry)
+            })
+            .collect();
         let listing = serde_json::json!({
+            "models": models,
             "agents": agents,
             "global_manifest": manifest.global_path,
             "project_manifest": manifest.project_path,
@@ -91,8 +106,24 @@ fn list_agents(json: bool) -> Result<()> {
 
     for agent in manifest.agents() {
         let description = agent.description.as_deref().unwrap_or("");
-        let model = agent.model.as_deref().unwrap_or("(harness default)");
-        println!("{}  [{}]  {}", agent.name, model, description);
+        // Allowlist with the default first and starred, as the delegate
+        // roster renders it.
+        let models = match &agent.models {
+            Some(aliases) => aliases
+                .iter()
+                .enumerate()
+                .map(|(index, alias)| {
+                    if index == 0 {
+                        format!("{alias}*")
+                    } else {
+                        alias.clone()
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join(", "),
+            None => "(harness default)".to_string(),
+        };
+        println!("{}  [{}]  {}", agent.name, models, description);
     }
     Ok(())
 }

@@ -6,17 +6,17 @@
   },
   "tasks": [
     {
-      "agent": "diff-reviewer-flash",
+      "agent": "diff-reviewer",
       "prompt": "Review this diff for defects.\n\n<diff goes here>"
     },
     {
-      "agent": "diff-reviewer-flash",
+      "agent": "diff-reviewer",
       "label": "Second opinion",
-      "model": "google/gemini-pro",
+      "model": "gemini-pro",
       "prompt": "Review this diff for defects, concentrating on error handling.\n\n<diff goes here>"
     },
     {
-      "agent": "consultant-opus",
+      "agent": "consultant",
       "prompt": "Is the teardown order in this diff correct under an interrupt during the grace window?\n\n<diff goes here>",
       "env": { "CUE_CONTEXT": null }
     },

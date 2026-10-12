@@ -26,8 +26,21 @@ pub const PROJECT_MANIFEST: &str = "cue-agent.json";
 /// The global manifest, relative to the config home.
 const GLOBAL_MANIFEST: &str = "cue/cue-agent.json";
 
-const ROOT_FIELDS: [&str; 3] = ["timeout", "worktree_root", "agents"];
-const AGENT_FIELDS: [&str; 5] = ["description", "model", "system_prompt", "tools", "thinking"];
+const ROOT_FIELDS: [&str; 4] = ["timeout", "worktree_root", "models", "agents"];
+const AGENT_FIELDS: [&str; 4] = ["description", "models", "system_prompt", "tools"];
+const PROFILE_FIELDS: [&str; 3] = ["id", "thinking", "provider"];
+
+/// One entry of the model alias registry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelProfile {
+    /// Full harness model ID.
+    pub id: String,
+    /// Thinking level used whenever this profile is selected, unless a task
+    /// overrides it.
+    pub thinking: Option<String>,
+    /// Informational provider tag.
+    pub provider: Option<String>,
+}
 
 /// Which layer supplied an agent or one of its fields.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -50,12 +63,20 @@ impl Source {
 pub struct Agent {
     pub name: String,
     pub description: Option<String>,
+    /// Ordered allowlist of registry aliases; the first is the default.
+    /// `None` runs on the harness default model and refuses task overrides.
+    pub models: Option<Vec<String>>,
+    /// Alias of the effective model, when one is selected.
+    pub model_alias: Option<String>,
+    /// Effective full model ID passed to the harness.
     pub model: Option<String>,
     /// Supplementary instructions appended to the harness's own prompt; empty
     /// when unset or cleared.
     pub system_prompt: String,
     /// `None` leaves the harness defaults alone; `Some(vec![])` means no tools.
     pub tools: Option<Vec<String>>,
+    /// Effective thinking level: the selected profile's, unless a task
+    /// overrides it.
     pub thinking: Option<String>,
     /// The last layer that mentioned the agent.
     pub source: Source,
@@ -67,6 +88,7 @@ pub struct Agent {
 #[derive(Debug, Clone, Default)]
 pub struct Manifest {
     agents: BTreeMap<String, Agent>,
+    models: BTreeMap<String, ModelProfile>,
     /// Per-run timeout in seconds; 0 means unlimited.
     pub timeout: u64,
     worktree_root: Option<String>,
@@ -81,6 +103,61 @@ impl Manifest {
 
     pub fn get(&self, name: &str) -> Option<&Agent> {
         self.agents.get(name)
+    }
+
+    /// The model alias registry.
+    pub fn models(&self) -> &BTreeMap<String, ModelProfile> {
+        &self.models
+    }
+
+    /// Select a model for an agent by alias or full ID.
+    ///
+    /// The agent's allowlist is authoritative: an agent without one refuses
+    /// every override, and the error names both the agent's allowed aliases
+    /// and the agents that would accept the request, so one retry fixes it.
+    pub fn select_model(&self, agent: &Agent, requested: &str) -> Result<(String, ModelProfile)> {
+        let allowed = agent.models.as_deref().unwrap_or_default();
+        let matches = |alias: &String| {
+            alias == requested || self.models.get(alias).is_some_and(|p| p.id == requested)
+        };
+        if let Some(alias) = allowed.iter().find(|alias| matches(alias)) {
+            return Ok((alias.clone(), self.models[alias].clone()));
+        }
+        let known: Vec<&String> = self.models.keys().filter(|alias| matches(alias)).collect();
+        if known.is_empty() {
+            let registry: Vec<&str> = self.models.keys().map(String::as_str).collect();
+            bail!(
+                "model '{requested}' is neither a registry alias nor a registered model ID; \
+                 registry aliases: {}",
+                list(&registry)
+            );
+        }
+        let allowed_text = if allowed.is_empty() {
+            format!(
+                "agent '{}' has no models allowlist and only runs on the harness default",
+                agent.name
+            )
+        } else {
+            format!("agent '{}' allows: {}", agent.name, allowed.join(", "))
+        };
+        let others: Vec<&str> = self
+            .agents
+            .values()
+            .filter(|other| {
+                other
+                    .models
+                    .iter()
+                    .flatten()
+                    .any(|alias| known.contains(&alias))
+            })
+            .map(|other| other.name.as_str())
+            .collect();
+        bail!(
+            "model '{requested}' is not allowed for agent '{}'; {allowed_text}; \
+             agents allowing '{requested}': {}",
+            agent.name,
+            list(&others)
+        )
     }
 
     /// Resolve an agent by name, naming the alternatives when it is unknown.
@@ -108,21 +185,30 @@ impl Manifest {
     }
 }
 
+fn list(items: &[&str]) -> String {
+    if items.is_empty() {
+        "none".to_string()
+    } else {
+        items.join(", ")
+    }
+}
+
 /// One manifest layer, validated but with no referenced file read yet.
 #[derive(Debug, Default)]
 struct Layer {
     timeout: Option<u64>,
     worktree_root: Patch<StringSource>,
+    /// Per alias: a profile replaces the inherited one whole; null removes it.
+    models: BTreeMap<String, Option<ModelProfile>>,
     agents: BTreeMap<String, AgentLayer>,
 }
 
 #[derive(Debug, Default)]
 struct AgentLayer {
     description: Patch<StringSource>,
-    model: Patch<StringSource>,
+    models: Patch<Vec<String>>,
     system_prompt: Patch<StringSource>,
     tools: Patch<Vec<StringSource>>,
-    thinking: Patch<StringSource>,
 }
 
 /// A merged field: its unread value and the layer that set it.
@@ -131,10 +217,9 @@ type Slot<T> = Option<(T, Source)>;
 #[derive(Debug)]
 struct MergedAgent {
     description: Slot<StringSource>,
-    model: Slot<StringSource>,
+    models: Slot<Vec<String>>,
     system_prompt: Slot<StringSource>,
     tools: Slot<Vec<StringSource>>,
-    thinking: Slot<StringSource>,
     source: Source,
 }
 
@@ -158,6 +243,7 @@ pub(crate) fn load_from(
     let mut timeout = 0;
     let mut worktree_root: Slot<StringSource> = None;
     let mut merged: BTreeMap<String, MergedAgent> = BTreeMap::new();
+    let mut models: BTreeMap<String, ModelProfile> = BTreeMap::new();
 
     for (path, source) in [
         (global_path.as_ref(), Source::User),
@@ -172,21 +258,25 @@ pub(crate) fn load_from(
             timeout = value;
         }
         apply(&mut worktree_root, layer.worktree_root, source);
+        for (alias, profile) in layer.models {
+            match profile {
+                Some(profile) => models.insert(alias, profile),
+                None => models.remove(&alias),
+            };
+        }
         for (name, patch) in layer.agents {
             let agent = merged.entry(name).or_insert(MergedAgent {
                 description: None,
-                model: None,
+                models: None,
                 system_prompt: None,
                 tools: None,
-                thinking: None,
                 source,
             });
             agent.source = source;
             apply(&mut agent.description, patch.description, source);
-            apply(&mut agent.model, patch.model, source);
+            apply(&mut agent.models, patch.models, source);
             apply(&mut agent.system_prompt, patch.system_prompt, source);
             apply(&mut agent.tools, patch.tools, source);
-            apply(&mut agent.thinking, patch.thinking, source);
         }
     }
 
@@ -207,12 +297,14 @@ pub(crate) fn load_from(
 
     let mut agents = BTreeMap::new();
     for (name, merged) in merged {
-        let agent = resolve_agent(&name, merged).with_context(|| format!("Agent '{name}'"))?;
+        let agent =
+            resolve_agent(&name, merged, &models).with_context(|| format!("Agent '{name}'"))?;
         agents.insert(name, agent);
     }
 
     Ok(Manifest {
         agents,
+        models,
         timeout,
         worktree_root,
         global_path,
@@ -221,7 +313,11 @@ pub(crate) fn load_from(
 }
 
 /// Read the winning value of every field, recording where each came from.
-fn resolve_agent(name: &str, merged: MergedAgent) -> Result<Agent> {
+fn resolve_agent(
+    name: &str,
+    merged: MergedAgent,
+    registry: &BTreeMap<String, ModelProfile>,
+) -> Result<Agent> {
     let mut field_sources = BTreeMap::new();
     let mut text = |field: &'static str, slot: Slot<StringSource>| -> Result<Option<String>> {
         let Some((value, source)) = slot else {
@@ -231,9 +327,23 @@ fn resolve_agent(name: &str, merged: MergedAgent) -> Result<Agent> {
         value.resolve().context(field).map(Some)
     };
     let description = text("description", merged.description)?;
-    let model = text("model", merged.model)?;
     let system_prompt = text("system_prompt", merged.system_prompt)?.unwrap_or_default();
-    let thinking = text("thinking", merged.thinking)?;
+    let models = match merged.models {
+        None => None,
+        Some((aliases, source)) => {
+            field_sources.insert("models", source);
+            if let Some(alias) = aliases.iter().find(|alias| !registry.contains_key(*alias)) {
+                let known: Vec<&str> = registry.keys().map(String::as_str).collect();
+                bail!(
+                    "models: unknown model alias '{alias}'; registry aliases: {}",
+                    list(&known)
+                );
+            }
+            Some(aliases)
+        }
+    };
+    let default = models.as_ref().map(|aliases| &aliases[0]);
+    let profile = default.map(|alias| &registry[alias]);
     let tools = match merged.tools {
         None => None,
         Some((items, source)) => {
@@ -249,10 +359,12 @@ fn resolve_agent(name: &str, merged: MergedAgent) -> Result<Agent> {
     Ok(Agent {
         name: name.to_string(),
         description,
-        model,
+        model: profile.map(|p| p.id.clone()),
+        model_alias: default.cloned(),
+        models,
         system_prompt,
         tools,
-        thinking,
+        thinking: profile.and_then(|p| p.thinking.clone()),
         source: merged.source,
         field_sources,
     })
@@ -288,6 +400,25 @@ fn parse_layer(value: &Value, base: &Path) -> Result<Layer> {
     }
     if let Some(value) = root.get("worktree_root") {
         layer.worktree_root = optional_string(value, base, "worktree_root")?;
+    }
+    match root.get("models") {
+        None => {}
+        Some(Value::Object(models)) => {
+            for (alias, profile) in models {
+                let profile = match profile {
+                    Value::Null => None,
+                    value => Some(parse_profile(value, &format!("models.{alias}"))?),
+                };
+                if alias.is_empty() {
+                    bail!("models: an alias must not be empty");
+                }
+                layer.models.insert(alias.clone(), profile);
+            }
+        }
+        Some(other) => bail!(
+            "'models' must be a JSON object keyed by alias, found {}",
+            kind(other)
+        ),
     }
     match root.get("agents") {
         None => {}
@@ -325,9 +456,36 @@ fn parse_agent(value: &Value, base: &Path, path: &str) -> Result<AgentLayer> {
         }
     };
     agent.description = string("description")?;
-    agent.model = string("model")?;
     agent.system_prompt = string("system_prompt")?;
-    agent.thinking = string("thinking")?;
+    agent.models = match fields.get("models") {
+        None => Patch::Absent,
+        Some(Value::Null) => Patch::Clear,
+        Some(Value::Array(items)) => {
+            if items.is_empty() {
+                bail!(
+                    "{path}.models: must list at least one alias; omit it to use the harness default"
+                );
+            }
+            let mut aliases: Vec<String> = Vec::with_capacity(items.len());
+            for (index, item) in items.iter().enumerate() {
+                let Value::String(alias) = item else {
+                    bail!(
+                        "{path}.models[{index}]: expected an alias string, found {}",
+                        kind(item)
+                    );
+                };
+                if aliases.contains(alias) {
+                    bail!("{path}.models: duplicate alias '{alias}'");
+                }
+                aliases.push(alias.clone());
+            }
+            Patch::Set(aliases)
+        }
+        Some(other) => bail!(
+            "{path}.models: expected an array of model aliases, found {}",
+            kind(other)
+        ),
+    };
     agent.tools = match fields.get("tools") {
         None => Patch::Absent,
         Some(Value::Null) => Patch::Clear,
@@ -347,6 +505,37 @@ fn parse_agent(value: &Value, base: &Path, path: &str) -> Result<AgentLayer> {
         ),
     };
     Ok(agent)
+}
+
+fn parse_profile(value: &Value, path: &str) -> Result<ModelProfile> {
+    let Value::Object(fields) = value else {
+        bail!(
+            "{path}: a model profile must be a JSON object, found {}",
+            kind(value)
+        );
+    };
+    reject_unknown(fields, &PROFILE_FIELDS, path)?;
+    let text = |field: &str| -> Result<Option<String>> {
+        match fields.get(field) {
+            None | Some(Value::Null) => Ok(None),
+            Some(Value::String(text)) if text.is_empty() => {
+                bail!("{path}.{field}: must not be empty")
+            }
+            Some(Value::String(text)) if text.contains('\0') => {
+                bail!("{path}.{field}: contains a NUL byte")
+            }
+            Some(Value::String(text)) => Ok(Some(text.clone())),
+            Some(other) => bail!("{path}.{field}: expected a string, found {}", kind(other)),
+        }
+    };
+    let Some(id) = text("id")? else {
+        bail!("{path}.id: a model ID is required");
+    };
+    Ok(ModelProfile {
+        id,
+        thinking: text("thinking")?,
+        provider: text("provider")?,
+    })
 }
 
 /// A string field where null clears an inherited value.
@@ -464,5 +653,73 @@ mod tests {
             r#"{"worktree_root": null}"#,
         );
         assert_eq!(manifest.unwrap().worktree_root(Path::new("/repo")), None);
+    }
+
+    #[test]
+    fn agents_default_to_the_first_alias_and_take_its_profile() {
+        let (_dir, manifest) = layers(
+            r#"{"models": {"opus": {"id": "a/opus", "thinking": "high", "provider": "a"},
+                           "flash": {"id": "g/flash"}},
+                "agents": {"r": {"models": ["flash", "opus"]}, "bare": {}}}"#,
+            r#"{"models": {"opus": {"id": "a/opus-6"}}, "agents": {"r": {"models": ["opus"]}}}"#,
+        );
+        let manifest = manifest.unwrap();
+        let r = manifest.get("r").unwrap();
+        assert_eq!(r.models, Some(vec!["opus".to_string()]));
+        assert_eq!(r.model.as_deref(), Some("a/opus-6"));
+        assert_eq!(
+            r.thinking, None,
+            "a project profile replaces the alias whole"
+        );
+        let bare = manifest.get("bare").unwrap();
+        assert_eq!((bare.models.as_ref(), bare.model.as_ref()), (None, None));
+    }
+
+    #[test]
+    fn registry_and_allowlists_are_validated() {
+        for (project, expected) in [
+            (
+                r#"{"agents": {"a": {"models": ["nope"]}}}"#,
+                "unknown model alias 'nope'",
+            ),
+            (r#"{"agents": {"a": {"models": []}}}"#, "at least one alias"),
+            (
+                r#"{"models": {"x": {"id": "i"}}, "agents": {"a": {"models": ["x", "x"]}}}"#,
+                "duplicate alias 'x'",
+            ),
+            (r#"{"models": {"x": {}}}"#, "models.x.id"),
+            (
+                r#"{"models": {"x": {"id": "i", "cost": 1}}}"#,
+                "unknown field 'cost'",
+            ),
+            (r#"{"models": []}"#, "keyed by alias"),
+            (
+                r#"{"agents": {"a": {"model": "m"}}}"#,
+                "unknown field 'model'",
+            ),
+            (
+                r#"{"models": {"x": {"id": "i"}}, "agents": {"a": {"models": ["x"]}}}"#,
+                "",
+            ),
+        ] {
+            let (_dir, manifest) = layers(r#"{"models": {"x": null}}"#, project);
+            match (manifest, expected) {
+                (Ok(_), "") => {}
+                (Ok(_), _) => panic!("{project} should be rejected"),
+                (Err(err), _) => {
+                    let err = format!("{err:#}");
+                    assert!(
+                        !expected.is_empty() && err.contains(expected),
+                        "{project}: {err}"
+                    );
+                }
+            }
+        }
+        // Removing an alias another layer's agent still uses is an error.
+        let (_dir, manifest) = layers(
+            r#"{"models": {"x": {"id": "i"}}, "agents": {"a": {"models": ["x"]}}}"#,
+            r#"{"models": {"x": null}}"#,
+        );
+        assert!(format!("{:#}", manifest.unwrap_err()).contains("unknown model alias 'x'"));
     }
 }
