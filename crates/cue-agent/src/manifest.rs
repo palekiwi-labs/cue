@@ -233,7 +233,9 @@ fn apply<T>(slot: &mut Slot<T>, patch: Patch<T>, source: Source) {
 
 /// Load and merge both manifest layers for a working directory.
 pub fn load(cwd: &Path) -> Result<Manifest> {
-    load_from(global_manifest_path(), find_project_manifest(cwd))
+    let global = global_manifest_path();
+    let project = find_project_manifest(cwd, global.as_deref());
+    load_from(global, project)
 }
 
 pub(crate) fn load_from(
@@ -569,20 +571,29 @@ fn config_home() -> Option<PathBuf> {
     dirs::home_dir().map(|home| home.join(".config"))
 }
 
-/// Find the nearest project manifest, walking upwards and stopping at the
-/// repository root so a manifest above an unrelated checkout is never adopted.
-fn find_project_manifest(cwd: &Path) -> Option<PathBuf> {
-    let mut dir = cwd;
-    loop {
-        let candidate = dir.join(PROJECT_MANIFEST);
-        if candidate.is_file() {
-            return Some(candidate);
-        }
-        if dir.join(".git").exists() {
+/// Find the project manifest for a working directory.
+///
+/// Inside a repository this is the nearest manifest at or above `cwd`, up to
+/// the repository root, so a manifest above an unrelated checkout is never
+/// adopted. Outside a repository only `cwd` itself is considered. The global
+/// manifest is never returned as the project layer.
+fn find_project_manifest(cwd: &Path, global: Option<&Path>) -> Option<PathBuf> {
+    let global = global.and_then(|path| path.canonicalize().ok());
+    let accept = |candidate: PathBuf| -> Option<PathBuf> {
+        if !candidate.is_file() {
             return None;
         }
-        dir = dir.parent()?;
-    }
+        match (&global, candidate.canonicalize()) {
+            (Some(global), Ok(real)) if *global == real => None,
+            _ => Some(candidate),
+        }
+    };
+    let Some(root) = cwd.ancestors().find(|dir| dir.join(".git").exists()) else {
+        return accept(cwd.join(PROJECT_MANIFEST));
+    };
+    cwd.ancestors()
+        .take_while(|dir| dir.starts_with(root))
+        .find_map(|dir| accept(dir.join(PROJECT_MANIFEST)))
 }
 
 #[cfg(test)]
@@ -602,6 +613,48 @@ mod tests {
         std::fs::write(project_dir.join("root.txt"), "trees").unwrap();
         let manifest = load_from(Some(global_path), Some(project_path));
         (dir, manifest)
+    }
+
+    fn touch_manifest(dir: &Path) -> PathBuf {
+        std::fs::create_dir_all(dir).unwrap();
+        let path = dir.join(PROJECT_MANIFEST);
+        std::fs::write(&path, "{}").unwrap();
+        path
+    }
+
+    #[test]
+    fn the_global_manifest_is_never_the_project_layer() {
+        let dir = tempfile::tempdir().unwrap();
+        let global = touch_manifest(&dir.path().join("config/cue"));
+        let cwd = dir.path().join("config/cue");
+        assert_eq!(find_project_manifest(&cwd, Some(&global)), None);
+        let sub = cwd.join("sub");
+        std::fs::create_dir_all(&sub).unwrap();
+        assert_eq!(find_project_manifest(&sub, Some(&global)), None);
+    }
+
+    #[test]
+    fn outside_a_repository_only_the_working_directory_is_searched() {
+        let dir = tempfile::tempdir().unwrap();
+        touch_manifest(dir.path());
+        let cwd = dir.path().join("scratch");
+        std::fs::create_dir_all(&cwd).unwrap();
+        assert_eq!(find_project_manifest(&cwd, None), None);
+        let own = touch_manifest(&cwd);
+        assert_eq!(find_project_manifest(&cwd, None), Some(own));
+    }
+
+    #[test]
+    fn inside_a_repository_the_search_reaches_the_repository_root_only() {
+        let dir = tempfile::tempdir().unwrap();
+        touch_manifest(dir.path());
+        let repo = dir.path().join("repo");
+        std::fs::create_dir_all(repo.join(".git")).unwrap();
+        let cwd = repo.join("a/b");
+        std::fs::create_dir_all(&cwd).unwrap();
+        assert_eq!(find_project_manifest(&cwd, None), None);
+        let root = touch_manifest(&repo);
+        assert_eq!(find_project_manifest(&cwd, None), Some(root));
     }
 
     #[test]

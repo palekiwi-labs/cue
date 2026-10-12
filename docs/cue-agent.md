@@ -29,7 +29,9 @@ layer overriding field by field:
 1. `$XDG_CONFIG_HOME/cue/cue-agent.json` (falling back to
    `~/.config/cue/cue-agent.json`)
 2. `cue-agent.json`, the nearest one at or above the working directory,
-   stopping at the repository root
+   stopping at the repository root. Outside a repository only the working
+   directory itself is checked. The global file is never used as the
+   project layer.
 
 `agents` is an object keyed by agent name, never an array: a merge replaces an
 array wholesale, so an array would let a project file wipe every global agent
