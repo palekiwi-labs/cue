@@ -28,7 +28,8 @@ pub fn repository_scope(repo: &Path) -> Result<PathBuf> {
         .with_context(|| format!("Could not derive repository scope from origin '{origin}'"))
 }
 
-fn parse_origin_scope(origin: &str) -> Option<PathBuf> {
+/// Derive the `<org>/<repo>` store scope from an origin URL or path.
+pub fn parse_origin_scope(origin: &str) -> Option<PathBuf> {
     let origin = origin.trim().trim_end_matches('/').trim_end_matches(".git");
     let path = if let Some((_, path)) = origin.rsplit_once(':') {
         path
