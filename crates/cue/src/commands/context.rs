@@ -183,16 +183,35 @@ fn validate_pin_segment(value: &str, segment: &str) -> anyhow::Result<()> {
         .map_err(|_| anyhow::anyhow!("Invalid context '{value}': {PIN_FORM}"))
 }
 
-/// The `<org>/<repo>` scope a query is narrowed to, or `None` when it spans
-/// the whole store.
-///
-/// Resolving the repository scope shells out to Git, so a command resolves it
-/// once and hands it to every walk that needs it. `QueryScope::Store` resolves
-/// nothing, which is what lets a whole-store query run outside a repository.
-fn query_scope_prefix(cwd: &Path, scope: Option<&str>) -> anyhow::Result<Option<String>> {
+/// Resolve once for both context and pin walks. None means the whole store;
+/// an empty set means no matching scopes, not an unrestricted query.
+fn query_scope_prefixes(
+    cwd: &Path,
+    scope: Option<&str>,
+    store_root: &Path,
+) -> anyhow::Result<Option<Vec<String>>> {
     let config = crate::config::Config::load(cwd)?;
-    match scope.unwrap_or(&config.default_scope) {
-        "repo" => Ok(Some(scope_prefix(cwd)?)),
+    let name = scope.unwrap_or(&config.default_scope);
+    if let Some(matchers) = config.scopes.get(name) {
+        let prefixes = scope_dirs(store_root)?
+            .into_iter()
+            .map(|(prefix, _)| prefix)
+            .filter(|prefix| !prefix.starts_with('.'))
+            .filter(|prefix| {
+                matchers.iter().any(|matcher| {
+                    matcher == prefix
+                        || matcher.strip_suffix("/*").is_some_and(|org| {
+                            prefix
+                                .split_once('/')
+                                .is_some_and(|(actual, _)| actual == org)
+                        })
+                })
+            })
+            .collect();
+        return Ok(Some(prefixes));
+    }
+    match name {
+        "repo" => Ok(Some(vec![scope_prefix(cwd)?])),
         "store" => Ok(None),
         name => anyhow::bail!(
             "unknown query scope '{name}': expected repo, store, or a configured name"
@@ -262,8 +281,9 @@ fn handle_unpin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow:
 /// The repository scope is resolved only for `QueryScope::Repo`, so the
 /// whole-store view works from anywhere, including outside a repository.
 fn handle_pins(cwd: &Path, scope: Option<String>, store_root: Option<&Path>) -> anyhow::Result<()> {
-    let pins_dir = pins_dir(&store::root(store_root)?);
-    let prefix = query_scope_prefix(cwd, scope.as_deref())?;
+    let store_root = store::root(store_root)?;
+    let pins_dir = pins_dir(&store_root);
+    let prefix = query_scope_prefixes(cwd, scope.as_deref(), &store_root)?;
     let mut addresses: Vec<String> = read_pins(prefix.as_deref(), &pins_dir)?
         .into_iter()
         .map(|(scope, context)| format!("{scope}/{context}"))
@@ -283,7 +303,7 @@ fn handle_pins(cwd: &Path, scope: Option<String>, store_root: Option<&Path>) -> 
 ///
 /// Reading pin state costs one directory listing per scope and opens nothing,
 /// because a pin is a name rather than a document.
-fn read_pins(prefix: Option<&str>, pins_dir: &Path) -> anyhow::Result<Vec<(String, String)>> {
+fn read_pins(prefix: Option<&[String]>, pins_dir: &Path) -> anyhow::Result<Vec<(String, String)>> {
     let mut pins = Vec::new();
     match prefix {
         None => {
@@ -293,8 +313,10 @@ fn read_pins(prefix: Option<&str>, pins_dir: &Path) -> anyhow::Result<Vec<(Strin
                 collect_scope_pins(&scope_dir, &scope, &mut pins)?;
             }
         }
-        Some(scope) => {
-            collect_scope_pins(&pins_dir.join(scope), scope, &mut pins)?;
+        Some(scopes) => {
+            for scope in scopes {
+                collect_scope_pins(&pins_dir.join(scope), scope, &mut pins)?;
+            }
         }
     }
     Ok(pins)
@@ -429,7 +451,7 @@ fn handle_list(
         limit,
     } = options;
     let store_root = store::root(store_root)?;
-    let prefix = query_scope_prefix(cwd, scope.as_deref())?;
+    let prefix = query_scope_prefixes(cwd, scope.as_deref(), &store_root)?;
 
     // Pin state is read when it selects the listing, and when JSON reports
     // each row's membership. Either way it is one directory listing per scope
@@ -462,8 +484,15 @@ fn handle_list(
                     collect_scope_contexts(&scope_dir, &scope, &filters, &mut contexts)?;
                 }
             }
-            Some(scope) => {
-                collect_scope_contexts(&store_root.join(scope), scope, &filters, &mut contexts)?;
+            Some(scopes) => {
+                for scope in scopes {
+                    collect_scope_contexts(
+                        &store_root.join(scope),
+                        scope,
+                        &filters,
+                        &mut contexts,
+                    )?;
+                }
             }
         }
     }
