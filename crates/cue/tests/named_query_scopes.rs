@@ -3,6 +3,76 @@ mod helpers;
 use predicates::prelude::*;
 
 #[test]
+fn project_config_merges_names_replaces_arrays_and_shadows_builtins() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for address in ["acme/widgets/alpha", "other/project/beta"] {
+        std::fs::create_dir_all(env.cue_store().join(address)).unwrap();
+        env.command()
+            .args(["context", "pin", address])
+            .assert()
+            .success();
+    }
+    std::fs::write(
+        env.config_dir.join("cue.json"),
+        r#"{
+        "scopes":{"team":["acme/*"],"retained":["acme/*"]},
+        "default_scope":"retained"
+    }"#,
+    )
+    .unwrap();
+    std::fs::write(
+        env.root().join("cue.json"),
+        r#"{
+        "scopes":{"team":["other/*"],"repo":["other/*"],"store":[]},
+        "default_scope":"team"
+    }"#,
+    )
+    .unwrap();
+    let nested = env.root().join("nested/child");
+    std::fs::create_dir_all(&nested).unwrap();
+    for (scope, expected) in [
+        (None, "other/project/beta\n"),
+        (Some("retained"), "acme/widgets/alpha\n"),
+        (Some("repo"), "other/project/beta\n"),
+        (Some("store"), ""),
+    ] {
+        let mut command = env.command();
+        command.current_dir(&nested).args(["context", "pins"]);
+        if let Some(scope) = scope {
+            command.args(["--scope", scope]);
+        }
+        command.assert().success().stdout(expected);
+    }
+}
+
+#[test]
+fn malformed_matchers_fail_instead_of_silently_matching_nothing() {
+    let env = helpers::TestEnv::new();
+    for matcher in [
+        "acme",
+        "*/repo",
+        "acme/part*",
+        "acme/../repo",
+        "../repo",
+        "/repo",
+        "acme/",
+        "acme/repo/extra",
+        ".state/*",
+        "acme/\nrepo",
+        "acme/\\repo",
+    ] {
+        let config = serde_json::json!({"scopes":{"bad":[matcher]},"default_scope":"bad"});
+        std::fs::write(env.config_dir.join("cue.json"), config.to_string()).unwrap();
+        env.command()
+            .args(["context", "pins"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("matcher"));
+    }
+}
+
+#[test]
 fn named_scope_unions_existing_scopes_without_duplicates() {
     let env = helpers::TestEnv::new();
     for address in [

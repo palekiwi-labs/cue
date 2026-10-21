@@ -22,6 +22,12 @@ impl Default for Config {
     }
 }
 
+fn valid_segment(value: &str) -> bool {
+    !value.starts_with(['.', '~'])
+        && !value.contains(['*', '/', '\\'])
+        && cuelib::head::validate_slug(value).is_ok()
+}
+
 impl Config {
     pub fn load(cwd: &Path) -> anyhow::Result<Self> {
         let global = match std::env::var_os("CUE_CONFIG_DIR") {
@@ -41,6 +47,18 @@ impl Config {
             let root = String::from_utf8(output.stdout)?;
             config = config.merge(Json::file(Path::new(root.trim_end()).join("cue.json")));
         }
-        Ok(config.extract()?)
+        let config: Self = config.extract()?;
+        for (name, matchers) in &config.scopes {
+            for matcher in matchers {
+                let valid = matcher.split_once('/').is_some_and(|(org, repo)| {
+                    valid_segment(org) && (repo == "*" || valid_segment(repo))
+                });
+                anyhow::ensure!(
+                    valid,
+                    "invalid matcher '{matcher}' in scope '{name}': expected <org>/<repo> or <org>/*"
+                );
+            }
+        }
+        Ok(config)
     }
 }
