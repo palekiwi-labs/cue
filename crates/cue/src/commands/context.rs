@@ -509,12 +509,7 @@ fn handle_list(
         return Ok(());
     }
     for context in contexts {
-        match scope {
-            // A bare slug identifies a context only within one scope, and is
-            // what `cue context switch` accepts.
-            QueryScope::Repo => println!("{}", context.context),
-            QueryScope::Store => println!("{}/{}", context.scope, context.context),
-        }
+        println!("{}/{}", context.scope, context.context);
     }
     Ok(())
 }
