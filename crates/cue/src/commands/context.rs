@@ -190,6 +190,7 @@ fn validate_pin_segment(value: &str, segment: &str) -> anyhow::Result<()> {
 /// once and hands it to every walk that needs it. `QueryScope::Store` resolves
 /// nothing, which is what lets a whole-store query run outside a repository.
 fn query_scope_prefix(cwd: &Path, scope: QueryScope) -> anyhow::Result<Option<String>> {
+    crate::config::Config::load(cwd)?;
     match scope {
         QueryScope::Repo => Ok(Some(scope_prefix(cwd)?)),
         QueryScope::Store => Ok(None),
