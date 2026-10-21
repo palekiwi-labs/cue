@@ -3,6 +3,161 @@ mod helpers;
 use predicates::prelude::*;
 
 #[test]
+fn named_default_does_not_redirect_singular_operations() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    std::fs::write(
+        env.config_dir.join("cue.json"),
+        r#"{
+        "scopes":{"team":["other/*"]},"default_scope":"team"
+    }"#,
+    )
+    .unwrap();
+    env.command()
+        .args(["context", "create", "local"])
+        .assert()
+        .success();
+    env.command()
+        .args(["context", "pin", "local"])
+        .assert()
+        .success()
+        .stdout("pinned acme/widgets/local\n");
+    env.command()
+        .args([
+            "add",
+            "--context",
+            "local",
+            "--type",
+            "note",
+            "example.md",
+            "local note",
+        ])
+        .assert()
+        .success();
+    assert!(
+        env.cue_store()
+            .join("acme/widgets/local/note/example.md")
+            .is_file()
+    );
+    env.command()
+        .args(["status", "--context", "local", "--json"])
+        .assert()
+        .success()
+        .stdout(predicate::str::contains("acme/widgets/local"));
+    env.command()
+        .args(["context", "unpin", "local"])
+        .assert()
+        .success()
+        .stdout("unpinned acme/widgets/local\n");
+}
+
+#[test]
+fn unmatched_and_unknown_defaults_are_distinct() {
+    let env = helpers::TestEnv::new();
+    std::fs::write(
+        env.config_dir.join("cue.json"),
+        r#"{
+        "scopes":{"empty":["absent/*"]},"default_scope":"empty"
+    }"#,
+    )
+    .unwrap();
+    for command in ["list", "pins"] {
+        env.command()
+            .args(["context", command])
+            .assert()
+            .success()
+            .stdout("");
+        env.command()
+            .args(["context", command, "--scope", "missing"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("unknown query scope 'missing'"));
+    }
+    std::fs::write(
+        env.config_dir.join("cue.json"),
+        r#"{"default_scope":"missing"}"#,
+    )
+    .unwrap();
+    env.command()
+        .args(["context", "pins"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown query scope 'missing'"));
+    env.command()
+        .args(["context", "pins", "--scope", "store"])
+        .assert()
+        .success();
+}
+
+#[test]
+fn named_pinned_listing_filters_before_limit_without_reading_unpinned_contexts() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    for (slug, kind) in [("alpha", "work"), ("beta", "coord"), ("gamma", "coord")] {
+        env.command()
+            .args(["context", "create", slug, "--kind", kind])
+            .assert()
+            .success();
+        env.command()
+            .args(["context", "pin", slug])
+            .assert()
+            .success();
+    }
+    let bad = env.cue_store().join("acme/widgets/unpinned");
+    std::fs::create_dir_all(&bad).unwrap();
+    std::fs::write(bad.join("context.md"), "not valid metadata").unwrap();
+    std::fs::write(
+        env.config_dir.join("cue.json"),
+        r#"{
+        "scopes":{"team":["acme/*"]},"default_scope":"team"
+    }"#,
+    )
+    .unwrap();
+    env.command()
+        .args([
+            "context",
+            "list",
+            "--pinned",
+            "--filter",
+            "kind=coord",
+            "--limit",
+            "1",
+        ])
+        .assert()
+        .success()
+        .stdout("acme/widgets/beta\n");
+}
+
+#[test]
+fn default_global_path_is_home_config_and_legacy_project_keys_fail() {
+    let env = helpers::TestEnv::new();
+    let home = env.root().join("home");
+    std::fs::create_dir_all(home.join(".config/cue")).unwrap();
+    std::fs::write(
+        home.join(".config/cue/cue.json"),
+        r#"{"default_scope":"store"}"#,
+    )
+    .unwrap();
+    env.command()
+        .env_remove("CUE_CONFIG_DIR")
+        .env("HOME", &home)
+        .args(["context", "pins"])
+        .assert()
+        .success();
+    env.setup_repo_with_origin();
+    std::fs::write(
+        env.root().join("cue.json"),
+        r#"{"context":{"master":{"artifacts":[]}}}"#,
+    )
+    .unwrap();
+    env.command()
+        .args(["context", "list"])
+        .assert()
+        .failure()
+        .stderr(predicate::str::contains("unknown field"));
+}
+
+#[test]
 fn project_config_merges_names_replaces_arrays_and_shadows_builtins() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();

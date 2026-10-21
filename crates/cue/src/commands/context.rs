@@ -276,10 +276,8 @@ fn handle_unpin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow:
     Ok(())
 }
 
-/// List the working set at the requested breadth.
-///
-/// The repository scope is resolved only for `QueryScope::Repo`, so the
-/// whole-store view works from anywhere, including outside a repository.
+/// List the working set at the configured or explicit query breadth.
+/// Only the built-in repo scope requires a repository origin.
 fn handle_pins(cwd: &Path, scope: Option<String>, store_root: Option<&Path>) -> anyhow::Result<()> {
     let store_root = store::root(store_root)?;
     let pins_dir = pins_dir(&store_root);
@@ -426,10 +424,8 @@ struct ContextListOptions {
     limit: Option<usize>,
 }
 
-/// List contexts at the requested breadth.
-///
-/// The repository scope is resolved only for `QueryScope::Repo`, so the
-/// whole-store view works from anywhere, including outside a repository.
+/// List contexts at the configured or explicit query breadth.
+/// Only the built-in repo scope requires a repository origin.
 ///
 /// `pinned` selects what is enumerated rather than narrowing what was
 /// enumerated. Pin state is a flat directory of markers so that the working
