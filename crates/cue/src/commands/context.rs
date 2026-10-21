@@ -1,4 +1,4 @@
-use crate::cli::{ContextCommands, ContextSort, QueryScope};
+use crate::cli::{ContextCommands, ContextSort};
 use crate::list::{Filter, apply_filters};
 use anyhow::Context as _;
 use cuelib::artifact::extract_frontmatter_yaml;
@@ -189,11 +189,14 @@ fn validate_pin_segment(value: &str, segment: &str) -> anyhow::Result<()> {
 /// Resolving the repository scope shells out to Git, so a command resolves it
 /// once and hands it to every walk that needs it. `QueryScope::Store` resolves
 /// nothing, which is what lets a whole-store query run outside a repository.
-fn query_scope_prefix(cwd: &Path, scope: QueryScope) -> anyhow::Result<Option<String>> {
-    crate::config::Config::load(cwd)?;
-    match scope {
-        QueryScope::Repo => Ok(Some(scope_prefix(cwd)?)),
-        QueryScope::Store => Ok(None),
+fn query_scope_prefix(cwd: &Path, scope: Option<&str>) -> anyhow::Result<Option<String>> {
+    let config = crate::config::Config::load(cwd)?;
+    match scope.unwrap_or(&config.default_scope) {
+        "repo" => Ok(Some(scope_prefix(cwd)?)),
+        "store" => Ok(None),
+        name => anyhow::bail!(
+            "unknown query scope '{name}': expected repo, store, or a configured name"
+        ),
     }
 }
 
@@ -258,9 +261,9 @@ fn handle_unpin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow:
 ///
 /// The repository scope is resolved only for `QueryScope::Repo`, so the
 /// whole-store view works from anywhere, including outside a repository.
-fn handle_pins(cwd: &Path, scope: QueryScope, store_root: Option<&Path>) -> anyhow::Result<()> {
+fn handle_pins(cwd: &Path, scope: Option<String>, store_root: Option<&Path>) -> anyhow::Result<()> {
     let pins_dir = pins_dir(&store::root(store_root)?);
-    let prefix = query_scope_prefix(cwd, scope)?;
+    let prefix = query_scope_prefix(cwd, scope.as_deref())?;
     let mut addresses: Vec<String> = read_pins(prefix.as_deref(), &pins_dir)?
         .into_iter()
         .map(|(scope, context)| format!("{scope}/{context}"))
@@ -395,7 +398,7 @@ fn target_branch(cwd: &Path, branch: Option<String>, action: &str) -> anyhow::Re
 struct ContextListOptions {
     json: bool,
     pinned: bool,
-    scope: QueryScope,
+    scope: Option<String>,
     sort: Option<ContextSort>,
     filters: Vec<Filter>,
     limit: Option<usize>,
@@ -426,7 +429,7 @@ fn handle_list(
         limit,
     } = options;
     let store_root = store::root(store_root)?;
-    let prefix = query_scope_prefix(cwd, scope)?;
+    let prefix = query_scope_prefix(cwd, scope.as_deref())?;
 
     // Pin state is read when it selects the listing, and when JSON reports
     // each row's membership. Either way it is one directory listing per scope
