@@ -8,6 +8,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+mod tree;
+
 #[derive(Serialize)]
 struct NewContextMetadata<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -56,12 +58,14 @@ struct ContextListEntry {
     created_at: u64,
     parent: Option<String>,
     refs: Vec<String>,
-    /// Populated for JSON output or recency sorting. Preserve nanoseconds for
-    /// ordering, but expose whole Unix seconds (or null) in JSON.
+    /// Populated only when the selection asks for activity, as JSON output
+    /// and recency ordering do. Preserve nanoseconds for ordering, but expose
+    /// whole Unix seconds (or null) in JSON.
     #[serde(rename = "last_logged_at", serialize_with = "serialize_seconds")]
     last_logged_nanos: Option<u64>,
-    /// Whether the context is in the operator's working set. Populated for
-    /// JSON output only, because plain output reports identifiers alone.
+    /// Whether the context is in the operator's working set. Populated only
+    /// when the selection asks for membership, as JSON output does; plain
+    /// output reports identifiers alone.
     pinned: bool,
     path: PathBuf,
 }
@@ -122,6 +126,32 @@ pub fn handle(
             },
             store_root,
         ),
+        ContextCommands::Tree {
+            json,
+            pinned,
+            scope,
+            root,
+            sort,
+            filters,
+        } => {
+            let contexts = select_contexts(
+                cwd,
+                store_root,
+                ContextSelection {
+                    pinned,
+                    scope,
+                    filters,
+                    membership: json,
+                    activity: json || sort == Some(ContextSort::Recency),
+                },
+            )?;
+            let root = root
+                .map(|selector| cuelib::head::resolve_selector(&selector)?.address(cwd))
+                .transpose()?;
+            let recency = sort == Some(ContextSort::Recency);
+            let tree = tree::build(contexts, root.as_deref(), recency)?;
+            tree::print(&tree, json)
+        }
         ContextCommands::Pin { context } => handle_pin(cwd, &context, store_root),
         ContextCommands::Unpin { context } => handle_unpin(cwd, &context, store_root),
         ContextCommands::Pins { scope } => handle_pins(cwd, scope, store_root),
@@ -452,6 +482,72 @@ fn handle_list(
         filters,
         limit,
     } = options;
+    let recency = sort == Some(ContextSort::Recency);
+    let mut contexts = select_contexts(
+        cwd,
+        store_root,
+        ContextSelection {
+            pinned,
+            scope,
+            filters,
+            membership: json,
+            activity: recency || json,
+        },
+    )?;
+
+    if recency {
+        // A context with no log entry has no activity to order by and sorts
+        // last, which `None` compares as under the reversed key. The sort is
+        // stable and the input is already in canonical address order, so
+        // contexts sharing a stamp keep that order. The key is the nanosecond
+        // stamp rather than the second that is reported, so entries written
+        // within one second stay in the order they happened.
+        contexts.sort_by_key(|context| std::cmp::Reverse(context.last_logged_nanos));
+    }
+
+    // Truncation is applied to the finished order, so a limit selects the
+    // leading rows of what was asked for rather than an arbitrary subset that
+    // is then ordered. A limit of zero selects nothing, which is a listing of
+    // no contexts and not an error.
+    if let Some(limit) = limit {
+        contexts.truncate(limit);
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&contexts)?);
+        return Ok(());
+    }
+    for context in contexts {
+        println!("{}/{}", context.scope, context.context);
+    }
+    Ok(())
+}
+
+/// Which contexts a listing or tree is built from, and which derived row
+/// fields must be populated.
+struct ContextSelection {
+    pinned: bool,
+    scope: Option<String>,
+    filters: Vec<Filter>,
+    /// Report each row's working-set membership.
+    membership: bool,
+    /// Read each row's latest log activity.
+    activity: bool,
+}
+
+/// Enumerate and filter contexts, in canonical address order.
+fn select_contexts(
+    cwd: &Path,
+    store_root: Option<&Path>,
+    selection: ContextSelection,
+) -> anyhow::Result<Vec<ContextListEntry>> {
+    let ContextSelection {
+        pinned,
+        scope,
+        filters,
+        membership,
+        activity,
+    } = selection;
     let store_root = store::root(store_root)?;
     let prefix = query_scope_prefixes(cwd, scope.as_deref(), &store_root)?;
 
@@ -459,7 +555,7 @@ fn handle_list(
     // each row's membership. Either way it is one directory listing per scope
     // and opens nothing, so reporting membership on an already-enumerated
     // listing costs a read that does not grow with the store.
-    let pins = if pinned || json {
+    let pins = if pinned || membership {
         read_pins(prefix.as_deref(), &pins_dir(&store_root))?
     } else {
         Vec::new()
@@ -508,8 +604,7 @@ fn handle_list(
 
     // Scan filenames once per context when needed for ordering or JSON.
     // Plain default listing does not scan log directories.
-    let recency = sort == Some(ContextSort::Recency);
-    if recency || json {
+    if activity {
         read_log_activity(&mut contexts)?;
     }
 
@@ -517,36 +612,10 @@ fn handle_list(
     // selection that found it, so it is reported on every JSON row, including
     // the rows of a listing already narrowed to the working set. A consumer
     // reads one field without branching on which query produced the row.
-    if json {
+    if membership {
         mark_pinned(&mut contexts, &pins);
     }
-
-    if recency {
-        // A context with no log entry has no activity to order by and sorts
-        // last, which `None` compares as under the reversed key. The sort is
-        // stable and the input is already in canonical address order, so
-        // contexts sharing a stamp keep that order. The key is the nanosecond
-        // stamp rather than the second that is reported, so entries written
-        // within one second stay in the order they happened.
-        contexts.sort_by_key(|context| std::cmp::Reverse(context.last_logged_nanos));
-    }
-
-    // Truncation is applied to the finished order, so a limit selects the
-    // leading rows of what was asked for rather than an arbitrary subset that
-    // is then ordered. A limit of zero selects nothing, which is a listing of
-    // no contexts and not an error.
-    if let Some(limit) = limit {
-        contexts.truncate(limit);
-    }
-
-    if json {
-        println!("{}", serde_json::to_string_pretty(&contexts)?);
-        return Ok(());
-    }
-    for context in contexts {
-        println!("{}/{}", context.scope, context.context);
-    }
-    Ok(())
+    Ok(contexts)
 }
 
 /// Record which listed contexts are in the working set.
