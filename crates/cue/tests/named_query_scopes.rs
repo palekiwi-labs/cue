@@ -3,6 +3,57 @@ mod helpers;
 use predicates::prelude::*;
 
 #[test]
+fn exclusions_subtract_from_positive_union_regardless_of_order() {
+    let env = helpers::TestEnv::new();
+    for address in ["acme/one/alpha", "acme/two/beta", "other/project/gamma"] {
+        let dir = env.cue_store().join(address);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join("context.md"),
+            "---\nkind: work\ncreated_at: 1\n---\n",
+        )
+        .unwrap();
+        env.command()
+            .args(["context", "pin", address])
+            .assert()
+            .success();
+    }
+    for (matchers, expected) in [
+        (
+            vec!["acme/*", "!acme/two", "other/*"],
+            "acme/one/alpha\nother/project/gamma\n",
+        ),
+        (
+            vec!["!acme/two", "acme/*", "other/*", "acme/two"],
+            "acme/one/alpha\nother/project/gamma\n",
+        ),
+        (
+            vec!["acme/one", "!acme/*", "other/*"],
+            "other/project/gamma\n",
+        ),
+        (
+            vec!["!acme/*", "acme/one", "other/*"],
+            "other/project/gamma\n",
+        ),
+        (vec!["!acme/*"], ""),
+        (
+            vec!["acme/*", "!missing/*"],
+            "acme/one/alpha\nacme/two/beta\n",
+        ),
+    ] {
+        let config = serde_json::json!({"scopes":{"team":matchers},"default_scope":"team"});
+        std::fs::write(env.config_dir.join("cue.json"), config.to_string()).unwrap();
+        for args in [
+            vec!["context", "list"],
+            vec!["context", "pins"],
+            vec!["context", "list", "--pinned"],
+        ] {
+            env.command().args(args).assert().success().stdout(expected);
+        }
+    }
+}
+
+#[test]
 fn named_default_does_not_redirect_singular_operations() {
     let env = helpers::TestEnv::new();
     env.setup_repo_with_origin();

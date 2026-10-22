@@ -198,14 +198,20 @@ fn query_scope_prefixes(
             .map(|(prefix, _)| prefix)
             .filter(|prefix| !prefix.starts_with('.'))
             .filter(|prefix| {
-                matchers.iter().any(|matcher| {
+                let matches = |matcher: &str| {
                     matcher == prefix
                         || matcher.strip_suffix("/*").is_some_and(|org| {
                             prefix
                                 .split_once('/')
                                 .is_some_and(|(actual, _)| actual == org)
                         })
-                })
+                };
+                matchers
+                    .iter()
+                    .any(|matcher| !matcher.starts_with('!') && matches(matcher))
+                    && !matchers
+                        .iter()
+                        .any(|matcher| matcher.strip_prefix('!').is_some_and(matches))
             })
             .collect();
         return Ok(Some(prefixes));

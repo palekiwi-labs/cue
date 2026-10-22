@@ -50,12 +50,13 @@ impl Config {
         let config: Self = config.extract()?;
         for (name, matchers) in &config.scopes {
             for matcher in matchers {
-                let valid = matcher.split_once('/').is_some_and(|(org, repo)| {
+                let pattern = matcher.strip_prefix('!').unwrap_or(matcher);
+                let valid = pattern.split_once('/').is_some_and(|(org, repo)| {
                     valid_segment(org) && (repo == "*" || valid_segment(repo))
                 });
                 anyhow::ensure!(
                     valid,
-                    "invalid matcher '{matcher}' in scope '{name}': expected <org>/<repo> or <org>/*"
+                    "invalid matcher '{matcher}' in scope '{name}': expected <org>/<repo> or <org>/*, optionally prefixed with !"
                 );
             }
         }
