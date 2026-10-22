@@ -3,6 +3,76 @@ mod helpers;
 use predicates::prelude::*;
 
 #[test]
+fn store_queries_work_without_git_on_path() {
+    let env = helpers::TestEnv::new();
+    let empty_path = env.root().join("empty-bin");
+    std::fs::create_dir(&empty_path).unwrap();
+    std::fs::write(
+        env.config_dir.join("cue.json"),
+        r#"{"scopes":{"team":["acme/*"]}}"#,
+    )
+    .unwrap();
+    for command in ["list", "pins"] {
+        for scope in ["store", "team"] {
+            env.command()
+                .env("PATH", &empty_path)
+                .args(["context", command, "--scope", scope])
+                .assert()
+                .success()
+                .stdout("");
+        }
+    }
+}
+
+#[test]
+fn project_discovery_reports_git_errors_instead_of_ignoring_config() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    std::fs::write(env.root().join(".git/config"), "[broken\n").unwrap();
+    for command in ["list", "pins"] {
+        env.command()
+            .args(["context", command, "--scope", "store"])
+            .assert()
+            .failure()
+            .stderr(predicate::str::contains("could not locate project config"))
+            .stderr(predicate::str::contains("bad config"));
+    }
+}
+
+#[test]
+fn dir_flag_selects_project_config_from_outside_the_repository() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    env.command()
+        .args(["context", "create", "alpha"])
+        .assert()
+        .success();
+    env.command()
+        .args(["context", "pin", "alpha"])
+        .assert()
+        .success();
+    std::fs::write(
+        env.config_dir.join("cue.json"),
+        r#"{"default_scope":"unknown"}"#,
+    )
+    .unwrap();
+    std::fs::write(env.root().join("cue.json"), r#"{"default_scope":"repo"}"#).unwrap();
+    let nested = env.root().join("nested");
+    std::fs::create_dir(&nested).unwrap();
+    let outside = tempfile::tempdir().unwrap();
+    for command in ["list", "pins"] {
+        env.command()
+            .current_dir(outside.path())
+            .arg("-C")
+            .arg(&nested)
+            .args(["context", command])
+            .assert()
+            .success()
+            .stdout("acme/widgets/alpha\n");
+    }
+}
+
+#[test]
 fn malformed_exclusions_are_rejected() {
     let env = helpers::TestEnv::new();
     for matcher in [
