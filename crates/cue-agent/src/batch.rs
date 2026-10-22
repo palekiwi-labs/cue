@@ -2,10 +2,11 @@
 //! capture, receipts and traces.
 
 use crate::cli::RunArgs;
-use crate::engine::{self, Disposition, RunOutcome, RunPlan};
+use crate::engine::{self, Disposition, RunOutcome, RunPlan, Trigger};
 use crate::harness;
 use crate::ids;
 use crate::manifest::{self, Agent};
+use crate::monitor;
 use crate::receipt::{BatchReceipt, Outcome, RunReceipt};
 use crate::run_spec::{self, Bases, MAX_TASKS, ResolvedBatch};
 use crate::state;
@@ -174,6 +175,34 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
             .map(|err| format!("could not create {}: {err}", batch_path.display())),
     };
 
+    // Monitoring is best effort: a batch that cannot be registered still
+    // runs, it just cannot be found or stopped from elsewhere.
+    let liveness = match (&agent_root, &unavailable) {
+        (Ok(root), None) => {
+            let runs = request
+                .tasks
+                .iter()
+                .enumerate()
+                .map(|(index, task)| {
+                    serde_json::json!({
+                        "run_id": ids::run_id(&batch_id, &task.agent.name, index + 1),
+                        "dir": run_dir_name(&task.agent.name, index + 1),
+                        "agent": task.agent.name,
+                        "model": task.agent.model,
+                        "position": index + 1,
+                    })
+                })
+                .collect();
+            let record = monitor::record(&batch_id, request.label.as_deref(), now_secs, runs);
+            monitor::Liveness::acquire(root, &batch_path, &record)
+                .inspect_err(|err| {
+                    eprintln!("cue-agent: this batch cannot be monitored or stopped: {err:#}")
+                })
+                .ok()
+        }
+        _ => None,
+    };
+
     let store_root = cuelib::store::root(None).ok();
     let records = Records {
         batch_id: &batch_id,
@@ -201,10 +230,11 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
         _ => None,
     };
 
-    // An interrupt that arrived during preparation launches nothing more.
-    if let Some(signal) = engine::abort_requested() {
-        for run in prepared.iter_mut().filter(|run| run.not_launched.is_none()) {
-            run.not_launched = Some(aborted_before_launch(signal));
+    // An interrupt or stop that arrived during preparation launches nothing
+    // more.
+    for run in prepared.iter_mut().filter(|run| run.not_launched.is_none()) {
+        if let Some(trigger) = interruption(&batch_path, &run.plan.run_id) {
+            run.not_launched = Some(aborted_before_launch(trigger));
         }
     }
     let plans: Vec<RunPlan> = prepared
@@ -213,6 +243,9 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
         .map(|run| run.plan.clone())
         .collect();
     let mut outcomes = engine::supervise(&plans).into_iter();
+    if let Some(liveness) = &liveness {
+        liveness.finalizing();
+    }
 
     let mut runs = Vec::with_capacity(prepared.len());
     for prepared in prepared {
@@ -367,7 +400,19 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
     })
 }
 
-fn aborted_before_launch(trigger: i32) -> Disposition {
+/// Why a run must not start or continue, if it must not: a signal to the
+/// batch, or a stop request for the run or the batch.
+fn interruption(batch_path: &Path, run_id: &str) -> Option<Trigger> {
+    engine::abort_requested()
+        .map(Trigger::Signal)
+        .or_else(|| monitor::stop_requested(batch_path, run_id).then_some(Trigger::StopRequest))
+}
+
+fn run_dir_name(agent: &str, number: usize) -> String {
+    format!("{}-{number}", ids::sanitize(agent))
+}
+
+fn aborted_before_launch(trigger: Trigger) -> Disposition {
     Disposition::Aborted {
         trigger,
         code: None,
@@ -391,9 +436,7 @@ fn prepare_all(
         let number = index + 1;
         let agent = task.agent.clone();
         let run_id = ids::run_id(records.batch_id, &agent.name, number);
-        let run_path = records
-            .batch_path
-            .join(format!("{}-{number}", ids::sanitize(&agent.name)));
+        let run_path = records.batch_path.join(run_dir_name(&agent.name, number));
         let system_prompt_path = run_path.join("system-prompt.md");
         let system_prompt_arg =
             (!agent.system_prompt.is_empty()).then(|| system_prompt_path.clone());
@@ -424,8 +467,8 @@ fn prepare_all(
         let mut cwd = task.cwd.clone();
         if not_launched.is_some() {
             // Nothing is created for a task that cannot be recorded.
-        } else if let Some(signal) = engine::abort_requested() {
-            not_launched = Some(aborted_before_launch(signal));
+        } else if let Some(trigger) = interruption(records.batch_path, &run_id) {
+            not_launched = Some(aborted_before_launch(trigger));
         } else if let Some(requested) = &task.worktree {
             // Finalization removes checkouts in specification order, so one
             // nested in another task's checkout would be deleted with it.
@@ -445,9 +488,9 @@ fn prepare_all(
             }
         }
         if not_launched.is_none()
-            && let Some(signal) = engine::abort_requested()
+            && let Some(trigger) = interruption(records.batch_path, &run_id)
         {
-            not_launched = Some(aborted_before_launch(signal));
+            not_launched = Some(aborted_before_launch(trigger));
         }
 
         // Each task finds pi on its own effective PATH, from the directory it
@@ -475,9 +518,9 @@ fn prepare_all(
         }
         let launch_error = match &not_launched {
             Some(Disposition::SpawnFailed { message }) => Some(message.clone()),
-            Some(Disposition::Aborted { trigger, .. }) => Some(format!(
-                "the batch was interrupted by signal {trigger} before launch"
-            )),
+            Some(Disposition::Aborted { trigger, .. }) => {
+                Some(format!("{} before launch", trigger.message()))
+            }
             _ => None,
         };
 
@@ -530,7 +573,6 @@ fn prepare_all(
 
         prepared.push(Prepared {
             plan: RunPlan {
-                run_id,
                 program: program.unwrap_or_else(|| PathBuf::from(harness::PROGRAM)),
                 argv,
                 cwd,
@@ -538,6 +580,9 @@ fn prepare_all(
                 events_path: run_path.join("events.jsonl"),
                 stderr_path: run_path.join("stderr.log"),
                 deadline: records.deadline,
+                stop_paths: monitor::stop_paths(records.batch_path, &run_id),
+                pgid_path: Some(run_path.join("harness.pgid")),
+                run_id,
             },
             position: number,
             agent,
@@ -601,12 +646,7 @@ fn classify(
             trigger,
             code,
             signal,
-        } => (
-            Outcome::Aborted,
-            *code,
-            *signal,
-            Some(format!("the batch was interrupted by signal {trigger}")),
-        ),
+        } => (Outcome::Aborted, *code, *signal, Some(trigger.message())),
         Disposition::Exited { code, signal } => {
             let failed_stop = matches!(
                 capture.stop_reason.as_deref(),

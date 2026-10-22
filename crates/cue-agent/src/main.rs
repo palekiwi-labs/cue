@@ -4,6 +4,7 @@ mod engine;
 mod harness;
 mod ids;
 mod manifest;
+mod monitor;
 mod receipt;
 mod run_spec;
 mod state;
@@ -38,6 +39,41 @@ fn run() -> Result<ExitCode> {
         Commands::Agents { command } => {
             let AgentCommands::List { json } = command;
             list_agents(json)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::Ps { all, json } => {
+            let report = monitor::ps(all)?;
+            if json {
+                println!("{}", serde_json::to_string(&report)?);
+            } else {
+                for batch in report["batches"].as_array().into_iter().flatten() {
+                    print!("{}", monitor::human_batch(batch));
+                }
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::Status { id, json } => {
+            let report = monitor::status(&id)?;
+            if json {
+                println!("{}", serde_json::to_string(&report)?);
+            } else if report.get("runs").is_some() {
+                print!("{}", monitor::human_batch(&report));
+            } else {
+                print!("{}", monitor::human_run(&report));
+            }
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::Logs { id, stderr, follow } => {
+            monitor::logs(&id, stderr, follow)?;
+            Ok(ExitCode::SUCCESS)
+        }
+        Commands::Stop { id, wait, json } => {
+            let report = monitor::stop(&id, wait)?;
+            if json {
+                println!("{}", serde_json::to_string(&report)?);
+            } else {
+                println!("{}: {}", id, report["result"].as_str().unwrap_or_default());
+            }
             Ok(ExitCode::SUCCESS)
         }
         Commands::Run(args) => {

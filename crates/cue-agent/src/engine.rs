@@ -25,6 +25,8 @@ const DEFAULT_GRACE: Duration = Duration::from_secs(5);
 /// Idle sleep between polls: long enough to leave the CPU alone, far below
 /// human perception of an interrupt.
 const POLL_INTERVAL: Duration = Duration::from_millis(15);
+/// How often live runs look for stop requests.
+const STOP_CHECK_INTERVAL: Duration = Duration::from_millis(100);
 
 /// Set by the signal handler the host installs. Registration belongs to the
 /// caller, not to supervision: one registration covers a whole batch, and a
@@ -53,6 +55,25 @@ extern "C" fn handle_signal(signal: libc::c_int) {
     ABORTED.store(true, Ordering::SeqCst);
 }
 
+/// What ended a run early on the caller's behalf.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Trigger {
+    /// The batch received SIGINT or SIGTERM.
+    Signal(i32),
+    /// A separate process left a stop request for the run or its batch.
+    StopRequest,
+}
+
+impl Trigger {
+    /// The receipt error for a run this trigger ended.
+    pub fn message(self) -> String {
+        match self {
+            Self::Signal(signal) => format!("the batch was interrupted by signal {signal}"),
+            Self::StopRequest => "stopped by request".to_string(),
+        }
+    }
+}
+
 /// The signal that interrupted the batch, once one has.
 pub fn abort_requested() -> Option<i32> {
     ABORTED
@@ -73,6 +94,11 @@ pub struct RunPlan {
     pub events_path: PathBuf,
     pub stderr_path: PathBuf,
     pub deadline: Option<Duration>,
+    /// Stop requests that end this run, checked while it is live: its own
+    /// and its batch's.
+    pub stop_paths: Vec<PathBuf>,
+    /// Where the harness process group id is recorded once it starts.
+    pub pgid_path: Option<PathBuf>,
 }
 
 /// How a run ended. Isolated per run: one failure never ends the batch.
@@ -88,10 +114,10 @@ pub enum Disposition {
         code: Option<i32>,
         signal: Option<i32>,
     },
-    /// The batch was interrupted; both the trigger and how the child actually
+    /// The batch was interrupted or the run stopped by request; both the trigger and how the child actually
     /// died are recorded, because they are distinct facts.
     Aborted {
-        trigger: i32,
+        trigger: Trigger,
         code: Option<i32>,
         signal: Option<i32>,
     },
@@ -115,12 +141,19 @@ pub struct RunOutcome {
 pub fn supervise(plans: &[RunPlan]) -> Vec<RunOutcome> {
     let grace = grace_window();
     let mut states: Vec<State> = plans.iter().map(spawn).collect();
+    let mut last_stop_check = Instant::now();
 
     loop {
         let mut progressed = false;
         let mut live = 0usize;
+        // A stop request is a file; looking for it every tick would be wasted
+        // system calls, and a tenth of a second is still immediate.
+        let check_stops = last_stop_check.elapsed() >= STOP_CHECK_INTERVAL;
+        if check_stops {
+            last_stop_check = Instant::now();
+        }
 
-        for state in states.iter_mut() {
+        for (plan, state) in plans.iter().zip(states.iter_mut()) {
             let State::Live(run) = state else { continue };
             live += 1;
 
@@ -147,7 +180,13 @@ pub fn supervise(plans: &[RunPlan]) -> Vec<RunOutcome> {
             if let Some(signal) = abort_requested()
                 && run.teardown.is_none()
             {
-                run.begin_teardown(Reason::Aborted(signal), grace);
+                run.begin_teardown(Reason::Aborted(Trigger::Signal(signal)), grace);
+                progressed = true;
+            } else if run.teardown.is_none()
+                && check_stops
+                && plan.stop_paths.iter().any(|path| path.exists())
+            {
+                run.begin_teardown(Reason::Aborted(Trigger::StopRequest), grace);
                 progressed = true;
             } else if run.teardown.is_none()
                 && let Some(deadline) = run.deadline
@@ -216,7 +255,7 @@ struct Teardown {
 #[derive(Clone, Copy)]
 enum Reason {
     TimedOut,
-    Aborted(i32),
+    Aborted(Trigger),
 }
 
 impl Run {
@@ -298,6 +337,11 @@ fn try_spawn(plan: &RunPlan) -> Result<State> {
     // Capture the group id once, immediately: `child.id()` is unusable after
     // the child is reaped, and reusing a reaped pid would signal a stranger.
     let group = ProcessGroup::new(child.id() as i32);
+    // For monitors: a supervisor killed outright leaves this group running,
+    // and the record is how one finds it. Monitoring is best effort.
+    if let Some(path) = &plan.pgid_path {
+        let _ = crate::state::write_private(path, format!("{}\n", child.id()));
+    }
 
     Ok(State::Live(Run {
         child,

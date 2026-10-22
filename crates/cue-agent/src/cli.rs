@@ -14,6 +14,48 @@ pub enum Commands {
     /// specification
     #[command(arg_required_else_help = true)]
     Run(Box<RunArgs>),
+    /// List running batches, found without identifiers
+    Ps {
+        /// Include finished and crashed batches from the local records
+        #[arg(long)]
+        all: bool,
+        /// Output structured JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Observe one batch or run: phase, progress and the last tool call
+    Status {
+        /// A batch or run identifier
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Output structured JSON
+        #[arg(long)]
+        json: bool,
+    },
+    /// Print a run's raw event records
+    Logs {
+        /// A run identifier
+        #[arg(value_name = "RUN_ID")]
+        id: String,
+        /// Print the harness's stderr instead of its events
+        #[arg(long)]
+        stderr: bool,
+        /// Keep printing new records until the run finishes
+        #[arg(long, short)]
+        follow: bool,
+    },
+    /// Ask the supervising cue-agent to stop a run or a whole batch
+    Stop {
+        /// A batch or run identifier
+        #[arg(value_name = "ID")]
+        id: String,
+        /// Wait until the run or batch has finished, then report its status
+        #[arg(long)]
+        wait: bool,
+        /// Output structured JSON
+        #[arg(long)]
+        json: bool,
+    },
     /// Inspect the agents the layered manifest defines
     Agents {
         #[command(subcommand)]

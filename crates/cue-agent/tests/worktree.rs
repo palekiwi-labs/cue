@@ -993,3 +993,95 @@ fn the_final_head_is_recorded_in_the_manifest_before_the_checkout_is_removed() {
     assert!(!dest.exists());
     assert_eq!(branches(&repo), ["main"]);
 }
+
+/// The identifier of the first run of the only batch `ps` lists.
+fn first_running_run(fx: &Fixture) -> String {
+    let output = fx.cmd().args(["ps", "--json"]).output().unwrap();
+    let listing: Value = serde_json::from_slice(&output.stdout).unwrap();
+    listing["batches"][0]["runs"][0]["run_id"]
+        .as_str()
+        .expect("a running batch")
+        .to_string()
+}
+
+#[test]
+fn a_stop_during_preparation_finishes_it_then_aborts_before_launch() {
+    let fx = Fixture::new(MANIFEST);
+    let repo = fx.repo("one");
+    let marker = fx.root.join("hook-started");
+    install_hook(
+        &fx,
+        &repo,
+        "post-checkout",
+        &format!(
+            "#!/usr/bin/env bash\n: >{}\nsleep 1\nexit 0\n",
+            marker.display()
+        ),
+    );
+    let stopped = fx.root.join("stopped-wt");
+    let child = fx
+        .cmd()
+        .args(["run", "--json"])
+        .arg(
+            json!({"defaults": {"cwd": repo}, "tasks": [
+                {"agent": "alpha", "prompt": "a",
+                 "worktree": {"base": "main", "ephemeral": false, "path": stopped}},
+                {"agent": "beta", "prompt": "b"}
+            ]})
+            .to_string(),
+        )
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for("the checkout hook", || marker.exists());
+    let run_id = first_running_run(&fx);
+    let output = fx.cmd().args(["stop", "--json", &run_id]).output().unwrap();
+    assert!(output.status.success(), "{output:?}");
+    let output = child.wait_with_output().unwrap();
+
+    let runs = runs_of(&output);
+    assert_eq!(runs[0]["outcome"], "aborted", "{}", runs[0]);
+    assert_eq!(error_of(&runs[0]), "stopped by request");
+    assert_eq!(
+        manifest_of(&runs[0])["launch_error"],
+        "stopped by request before launch"
+    );
+    assert!(runs[0].get("worktree").is_none(), "{}", runs[0]);
+    assert_eq!(runs[1]["outcome"], "completed", "{}", runs[1]);
+    assert_eq!(
+        fx.sandbox.recorded_sessions(),
+        [runs[1]["run_id"].as_str().unwrap()],
+        "only the unstopped run launched"
+    );
+    assert!(!stopped.exists(), "a never-launched checkout is removed");
+    assert_eq!(branches(&repo), ["main"]);
+}
+
+#[test]
+fn a_stopped_run_removes_its_ephemeral_worktree() {
+    let fx = Fixture::new(MANIFEST);
+    let repo = fx.repo("one");
+    let checkout = fx.root.join("eph-wt");
+    let child = fx
+        .cmd()
+        .args(["run", "--json"])
+        .arg(
+            json!({"tasks": [{"agent": "alpha", "prompt": "SLEEP=30", "cwd": repo,
+                "worktree": {"base": "main", "ephemeral": true, "path": checkout}}]})
+            .to_string(),
+        )
+        .stdout(Stdio::piped())
+        .spawn()
+        .unwrap();
+    wait_for("the harness", || fx.sandbox.recorded_sessions().len() == 1);
+    let run_id = first_running_run(&fx);
+    fx.cmd().args(["stop", &run_id]).output().unwrap();
+    let output = child.wait_with_output().unwrap();
+
+    let runs = runs_of(&output);
+    assert_eq!(runs[0]["outcome"], "aborted");
+    assert_eq!(error_of(&runs[0]), "stopped by request");
+    assert_eq!(runs[0]["cleanup_errors"], json!([]));
+    assert!(!checkout.exists());
+    assert_eq!(branches(&repo), ["main"]);
+}

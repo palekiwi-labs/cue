@@ -451,6 +451,22 @@ case "$prompt" in
     done
     emit_message "result survives"
     ;;
+  *TOOL_WAIT=*)
+    # A turn that calls a tool which then runs for a while.
+    secs="${prompt##*TOOL_WAIT=}"
+    secs="${secs%% *}"
+    emit_session
+    printf '{"type":"message_end","message":{"role":"assistant","model":"fake","stopReason":"toolUse","content":[{"type":"toolCall","id":"c1","name":"bash","arguments":{"command":"sleep %s"}}],"usage":{"input":11,"output":22,"cost":{"total":0.03}}}}\n' "$secs"
+    printf '{"type":"tool_execution_start","toolCallId":"c1","toolName":"bash","args":{"command":"sleep %s"}}\n' "$secs"
+    sleep "$secs"
+    ;;
+  *ANSWER_THEN_SLEEP=*)
+    secs="${prompt##*ANSWER_THEN_SLEEP=}"
+    secs="${secs%% *}"
+    emit_session
+    emit_message "early answer"
+    sleep "$secs"
+    ;;
   *SLEEP=*)
     secs="${prompt##*SLEEP=}"
     secs="${secs%% *}"

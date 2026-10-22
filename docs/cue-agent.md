@@ -572,8 +572,14 @@ $XDG_STATE_HOME/cue/agent/runs/<YYYY-MM-DD>/<batch-id>/<agent>-<n>/
   system-prompt.md   the agent's effective system prompt at run time
   events.jsonl       raw harness stdout
   stderr.log         raw harness stderr
+  harness.pgid       the harness process group id, once launched
   receipt.json       outcome, exit disposition, usage, timings
 ```
+
+The batch directory itself holds `lock` and `batch.json` (supervisor pid,
+labels, and each run's id, agent, model and directory), a `finalizing`
+marker once supervision ends, and any stop requests (see "Monitoring and
+stopping").
 
 `<n>` is the task's one-based position in the specification, so repeated
 agents get distinct directories. `manifest.json`, `prompt.md` and
@@ -596,6 +602,63 @@ One line per run is appended to `$XDG_STATE_HOME/cue/agent/index.jsonl`
 (agent, model, capture context, cwd, outcome, exit code, duration, cost and
 run path), so "what has run" is one pass over one file. It is rebuildable from
 the manifests.
+
+## Monitoring and stopping
+
+A foreground batch blocks its caller, so a frozen, looping or blocked agent is
+found and stopped from a separate process. Every command takes `--json`
+(except `logs`, which prints raw records) and needs no identifiers to start:
+
+```sh
+cue-agent ps [--all] [--json]             # running batches and their runs
+cue-agent status <batch-id|run-id> [--json]
+cue-agent logs <run-id> [--stderr] [--follow]
+cue-agent stop <batch-id|run-id> [--wait] [--json]
+```
+
+**Liveness.** The supervising `cue-agent` holds an exclusive `flock` on the
+batch's `lock` file for its whole lifetime; the kernel releases it however the
+process dies, so a reused process id never makes a dead batch look alive.
+`$XDG_STATE_HOME/cue/agent/active/<batch-id>` is a discovery hint only. A
+batch is `running` (lock held), `finalizing` (lock held, supervision over,
+results being captured and cleaned up), `finished` (lock free, every run has a
+receipt) or `crashed` (lock free, receipts missing). `ps` lists batches with an
+active entry; a crashed one is listed once and its entry then removed. `--all`
+lists every batch with a monitoring record. The state directory must be on a
+local filesystem: `flock` is not reliable over NFS.
+
+**Status.** Per run: `run_id`, agent, model, `phase` (`preparing`, `running`,
+`finishing`, `finished`, or `crashed`), `elapsed_secs` since launch,
+`idle_secs` since the harness last wrote an event, turns, tokens and cost so
+far, and `last_tool` (name, an excerpt of its JSON arguments, and whether its
+result is still `pending`). These are observations; cue-agent does not decide
+that a run is stuck. A finished run adds `result` (outcome, error, response,
+trace). Progress is parsed from the whole events file, up to the receipt's
+read cap.
+
+**Logs.** `logs` copies `events.jsonl` (or `stderr.log`) as written so far;
+`--follow` keeps copying until the run has a receipt or its supervisor is
+gone.
+
+**Stop.** `stop` leaves a request file in the batch directory (`stop` for the
+batch, `stop-<run-id>` for one run); it never signals a harness itself. The
+supervisor checks for requests about every tenth of a second, and a stopped run
+goes through ordinary teardown (SIGTERM, grace window, SIGKILL), capture of
+any final response, trace promotion and worktree cleanup. Its outcome is
+`aborted` with error `stopped by request`; other runs continue unless the
+batch was stopped, and exit codes are unchanged. A run still preparing its
+worktree finishes preparation and is then not launched (its record's
+`launch_error` says `stopped by request before launch`); preparation steps are
+not interrupted per run. `result` is `requested`, `already_requested`,
+`already_finished` (the run has a receipt; no effect) or `not_running` (the
+batch is finished or crashed; no effect). `--wait` blocks until the target has
+a result or its supervisor is gone, then adds its `status`. An unknown
+identifier exits `2`.
+
+**After a crash.** If the supervisor is killed outright (SIGKILL, OOM), harness
+process groups keep running and nobody stops them. `status` on a crashed batch
+reports each run's `harness_pgid` and `harness_group_alive`; the group id may
+have been reused, so verify before signalling it yourself.
 
 ## The receipt
 

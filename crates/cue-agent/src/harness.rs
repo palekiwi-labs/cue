@@ -245,6 +245,19 @@ pub struct Capture {
     pub malformed_lines: u64,
     pub oversized_lines: u64,
     pub truncated: bool,
+    /// The most recent tool call, for observing a run in progress.
+    pub last_tool: Option<ToolCall>,
+}
+
+/// A tool call as the event stream shows it.
+#[derive(Debug, Default, Clone)]
+pub struct ToolCall {
+    pub id: Option<String>,
+    pub name: String,
+    /// The arguments as compact JSON.
+    pub arguments: String,
+    /// Requested or started, with no result seen yet.
+    pub pending: bool,
 }
 
 impl Capture {
@@ -262,7 +275,8 @@ impl Capture {
     }
 }
 
-/// Read a finished run's events.
+/// Read a run's events, finished or not: a live file only has a possibly
+/// partial last line, which counts as malformed.
 ///
 /// Called after the child is reaped, so end of file means end of stream. A line
 /// that does not parse is counted and skipped: a subagent's transcript must not
@@ -305,7 +319,31 @@ fn absorb_line(capture: &mut Capture, line: &str) {
         return;
     };
 
+    let text_of = |key: &str| {
+        event
+            .get(key)
+            .and_then(|value| value.as_str())
+            .map(str::to_string)
+    };
     match event.get("type").and_then(|value| value.as_str()) {
+        Some("tool_execution_start") => {
+            capture.last_tool = Some(ToolCall {
+                id: text_of("toolCallId"),
+                name: text_of("toolName").unwrap_or_default(),
+                arguments: event
+                    .get("args")
+                    .map(serde_json::Value::to_string)
+                    .unwrap_or_default(),
+                pending: true,
+            });
+        }
+        Some("tool_execution_end") => {
+            if let Some(tool) = &mut capture.last_tool
+                && tool.id == text_of("toolCallId")
+            {
+                tool.pending = false;
+            }
+        }
         Some("session") => {
             capture.session_id = event
                 .get("id")
@@ -348,6 +386,9 @@ fn absorb_line(capture: &mut Capture, line: &str) {
             // pi continues after any message carrying tool calls, whatever its
             // stop reason, unless a tool terminates the run. Which happened is
             // known only from how the run ended, so the text is held apart.
+            if let Some(call) = last_tool_call(message) {
+                capture.last_tool = Some(call);
+            }
             let text = assistant_text(message).unwrap_or_default();
             if has_tool_call(message) || capture.stop_reason.as_deref() == Some("toolUse") {
                 capture.response = String::new();
@@ -371,6 +412,25 @@ fn assistant_text(message: &serde_json::Value) -> Option<String> {
             .filter_map(|part| part.get("text").and_then(|v| v.as_str()))
             .collect(),
     )
+}
+
+/// The last tool call a message requests, pending until its execution ends.
+fn last_tool_call(message: &serde_json::Value) -> Option<ToolCall> {
+    let part = message
+        .get("content")?
+        .as_array()?
+        .iter()
+        .rfind(|part| part.get("type").and_then(|v| v.as_str()) == Some("toolCall"))?;
+    let text = |key: &str| part.get(key).and_then(|v| v.as_str()).map(str::to_string);
+    Some(ToolCall {
+        id: text("id"),
+        name: text("name").unwrap_or_default(),
+        arguments: part
+            .get("arguments")
+            .map(serde_json::Value::to_string)
+            .unwrap_or_default(),
+        pending: true,
+    })
 }
 
 fn has_tool_call(message: &serde_json::Value) -> bool {
@@ -448,6 +508,34 @@ fn read_capped_line<R: BufRead>(reader: &mut R, cap: usize) -> std::io::Result<O
 mod tests {
     use super::*;
     use crate::manifest::{Agent, Source};
+
+    #[test]
+    fn the_last_tool_call_is_pending_until_its_execution_ends() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("events.jsonl");
+        std::fs::write(&path, "{\"type\":\"message_end\",\"message\":{\"role\":\"assistant\",\"content\":[{\"type\":\"toolCall\",\"id\":\"c1\",\"name\":\"read\",\"arguments\":{\"path\":\"a\"}}]}}\n").unwrap();
+        let tool = capture(&path).last_tool.unwrap();
+        assert_eq!((tool.name.as_str(), tool.pending), ("read", true));
+        assert_eq!(tool.arguments, r#"{"path":"a"}"#);
+
+        let mut file = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        use std::io::Write;
+        file.write_all(concat!(
+            "{\"type\":\"tool_execution_start\",\"toolCallId\":\"c1\",\"toolName\":\"read\",\"args\":{\"path\":\"a\"}}\n",
+            "{\"type\":\"tool_execution_end\",\"toolCallId\":\"c0\",\"toolName\":\"read\",\"isError\":false}\n",
+        ).as_bytes()).unwrap();
+        assert!(
+            capture(&path).last_tool.unwrap().pending,
+            "another call's result"
+        );
+        file.write_all(
+            b"{\"type\":\"tool_execution_end\",\"toolCallId\":\"c1\",\"toolName\":\"read\",\"isError\":false}\n",
+        ).unwrap();
+        assert!(!capture(&path).last_tool.unwrap().pending);
+    }
 
     #[test]
     fn capture_preserves_all_text_of_the_final_message_only() {
