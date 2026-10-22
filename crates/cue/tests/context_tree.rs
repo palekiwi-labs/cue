@@ -301,3 +301,74 @@ fn tree_plain_output_reports_cycles_on_stderr() {
         .stdout("acme/widgets/a\nacme/widgets/b\n")
         .stderr(predicate::str::contains("cycle"));
 }
+
+#[test]
+fn tree_breaks_long_and_multiple_cycles_reached_through_a_tail() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    let store = env.cue_store();
+    // `a-tail` sorts first, so the cycle is entered through it.
+    plant(store, S, "a-tail", Some("acme/widgets/b"));
+    plant(store, S, "b", Some("acme/widgets/c"));
+    plant(store, S, "c", Some("acme/widgets/d"));
+    plant(store, S, "d", Some("acme/widgets/b"));
+    plant(store, S, "e", Some("acme/widgets/f"));
+    plant(store, S, "f", Some("acme/widgets/e"));
+
+    let tree = tree_json(&env, &[])?;
+    assert_eq!(
+        shape(&tree["roots"]),
+        "acme/widgets/b(acme/widgets/a-tail) acme/widgets/c acme/widgets/d \
+         acme/widgets/e acme/widgets/f"
+    );
+    assert_eq!(
+        tree["diagnostics"],
+        serde_json::json!([
+            {"kind": "cycle", "contexts": ["acme/widgets/b", "acme/widgets/c", "acme/widgets/d"]},
+            {"kind": "cycle", "contexts": ["acme/widgets/e", "acme/widgets/f"]},
+        ])
+    );
+    Ok(())
+}
+
+#[test]
+fn tree_root_reports_only_cycles_containing_the_root() -> anyhow::Result<()> {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    let store = env.cue_store();
+    plant(store, S, "a", Some("acme/widgets/b"));
+    plant(store, S, "b", Some("acme/widgets/a"));
+    plant(store, S, "e", Some("acme/widgets/f"));
+    plant(store, S, "f", Some("acme/widgets/e"));
+    plant(store, S, "program", None);
+
+    let tree = tree_json(&env, &["--root", "program"])?;
+    assert_eq!(tree["diagnostics"], serde_json::json!([]));
+    let tree = tree_json(&env, &["--root", "a"])?;
+    assert_eq!(
+        tree["diagnostics"],
+        serde_json::json!([{"kind": "cycle", "contexts": ["acme/widgets/a", "acme/widgets/b"]}])
+    );
+    Ok(())
+}
+
+#[test]
+fn tree_plain_output_reads_logs_only_for_recency() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    let store = env.cue_store();
+    plant(store, S, "program", None);
+    // A file where the log directory belongs fails any log scan.
+    std::fs::write(store.join(S).join("program").join("log"), "")
+        .expect("Failed to plant log file");
+
+    env.command()
+        .args(["context", "tree"])
+        .assert()
+        .success()
+        .stdout("acme/widgets/program\n");
+    env.command()
+        .args(["context", "tree", "--sort", "recency"])
+        .assert()
+        .failure();
+}

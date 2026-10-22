@@ -61,7 +61,7 @@ pub(super) fn build(
         })
         .collect();
 
-    let diagnostics = break_cycles(&mut parent_of, &addresses);
+    let mut diagnostics = break_cycles(&mut parent_of, &addresses);
 
     let mut children: Vec<Vec<usize>> = vec![Vec::new(); contexts.len()];
     let mut roots = Vec::new();
@@ -90,6 +90,10 @@ pub(super) fn build(
             anyhow::anyhow!("root context {root} is not among the selected contexts")
         })?;
         roots = vec![selected];
+        // Cycle members all stand as roots, so no cycle lies inside the
+        // subtree below a root that is not itself a member: only a cycle
+        // containing the root concerns the narrowed result.
+        diagnostics.retain(|diagnostic| diagnostic.contexts.iter().any(|c| c == root));
     }
 
     let mut entries: Vec<Option<ContextListEntry>> = contexts.into_iter().map(Some).collect();

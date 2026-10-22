@@ -58,12 +58,14 @@ struct ContextListEntry {
     created_at: u64,
     parent: Option<String>,
     refs: Vec<String>,
-    /// Populated for JSON output or recency sorting. Preserve nanoseconds for
-    /// ordering, but expose whole Unix seconds (or null) in JSON.
+    /// Populated only when the selection asks for activity, as JSON output
+    /// and recency ordering do. Preserve nanoseconds for ordering, but expose
+    /// whole Unix seconds (or null) in JSON.
     #[serde(rename = "last_logged_at", serialize_with = "serialize_seconds")]
     last_logged_nanos: Option<u64>,
-    /// Whether the context is in the operator's working set. Populated for
-    /// JSON output only, because plain output reports identifiers alone.
+    /// Whether the context is in the operator's working set. Populated only
+    /// when the selection asks for membership, as JSON output does; plain
+    /// output reports identifiers alone.
     pinned: bool,
     path: PathBuf,
 }
@@ -139,8 +141,8 @@ pub fn handle(
                     pinned,
                     scope,
                     filters,
-                    membership: true,
-                    activity: true,
+                    membership: json,
+                    activity: json || sort == Some(ContextSort::Recency),
                 },
             )?;
             let root = root
