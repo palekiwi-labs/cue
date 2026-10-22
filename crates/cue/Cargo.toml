@@ -8,6 +8,8 @@ rust-version = "1.98"
 anyhow = "1.0.102"
 clap = { version = "4.6.1", features = ["derive"] }
 cuelib = { path = "../cuelib" }
+figment = { version = "0.10", features = ["json"] }
+dirs = "6"
 serde = { version = "1.0.228", features = ["derive"] }
 arboard = "3.6.1"
 image = { version = "0.25", features = ["png", "jpeg"] }

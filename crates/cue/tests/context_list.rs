@@ -165,7 +165,7 @@ fn context_list_prints_only_contexts_in_slug_order() -> anyhow::Result<()> {
         .args(["context", "list"])
         .assert()
         .success()
-        .stdout("alpha\nzeta\n");
+        .stdout("acme/widgets/alpha\nacme/widgets/zeta\n");
 
     Ok(())
 }
@@ -195,7 +195,7 @@ fn context_list_scope_repo_matches_the_default_view() {
         .args(["context", "list", "--scope", "repo"])
         .assert()
         .success()
-        .stdout("alpha\nzeta\n");
+        .stdout("acme/widgets/alpha\nacme/widgets/zeta\n");
 }
 
 /// `--scope store` widens to every repository scope. A bare slug no longer
@@ -402,7 +402,7 @@ fn context_list_sort_recency_orders_by_latest_log_entry() {
         .args(["context", "list", "--sort", "recency"])
         .assert()
         .success()
-        .stdout("zeta\nalpha\n");
+        .stdout("acme/widgets/zeta\nacme/widgets/alpha\n");
 }
 
 /// Recency is activity, not age: the order the contexts were created in does
@@ -429,7 +429,7 @@ fn context_list_sort_recency_ignores_context_creation_order() {
         .args(["context", "list", "--sort", "recency"])
         .assert()
         .success()
-        .stdout("beta\nalpha\ngamma\n");
+        .stdout("acme/widgets/beta\nacme/widgets/alpha\nacme/widgets/gamma\n");
 }
 
 /// A context with no log entry has no activity to order by, so it sorts
@@ -454,7 +454,7 @@ fn context_list_sort_recency_places_contexts_without_logs_last() {
         .args(["context", "list", "--sort", "recency"])
         .assert()
         .success()
-        .stdout("zeta\nalpha\nbeta\n");
+        .stdout("acme/widgets/zeta\nacme/widgets/alpha\nacme/widgets/beta\n");
 }
 
 /// Contexts sharing a newest timestamp fall back on canonical address order,
@@ -512,7 +512,7 @@ fn context_list_without_sort_keeps_canonical_order_despite_logs() {
         .args(["context", "list"])
         .assert()
         .success()
-        .stdout("alpha\nzeta\n");
+        .stdout("acme/widgets/alpha\nacme/widgets/zeta\n");
 }
 
 /// `--limit` is independent of ordering: it keeps the leading rows of
@@ -532,7 +532,7 @@ fn context_list_limit_keeps_the_leading_rows() {
         .args(["context", "list", "--limit", "2"])
         .assert()
         .success()
-        .stdout("alpha\nbeta\n");
+        .stdout("acme/widgets/alpha\nacme/widgets/beta\n");
 }
 
 /// A limit of zero selects no contexts. That is an empty listing rather than
@@ -576,7 +576,7 @@ fn context_list_limit_beyond_the_listing_selects_every_context() {
         .args(["context", "list", "--limit", "99"])
         .assert()
         .success()
-        .stdout("alpha\nzeta\n");
+        .stdout("acme/widgets/alpha\nacme/widgets/zeta\n");
 }
 
 /// A limit is a count, so anything that is not an unsigned integer is
@@ -618,7 +618,7 @@ fn context_list_sorts_before_limiting() {
         .args(["context", "list", "--sort", "recency", "--limit", "2"])
         .assert()
         .success()
-        .stdout("zeta\nbeta\n");
+        .stdout("acme/widgets/zeta\nacme/widgets/beta\n");
 }
 
 /// Both output forms are the same selection rendered differently, so a sorted
@@ -669,7 +669,7 @@ fn context_list_json_matches_the_plain_selection() -> anyhow::Result<()> {
         .args(["context", "list", "--sort", "recency", "--limit", "2"])
         .assert()
         .success()
-        .stdout("zeta\nbeta\n");
+        .stdout("acme/widgets/zeta\nacme/widgets/beta\n");
 
     Ok(())
 }
@@ -859,7 +859,7 @@ fn context_list_sort_recency_orders_within_one_reported_second() -> anyhow::Resu
         .args(["context", "list", "--sort", "recency"])
         .assert()
         .success()
-        .stdout("zeta\nalpha\n");
+        .stdout("acme/widgets/zeta\nacme/widgets/alpha\n");
 
     let contexts = list_json(&env, &["context", "list", "--sort", "recency", "--json"])?;
     assert_eq!(contexts[0]["context"], "zeta");
@@ -922,7 +922,7 @@ fn context_list_json_fails_when_a_log_cannot_be_read() -> anyhow::Result<()> {
         .args(["context", "list"])
         .assert()
         .success()
-        .stdout("alpha\n");
+        .stdout("acme/widgets/alpha\n");
 
     env.command()
         .args(["context", "list", "--json"])
@@ -955,13 +955,13 @@ fn context_list_sort_recency_reads_log_filenames_not_payloads() -> anyhow::Resul
         .args(["context", "list", "--sort", "recency"])
         .assert()
         .success()
-        .stdout("zeta\nalpha\n");
+        .stdout("acme/widgets/zeta\nacme/widgets/alpha\n");
 
     env.command()
         .args(["context", "list"])
         .assert()
         .success()
-        .stdout("alpha\nzeta\n");
+        .stdout("acme/widgets/alpha\nacme/widgets/zeta\n");
 
     Ok(())
 }
@@ -1003,7 +1003,7 @@ fn context_list_sort_recency_ignores_names_that_are_not_log_entries() -> anyhow:
         .args(["context", "list", "--sort", "recency"])
         .assert()
         .success()
-        .stdout("beta\nalpha\ngamma\n");
+        .stdout("acme/widgets/beta\nacme/widgets/alpha\nacme/widgets/gamma\n");
 
     Ok(())
 }
@@ -1031,7 +1031,7 @@ fn context_list_pinned_reports_only_the_working_set() {
         .args(["context", "list", "--pinned"])
         .assert()
         .success()
-        .stdout("alpha\nzeta\n");
+        .stdout("acme/widgets/alpha\nacme/widgets/zeta\n");
 }
 
 /// Pin state is held per scope, so whole-store breadth reports the working
@@ -1074,7 +1074,7 @@ fn context_list_pinned_scope_store_prints_canonical_addresses() {
         .args(["context", "list", "--pinned"])
         .assert()
         .success()
-        .stdout("alpha\n");
+        .stdout("acme/widgets/alpha\n");
 }
 
 /// A pin outlives the context it names, and a context that does not exist has
@@ -1139,7 +1139,7 @@ fn context_list_pinned_reads_only_pinned_contexts() {
         .args(["context", "list", "--pinned"])
         .assert()
         .success()
-        .stdout("alpha\n");
+        .stdout("acme/widgets/alpha\n");
 
     env.command()
         .args(["context", "list", "--pinned", "--scope", "store"])
@@ -1186,7 +1186,7 @@ fn context_list_pinned_reads_only_pinned_logs() -> anyhow::Result<()> {
         .args(["context", "list", "--pinned", "--sort", "recency"])
         .assert()
         .success()
-        .stdout("alpha\n");
+        .stdout("acme/widgets/alpha\n");
 
     Ok(())
 }
@@ -1301,7 +1301,7 @@ fn context_list_pinned_composes_with_sort_and_limit() {
         .args(["context", "list", "--pinned", "--sort", "recency"])
         .assert()
         .success()
-        .stdout("alpha\nbeta\nzeta\n");
+        .stdout("acme/widgets/alpha\nacme/widgets/beta\nacme/widgets/zeta\n");
 
     env.command()
         .args([
@@ -1309,7 +1309,7 @@ fn context_list_pinned_composes_with_sort_and_limit() {
         ])
         .assert()
         .success()
-        .stdout("alpha\nbeta\n");
+        .stdout("acme/widgets/alpha\nacme/widgets/beta\n");
 }
 
 /// An empty working set is an empty listing rather than an error, in both
@@ -1497,7 +1497,7 @@ fn context_list_plain_output_is_unchanged_by_pin_state() {
         .args(["context", "list"])
         .assert()
         .success()
-        .stdout("alpha\nbeta\n");
+        .stdout("acme/widgets/alpha\nacme/widgets/beta\n");
 }
 
 /// Pin state is read only when JSON reports it, matching the gate on the
@@ -1521,12 +1521,12 @@ fn context_list_reads_pin_state_only_for_json() {
         .args(["context", "list"])
         .assert()
         .success()
-        .stdout("alpha\n");
+        .stdout("acme/widgets/alpha\n");
     env.command()
         .args(["context", "list", "--sort", "recency"])
         .assert()
         .success()
-        .stdout("alpha\n");
+        .stdout("acme/widgets/alpha\n");
 
     env.command()
         .args(["context", "list", "--json"])
@@ -1698,7 +1698,7 @@ fn context_list_filters_plain_output_on_every_predicate() {
         ])
         .assert()
         .success()
-        .stdout("alpha\ndelta\n");
+        .stdout("acme/widgets/alpha\nacme/widgets/delta\n");
 }
 
 /// Optional context metadata is absent from `context.md` rather than written
@@ -1729,19 +1729,19 @@ fn context_list_filter_treats_absent_metadata_as_no_value() {
         .args(["context", "list", "--filter", "mode=review"])
         .assert()
         .success()
-        .stdout("described\n");
+        .stdout("acme/widgets/described\n");
 
     env.command()
         .args(["context", "list", "--filter", "mode!=review"])
         .assert()
         .success()
-        .stdout("bare\n");
+        .stdout("acme/widgets/bare\n");
 
     env.command()
         .args(["context", "list", "--filter", "title~=release"])
         .assert()
         .success()
-        .stdout("described\n");
+        .stdout("acme/widgets/described\n");
 }
 
 /// An expression cue cannot parse is a mistake in the query, not a predicate
@@ -1793,7 +1793,7 @@ fn context_list_filters_before_applying_the_limit() {
         .args(["context", "list", "--filter", "kind=coord", "--limit", "1"])
         .assert()
         .success()
-        .stdout("gamma\n");
+        .stdout("acme/widgets/gamma\n");
 }
 
 /// `--pinned` selects what is enumerated and a filter selects what is kept, so
@@ -1821,7 +1821,7 @@ fn context_list_filters_the_pinned_working_set() -> anyhow::Result<()> {
         .args(["context", "list", "--pinned", "--filter", "kind=work"])
         .assert()
         .success()
-        .stdout("alpha\n");
+        .stdout("acme/widgets/alpha\n");
 
     let contexts = list_json(
         &env,
@@ -1869,5 +1869,5 @@ fn context_list_orders_filtered_contexts_by_recency() {
         ])
         .assert()
         .success()
-        .stdout("beta\nalpha\n");
+        .stdout("acme/widgets/beta\nacme/widgets/alpha\n");
 }

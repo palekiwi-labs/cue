@@ -705,6 +705,8 @@ dependencies = [
  "assert_cmd",
  "clap",
  "cuelib",
+ "dirs",
+ "figment",
  "image",
  "predicates",
  "serde",

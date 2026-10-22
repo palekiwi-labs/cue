@@ -146,15 +146,15 @@ pub enum ContextCommands {
     },
     /// List contexts in the current repository scope, or in every scope
     List {
-        /// Output structured JSON instead of context slugs
+        /// Output structured JSON instead of canonical addresses
         #[arg(long)]
         json: bool,
         /// List only the pinned working set
         #[arg(long)]
         pinned: bool,
-        /// Breadth to query: the current repository scope, or every scope
-        #[arg(long, value_enum, default_value = "repo")]
-        scope: QueryScope,
+        /// Query repo, store, or a configured name (defaults to config, then repo)
+        #[arg(long, value_name = "SCOPE")]
+        scope: Option<String>,
         /// Order by latest log activity instead of canonical address
         #[arg(long, value_enum)]
         sort: Option<ContextSort>,
@@ -175,6 +175,27 @@ pub enum ContextCommands {
         #[arg(long, value_name = "N")]
         limit: Option<usize>,
     },
+    /// Show contexts as a tree built from their parent edges
+    Tree {
+        /// Output nested JSON: { roots: [node], diagnostics: [...] }
+        #[arg(long)]
+        json: bool,
+        /// Build the tree from the pinned working set only
+        #[arg(long)]
+        pinned: bool,
+        /// Query repo, store, or a configured name (defaults to config, then repo)
+        #[arg(long, value_name = "SCOPE")]
+        scope: Option<String>,
+        /// Show only the subtree under this context (slug or <org>/<repo>/<slug>)
+        #[arg(long, value_name = "SELECTOR")]
+        root: Option<String>,
+        /// Order roots and siblings by the newest log activity in their subtree
+        #[arg(long, value_enum)]
+        sort: Option<ContextSort>,
+        /// Filter by context metadata field (repeatable, ANDed), as context list
+        #[arg(long = "filter", value_name = "EXPR")]
+        filters: Vec<Filter>,
+    },
     /// Add a context to the operator's working set
     Pin {
         /// Context slug in the current repository scope, or a full
@@ -189,9 +210,9 @@ pub enum ContextCommands {
     },
     /// List the pinned contexts in the operator's working set
     Pins {
-        /// Breadth to query: the current repository scope, or every scope
-        #[arg(long, value_enum, default_value = "repo")]
-        scope: QueryScope,
+        /// Query repo, store, or a configured name (defaults to config, then repo)
+        #[arg(long, value_name = "SCOPE")]
+        scope: Option<String>,
     },
     /// Associate a context with a Git branch
     Switch {
@@ -207,21 +228,6 @@ pub enum ContextCommands {
         #[arg(long)]
         branch: Option<String>,
     },
-}
-
-/// The breadth a collection query looks over, as opposed to `--store`, which
-/// selects which physical store is looked at. Scope changes where a query
-/// looks, never what metadata it filters on.
-///
-/// Shared vocabulary rather than a global flag: each query that offers
-/// repository/store breadth opts in with its own `--scope` argument.
-#[derive(Clone, Copy, PartialEq, Eq, clap::ValueEnum)]
-pub enum QueryScope {
-    /// The repository scope derived from the origin remote of the current
-    /// directory, or of the directory selected with `-C`
-    Repo,
-    /// Every repository scope in the selected store; requires no repository
-    Store,
 }
 
 /// The orderings a context listing can be asked for, beyond the canonical
