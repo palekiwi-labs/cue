@@ -2,6 +2,7 @@ mod add;
 mod address;
 mod cli;
 mod commands;
+mod config;
 mod git;
 mod list;
 mod log;
