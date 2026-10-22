@@ -52,7 +52,9 @@ impl Config {
             for matcher in matchers {
                 let pattern = matcher.strip_prefix('!').unwrap_or(matcher);
                 let valid = pattern.split_once('/').is_some_and(|(org, repo)| {
-                    valid_segment(org) && (repo == "*" || valid_segment(repo))
+                    !org.starts_with('!')
+                        && valid_segment(org)
+                        && (repo == "*" || valid_segment(repo))
                 });
                 anyhow::ensure!(
                     valid,

@@ -3,6 +3,31 @@ mod helpers;
 use predicates::prelude::*;
 
 #[test]
+fn malformed_exclusions_are_rejected() {
+    let env = helpers::TestEnv::new();
+    for matcher in [
+        "!",
+        "!!acme/*",
+        "!acme",
+        "!*/repo",
+        "!acme/../repo",
+        "!acme/part*",
+        "!/repo",
+    ] {
+        let config =
+            serde_json::json!({"scopes":{"team":["acme/*",matcher]},"default_scope":"team"});
+        std::fs::write(env.config_dir.join("cue.json"), config.to_string()).unwrap();
+        for command in ["list", "pins"] {
+            env.command()
+                .args(["context", command])
+                .assert()
+                .failure()
+                .stderr(predicate::str::contains("invalid matcher"));
+        }
+    }
+}
+
+#[test]
 fn exclusions_subtract_from_positive_union_regardless_of_order() {
     let env = helpers::TestEnv::new();
     for address in ["acme/one/alpha", "acme/two/beta", "other/project/gamma"] {

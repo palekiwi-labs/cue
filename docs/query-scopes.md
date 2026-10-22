@@ -26,9 +26,17 @@ config layer is used.
 Explicit `--scope` overrides `default_scope`; without config, the default
 is `repo`. Named definitions may shadow `repo` and `store`.
 
-Matchers accept only exact `<org>/<repo>` or `<org>/*`. They select existing
-scope directories in the chosen store, not Git remotes. Overlapping
-matchers do not duplicate results; no matches means an empty listing.
+Matchers accept exact `<org>/<repo>` or `<org>/*`, optionally prefixed
+with `!` to exclude matches. They select existing scope directories in the
+chosen store, not Git remotes. Positive matches are unioned, then all
+exclusions are subtracted regardless of order. Overlapping matchers do not
+duplicate results; no positive matches means an empty listing, including
+an exclusion-only array.
+
+For example, `["palekiwi/*", "!palekiwi/spabreaks-org"]` selects every
+existing palekiwi scope except spabreaks-org. `!palekiwi/*` excludes an
+entire organization. This is not Gitignore syntax: `!` excludes rather
+than re-includes, and a later positive matcher cannot undo an exclusion.
 Named pin queries omit scopes existing only in pin state, whereas built-in
 `store` continues to report all pins, including stale ones.
 
