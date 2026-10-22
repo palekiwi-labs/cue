@@ -175,6 +175,27 @@ pub enum ContextCommands {
         #[arg(long, value_name = "N")]
         limit: Option<usize>,
     },
+    /// Show contexts as a tree built from their parent edges
+    Tree {
+        /// Output nested JSON: { roots: [node], diagnostics: [...] }
+        #[arg(long)]
+        json: bool,
+        /// Build the tree from the pinned working set only
+        #[arg(long)]
+        pinned: bool,
+        /// Query repo, store, or a configured name (defaults to config, then repo)
+        #[arg(long, value_name = "SCOPE")]
+        scope: Option<String>,
+        /// Show only the subtree under this context (slug or <org>/<repo>/<slug>)
+        #[arg(long, value_name = "SELECTOR")]
+        root: Option<String>,
+        /// Order roots and siblings by the newest log activity in their subtree
+        #[arg(long, value_enum)]
+        sort: Option<ContextSort>,
+        /// Filter by context metadata field (repeatable, ANDed), as context list
+        #[arg(long = "filter", value_name = "EXPR")]
+        filters: Vec<Filter>,
+    },
     /// Add a context to the operator's working set
     Pin {
         /// Context slug in the current repository scope, or a full
