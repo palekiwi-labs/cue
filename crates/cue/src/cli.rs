@@ -136,7 +136,9 @@ pub enum ActivityCommands {
     Add {
         #[arg(long)]
         context: Option<String>,
-        #[arg(long, value_enum)]
+        /// Producer-defined kind: lowercase snake_case, starting with a
+        /// letter, at most 64 bytes. Kinds cue records natively are reserved.
+        #[arg(long, value_parser = |s: &str| crate::activity::Kind::producer(s).map_err(|e| e.to_string()))]
         kind: crate::activity::Kind,
         #[arg(long)]
         details: String,
