@@ -1,3 +1,4 @@
+pub mod activity;
 pub mod add;
 pub mod context;
 pub mod list;

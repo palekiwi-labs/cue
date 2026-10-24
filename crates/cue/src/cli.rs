@@ -107,6 +107,11 @@ pub enum Commands {
         #[arg(long)]
         context: Option<String>,
     },
+    /// Record and inspect context activity
+    Activity {
+        #[command(subcommand)]
+        command: ActivityCommands,
+    },
     /// Manage project log (add entries)
     Log {
         #[command(subcommand)]
@@ -116,6 +121,32 @@ pub enum Commands {
     Context {
         #[command(subcommand)]
         command: ContextCommands,
+    },
+}
+
+#[derive(Subcommand)]
+pub enum ActivityCommands {
+    /// Record an immutable activity event
+    Add {
+        #[arg(long)]
+        context: Option<String>,
+        #[arg(long, value_enum)]
+        kind: crate::activity::Kind,
+        #[arg(long)]
+        details: String,
+        #[arg(long)]
+        session_id: Option<String>,
+        #[arg(long)]
+        harness: Option<String>,
+        #[arg(long)]
+        host: Option<String>,
+    },
+    /// List activity in chronological order
+    List {
+        #[arg(long)]
+        context: Option<String>,
+        #[arg(long)]
+        json: bool,
     },
 }
 
