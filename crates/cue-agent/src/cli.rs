@@ -19,6 +19,16 @@ pub enum Commands {
         /// Include finished and crashed batches from the local records
         #[arg(long)]
         all: bool,
+        /// Only batches started at or after this moment: Unix seconds, or a
+        /// duration back from now (30m, 2h, 7d)
+        #[arg(long, value_name = "WHEN")]
+        since: Option<String>,
+        /// At most this many batches, newest first
+        #[arg(long, value_name = "N")]
+        limit: Option<usize>,
+        /// Only batches belonging to this job
+        #[arg(long, value_name = "JOB_ID")]
+        job: Option<String>,
         /// Output structured JSON
         #[arg(long)]
         json: bool,

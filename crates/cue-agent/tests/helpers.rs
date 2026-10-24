@@ -427,7 +427,7 @@ emit_session() {
 }
 
 emit_message() {
-  printf '{"type":"message_end","message":{"role":"assistant","model":"fake","stopReason":"stop","content":[{"type":"text","text":"%s"}],"usage":{"input":11,"output":22,"cacheRead":0,"cacheWrite":0,"totalTokens":33,"cost":{"input":0.01,"output":0.02,"cacheRead":0,"cacheWrite":0,"total":0.03}}}}\n' "$1"
+  printf '{"type":"message_end","message":{"role":"assistant","model":"fake","stopReason":"stop","content":[{"type":"text","text":"%s"}],"usage":{"input":11,"output":22,"cacheRead":5,"cacheWrite":3,"totalTokens":41,"cost":{"input":0.01,"output":0.02,"cacheRead":0,"cacheWrite":0,"total":0.03}}}}\n' "$1"
 }
 
 finish() {

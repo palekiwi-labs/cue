@@ -173,11 +173,18 @@ There is no harness override flag or variable and no dry-run mode.
 
 ### The envelope
 
-The root is an object with three fields, and unknown fields are rejected:
+The root is an object with four fields, and unknown fields are rejected:
 
 - `tasks` — required, a nonempty array of task objects, at most four.
 - `defaults` — optional object of shared task values.
 - `label` — optional batch label (a string or file reference).
+- `job` — optional `{"id": ..., "label": ...}` naming the unit of work
+  this batch belongs to. A tool that runs one job as several sequential
+  batches (reviewers, then merge, then verifiers) gives them all the same
+  `id`, so a monitor can group them without parsing labels. `id` is
+  required and must start and end with a letter or digit, containing only
+  letters, digits, `-`, `_` and `.`; `label` is an optional human name (a
+  string or file reference). A batch without a job stands alone.
 
 Each task requests one independent execution, in the order given. Every task
 must name its agent explicitly with `agent`; `defaults` cannot select one.
@@ -569,6 +576,8 @@ $XDG_STATE_HOME/cue/agent/runs/<YYYY-MM-DD>/<batch-id>/<agent>-<n>/
                       store root, timeout, launch error (no environment dump);
                       a launched worktree's final HEAD is added before removal
   prompt.md          the prompt verbatim, as passed to the harness
+  response.md        the final response verbatim, written at finalization;
+                     absent when the run produced no final response
   system-prompt.md   the agent's effective system prompt at run time
   events.jsonl       raw harness stdout
   stderr.log         raw harness stderr
@@ -577,7 +586,8 @@ $XDG_STATE_HOME/cue/agent/runs/<YYYY-MM-DD>/<batch-id>/<agent>-<n>/
 ```
 
 The batch directory itself holds `lock` and `batch.json` (supervisor pid,
-labels, and each run's id, agent, model and directory), a `finalizing`
+batch label, job, and each run's id, agent, model, label, capture context
+and directory), a `finalizing`
 marker once supervision ends, and any stop requests (see "Monitoring and
 stopping").
 
@@ -610,7 +620,7 @@ found and stopped from a separate process. Every command takes `--json`
 (except `logs`, which prints raw records) and needs no identifiers to start:
 
 ```sh
-cue-agent ps [--all] [--json]             # running batches and their runs
+cue-agent ps [--all] [--since WHEN] [--limit N] [--job ID] [--json]
 cue-agent status <batch-id|run-id> [--json]
 cue-agent logs <run-id> [--stderr] [--follow]
 cue-agent stop <batch-id|run-id> [--wait] [--json]
@@ -624,13 +634,23 @@ batch is `running` (lock held), `finalizing` (lock held, supervision over,
 results being captured and cleaned up), `finished` (lock free, every run has a
 receipt) or `crashed` (lock free, receipts missing). `ps` lists batches with an
 active entry; a crashed one is listed once and its entry then removed. `--all`
-lists every batch with a monitoring record. The state directory must be on a
+lists every batch with a monitoring record. `--since` keeps batches started
+at or after a moment, given as Unix seconds or as a duration back from now
+(`90s`, `30m`, `2h`, `7d`); `--limit` keeps the newest `N`; `--job` keeps
+batches of one job. With `--all` the history is scanned newest first and
+the scan stops at the `--since` bound or once `--limit` batches are found,
+so polling costs what it returns, not the whole history. Each batch
+reports its `label` and `job` (`id` and `label`, or null). The state
+directory must be on a
 local filesystem: `flock` is not reliable over NFS.
 
-**Status.** Per run: `run_id`, agent, model, `phase` (`preparing`, `running`,
-`exited`, `finishing`, `finished`, or `crashed`), `elapsed_secs` since launch,
-`idle_secs` since the harness last wrote an event, turns, tokens and cost so
-far, and `last_tool` (name, an excerpt of its JSON arguments, and whether its
+**Status.** Per run: `run_id`, agent, model, `label` (the task's, else the
+batch's) and capture `context` (null when unset), `phase` (`preparing`,
+`running`, `exited`, `finishing`, `finished`, or `crashed`), `elapsed_secs`
+since launch, `idle_secs` since the harness last wrote an event, turns, cost
+and tokens so far (`tokens_input` counts only uncached input; add
+`tokens_cache_read` and `tokens_cache_write` for a total comparable across
+models served from cache, and `tokens_output`), and `last_tool` (name, an excerpt of its JSON arguments, and whether its
 result is still `pending`). These are observations; cue-agent does not decide
 that a run is stuck. A run whose harness has been reaped while its siblings
 still run is `exited` and adds `exit` (`reason`: `exited`, `timed_out`,

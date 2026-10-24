@@ -190,10 +190,18 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
                         "agent": task.agent.name,
                         "model": task.agent.model,
                         "position": index + 1,
+                        "label": task.label.as_ref().or(request.label.as_ref()),
+                        "context": task.context,
                     })
                 })
                 .collect();
-            let record = monitor::record(&batch_id, request.label.as_deref(), now_secs, runs);
+            let record = monitor::record(
+                &batch_id,
+                request.label.as_deref(),
+                request.job.as_ref(),
+                now_secs,
+                runs,
+            );
             monitor::Liveness::acquire(root, &batch_path, &record)
                 .inspect_err(|err| {
                     eprintln!("cue-agent: this batch cannot be monitored or stopped: {err:#}")
@@ -362,6 +370,14 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
             )
         }) {
             run.persistence_errors.push(format!("index.jsonl: {err:#}"));
+        }
+        // The response as its own document, beside prompt.md; a run with no
+        // final response leaves none.
+        if !run.response.is_empty()
+            && let Err(err) =
+                state::write_private(prepared.run_path.join("response.md"), &run.response)
+        {
+            run.persistence_errors.push(format!("response.md: {err:#}"));
         }
         let persist = || -> Result<()> {
             state::write_private(
@@ -541,6 +557,7 @@ fn prepare_all(
             "context": task.context,
             "label": label,
             "batch_label": request.label,
+            "job": request.job.as_ref().map(|job| serde_json::json!({ "id": job.id, "label": job.label })),
             "repo": source.repo_id,
             "commit": source.commit_hash,
             "store_root": records.store_root,

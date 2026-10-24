@@ -35,7 +35,17 @@ pub struct Bases<'a> {
 #[derive(Debug, Clone)]
 pub struct ResolvedBatch {
     pub label: Option<String>,
+    pub job: Option<Job>,
     pub tasks: Vec<ResolvedTask>,
+}
+
+/// The unit of work a batch belongs to: a caller running one job as several
+/// sequential batches names them all with the same id.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Job {
+    /// One safe path segment, validated like a run id.
+    pub id: String,
+    pub label: Option<String>,
 }
 
 /// One execution, with defaults and agent overrides applied.
@@ -65,7 +75,8 @@ pub struct Worktree {
     pub branch: Option<String>,
 }
 
-const ROOT_FIELDS: [&str; 3] = ["tasks", "defaults", "label"];
+const ROOT_FIELDS: [&str; 4] = ["tasks", "defaults", "label", "job"];
+const JOB_FIELDS: [&str; 2] = ["id", "label"];
 const WORKTREE_FIELDS: [&str; 4] = ["base", "ephemeral", "path", "branch"];
 /// Fields shared by defaults and tasks; only a task names its agent.
 const LAYER_FIELDS: [&str; 11] = [
@@ -98,6 +109,11 @@ pub fn resolve(raw: &str, bases: Bases, manifest: &Manifest) -> Result<ResolvedB
     let label = match root.get("label") {
         None | Some(Value::Null) => None,
         Some(value) => Some(StringSource::parse(value, refs).context("label")?),
+    };
+
+    let job = match root.get("job") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(parse_job(value, refs)?),
     };
 
     let defaults = match root.get("defaults") {
@@ -153,7 +169,42 @@ pub fn resolve(raw: &str, bases: Bases, manifest: &Manifest) -> Result<ResolvedB
         .into_iter()
         .map(|(at, agent, layer)| resolve_task(&at, agent, layer.over(&defaults), bases, manifest))
         .collect::<Result<_>>()?;
-    Ok(ResolvedBatch { label, tasks })
+    let job = job
+        .map(|(id, label)| -> Result<Job> {
+            let label = label
+                .map(|source| read_text(&source, "job.label"))
+                .transpose()?;
+            Ok(Job { id, label })
+        })
+        .transpose()?;
+    Ok(ResolvedBatch { label, job, tasks })
+}
+
+/// The job's id and its still unread label.
+fn parse_job(value: &Value, refs: &Path) -> Result<(String, Option<StringSource>)> {
+    let Value::Object(fields) = value else {
+        bail!(
+            "job: expected an object with an 'id', found {}",
+            kind(value)
+        );
+    };
+    reject_unknown(fields, &JOB_FIELDS, "job")?;
+    let id = match fields.get("id") {
+        Some(Value::String(id)) => id,
+        None | Some(Value::Null) => bail!("job.id: required"),
+        Some(other) => bail!("job.id: expected a string, found {}", kind(other)),
+    };
+    if !crate::ids::is_valid(id) {
+        bail!(
+            "job.id: '{id}' must start and end with a letter or digit and contain \
+             only letters, digits, '-', '_' and '.'"
+        );
+    }
+    let label = match fields.get("label") {
+        None | Some(Value::Null) => None,
+        Some(value) => Some(StringSource::parse(value, refs).context("job.label")?),
+    };
+    Ok((id.clone(), label))
 }
 
 /// The fields one level (defaults or a task) sets, clears or leaves alone.

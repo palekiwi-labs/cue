@@ -41,8 +41,26 @@ fn run() -> Result<ExitCode> {
             list_agents(json)?;
             Ok(ExitCode::SUCCESS)
         }
-        Commands::Ps { all, json } => {
-            let report = monitor::ps(all)?;
+        Commands::Ps {
+            all,
+            since,
+            limit,
+            job,
+            json,
+        } => {
+            let now = std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |elapsed| elapsed.as_secs() as i64);
+            let since = since
+                .map(|text| monitor::parse_since(&text, now))
+                .transpose()
+                .map_err(|err| anyhow::anyhow!("--since: {err}"))?;
+            let report = monitor::ps(&monitor::Filter {
+                all,
+                since,
+                limit,
+                job,
+            })?;
             if json {
                 println!("{}", serde_json::to_string(&report)?);
             } else {

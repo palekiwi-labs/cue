@@ -14,6 +14,7 @@
 //! is not reliable.
 
 use crate::harness;
+use crate::run_spec::Job;
 use crate::state;
 use anyhow::{Context, Result, bail};
 use serde_json::{Value, json};
@@ -228,6 +229,7 @@ impl Batch {
         json!({
             "batch_id": self.id(),
             "label": self.record["label"],
+            "job": self.record["job"],
             "state": state.as_str(),
             "pid": self.record["pid"],
             "started_at": self.record["started_at"],
@@ -279,6 +281,8 @@ impl Batch {
             "agent": run["agent"],
             "model": run["model"],
             "position": run["position"],
+            "label": run["label"],
+            "context": run["context"],
             "phase": phase,
             "run_path": path,
             "harness_pgid": pgid,
@@ -307,6 +311,8 @@ impl Batch {
             report["idle_secs"] = json!(elapsed(modified(&events)));
             report["turns"] = json!(observed.turns);
             report["tokens_input"] = json!(observed.tokens_input);
+            report["tokens_cache_read"] = json!(observed.cache_read);
+            report["tokens_cache_write"] = json!(observed.cache_write);
             report["tokens_output"] = json!(observed.tokens_output);
             report["cost_usd"] = json!(observed.cost_usd);
             report["last_tool"] = match observed.last_tool {
@@ -380,15 +386,87 @@ fn resolve(agent_root: &Path, id: &str) -> Result<Target> {
     Ok(Target::Run(batch, run))
 }
 
+/// Which batches `ps` reports.
+#[derive(Debug, Default)]
+pub struct Filter {
+    /// Include batches without an active entry.
+    pub all: bool,
+    /// Unix seconds; batches started earlier are skipped.
+    pub since: Option<i64>,
+    /// At most this many, newest first.
+    pub limit: Option<usize>,
+    pub job: Option<String>,
+}
+
+impl Filter {
+    fn matches(&self, batch: &Batch) -> bool {
+        self.job
+            .as_ref()
+            .is_none_or(|job| batch.record["job"]["id"].as_str() == Some(job))
+    }
+}
+
+/// The date directory name and batch-id prefix of a moment; both sort by
+/// time, so older entries compare below them.
+fn since_bounds(since: i64) -> (String, String) {
+    let (y, m, d, hh, mm, ss) = state::civil_from_unix(since);
+    (
+        format!("{y:04}-{m:02}-{d:02}"),
+        format!("{y:04}{m:02}{d:02}-{hh:02}{mm:02}{ss:02}"),
+    )
+}
+
+/// Parse `--since`: Unix seconds, or a duration back from now such as
+/// `90s`, `30m`, `2h` or `7d`.
+pub fn parse_since(text: &str, now: i64) -> Result<i64, String> {
+    if let Ok(secs) = text.parse::<i64>() {
+        return Ok(secs);
+    }
+    let invalid = || format!("'{text}' is neither Unix seconds nor a duration like 30m, 2h or 7d");
+    let (number, unit) = text.split_at(text.len().saturating_sub(1));
+    let scale = match unit {
+        "s" => 1,
+        "m" => 60,
+        "h" => 3600,
+        "d" => 86400,
+        _ => return Err(invalid()),
+    };
+    let count: i64 = number.parse().map_err(|_| invalid())?;
+    count
+        .checked_mul(scale)
+        .filter(|secs| *secs >= 0)
+        .map(|secs| now - secs)
+        .ok_or_else(invalid)
+}
+
 /// Batches with an active entry, newest first. Entries whose lock is free
 /// belong to supervisors that died while running: they are reported this
-/// once, then removed.
-pub fn ps(all: bool) -> Result<Value> {
+/// once, then removed. With `all`, the history is scanned newest first and
+/// the scan stops at the `since` bound or once `limit` batches are found.
+pub fn ps(filter: &Filter) -> Result<Value> {
     let agent_root = state::agent_root()?;
+    let bounds = filter.since.map(since_bounds);
     let mut batches: Vec<Batch> = Vec::new();
-    if all {
-        for day in sorted_dirs(&agent_root.join("runs")) {
-            batches.extend(sorted_dirs(&day).into_iter().filter_map(Batch::open));
+    if filter.all {
+        'days: for day in sorted_dirs(&agent_root.join("runs")).into_iter().rev() {
+            let name = day.file_name().unwrap_or_default().to_string_lossy();
+            if bounds.as_ref().is_some_and(|(date, _)| *name < **date) {
+                break;
+            }
+            for path in sorted_dirs(&day).into_iter().rev() {
+                let id = path.file_name().unwrap_or_default().to_string_lossy();
+                if bounds.as_ref().is_some_and(|(_, prefix)| *id < **prefix) {
+                    break 'days;
+                }
+                if filter.limit.is_some_and(|limit| batches.len() >= limit) {
+                    break 'days;
+                }
+                if let Some(batch) = Batch::open(path)
+                    && filter.matches(&batch)
+                {
+                    batches.push(batch);
+                }
+            }
         }
     } else {
         let active = active_dir(&agent_root);
@@ -402,10 +480,18 @@ pub fn ps(all: bool) -> Result<Value> {
             if !batch.state().alive() {
                 let _ = fs::remove_file(&entry);
             }
-            batches.push(batch);
+            let recent = bounds
+                .as_ref()
+                .is_none_or(|(_, prefix)| batch.id() >= prefix.as_str());
+            if recent && filter.matches(&batch) {
+                batches.push(batch);
+            }
         }
     }
     batches.sort_by(|a, b| b.id().cmp(a.id()));
+    if let Some(limit) = filter.limit {
+        batches.truncate(limit);
+    }
     let reports: Vec<Value> = batches.iter().map(Batch::report).collect();
     Ok(json!({ "batches": reports }))
 }
@@ -523,10 +609,17 @@ pub fn logs(id: &str, stderr: bool, follow: bool) -> Result<()> {
 }
 
 /// The record a supervisor writes beside its lock.
-pub fn record(batch_id: &str, label: Option<&str>, started_at: i64, runs: Vec<Value>) -> Value {
+pub fn record(
+    batch_id: &str,
+    label: Option<&str>,
+    job: Option<&Job>,
+    started_at: i64,
+    runs: Vec<Value>,
+) -> Value {
     json!({
         "batch_id": batch_id,
         "label": label,
+        "job": job.map(|job| json!({ "id": job.id, "label": job.label })),
         "pid": std::process::id(),
         "started_at": started_at,
         "runs": runs,
