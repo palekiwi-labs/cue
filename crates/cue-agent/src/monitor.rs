@@ -561,7 +561,16 @@ pub fn human_run(run: &Value) -> String {
     if let Some(outcome) = run["result"]["outcome"].as_str() {
         line.push_str(&format!("  {outcome}"));
     } else if let Some(reason) = run["exit"]["reason"].as_str() {
-        line.push_str(&format!("  {reason}"));
+        // The phase already says exited; repeat only a different reason.
+        if reason != "exited" {
+            line.push_str(&format!("  {reason}"));
+        }
+        if let Some(code) = run["exit"]["code"].as_i64() {
+            line.push_str(&format!("  code {code}"));
+        }
+        if let Some(signal) = run["exit"]["signal"].as_i64() {
+            line.push_str(&format!("  signal {signal}"));
+        }
     }
     line.push('\n');
     line
@@ -578,4 +587,28 @@ pub fn human_batch(batch: &Value) -> String {
         text.push_str(&human_run(run));
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn exited(reason: &str, code: Value, signal: Value) -> String {
+        human_run(&json!({
+            "run_id": "r", "agent": "a", "phase": "exited",
+            "exit": { "reason": reason, "code": code, "signal": signal },
+        }))
+    }
+
+    #[test]
+    fn an_exited_line_names_the_reason_once_with_its_status() {
+        assert_eq!(
+            exited("exited", json!(0), Value::Null),
+            "  r  a  exited  code 0\n"
+        );
+        assert_eq!(
+            exited("stopped", Value::Null, json!(15)),
+            "  r  a  exited  stopped  signal 15\n"
+        );
+    }
 }

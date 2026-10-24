@@ -634,11 +634,11 @@ far, and `last_tool` (name, an excerpt of its JSON arguments, and whether its
 result is still `pending`). These are observations; cue-agent does not decide
 that a run is stuck. A run whose harness has been reaped while its siblings
 still run is `exited` and adds `exit` (`reason`: `exited`, `timed_out`,
-`stopped`, `interrupted` or `wait_failed`, plus `code` and `signal`); its
-elapsed and idle times are frozen at exit and no tool is reported pending.
-The receipt, written at finalization, stays authoritative. A finished run adds
-`result` (outcome, error, response, trace). Progress is parsed from the whole events file, up to the receipt's
-read cap.
+`stopped`, `interrupted`, `spawn_failed` or `wait_failed`, plus `code` and
+`signal`); its elapsed and idle times are frozen at exit and no tool is
+reported pending. The receipt, written at finalization, stays authoritative.
+A finished run adds `result` (outcome, error, response, trace). Progress is
+parsed from the whole events file, up to the receipt's read cap.
 
 **Logs.** `logs` copies `events.jsonl` (or `stderr.log`) as written so far;
 `--follow` keeps copying until the run has a receipt or its supervisor is

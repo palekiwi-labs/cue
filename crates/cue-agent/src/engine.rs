@@ -144,6 +144,11 @@ pub struct RunOutcome {
 pub fn supervise(plans: &[RunPlan]) -> Vec<RunOutcome> {
     let grace = grace_window();
     let mut states: Vec<State> = plans.iter().map(spawn).collect();
+    for (plan, state) in plans.iter().zip(&states) {
+        if let State::Done(outcome) = state {
+            record_exit(plan, outcome);
+        }
+    }
     let mut last_stop_check = Instant::now();
 
     loop {
@@ -302,6 +307,10 @@ impl Run {
 /// finalization stays authoritative, so a failed write changes no outcome.
 fn record_exit(plan: &RunPlan, outcome: &RunOutcome) {
     let Some(path) = &plan.exit_path else { return };
+    let _ = crate::state::write_private(path, exit_record(outcome).to_string());
+}
+
+fn exit_record(outcome: &RunOutcome) -> serde_json::Value {
     let (reason, code, signal) = match &outcome.disposition {
         Disposition::Exited { code, signal } => ("exited", *code, *signal),
         Disposition::TimedOut { code, signal } => ("timed_out", *code, *signal),
@@ -310,18 +319,20 @@ fn record_exit(plan: &RunPlan, outcome: &RunOutcome) {
             code,
             signal,
         } => ("stopped", *code, *signal),
-        Disposition::Aborted { code, signal, .. } => ("interrupted", *code, *signal),
-        Disposition::SpawnFailed { .. } | Disposition::WaitFailed { .. } => {
-            ("wait_failed", None, None)
-        }
+        Disposition::Aborted {
+            trigger: Trigger::Signal(_),
+            code,
+            signal,
+        } => ("interrupted", *code, *signal),
+        Disposition::SpawnFailed { .. } => ("spawn_failed", None, None),
+        Disposition::WaitFailed { .. } => ("wait_failed", None, None),
     };
-    let record = serde_json::json!({
+    serde_json::json!({
         "reason": reason,
         "code": code,
         "signal": signal,
         "duration_ms": outcome.duration.as_millis() as u64,
-    });
-    let _ = crate::state::write_private(path, record.to_string());
+    })
 }
 
 fn spawn(plan: &RunPlan) -> State {
@@ -429,5 +440,114 @@ fn signal_group(pgid: i32, signal: libc::c_int) {
         if err.raw_os_error() != Some(libc::ESRCH) {
             eprintln!("cue-agent: kill(-{pgid}, {signal}): {err}");
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn plan(dir: &std::path::Path, program: &str, argv: &[&str]) -> RunPlan {
+        RunPlan {
+            run_id: "run".to_string(),
+            program: PathBuf::from(program),
+            argv: argv.iter().map(|arg| arg.to_string()).collect(),
+            cwd: dir.to_path_buf(),
+            env: BTreeMap::new(),
+            events_path: dir.join("events.jsonl"),
+            stderr_path: dir.join("stderr.log"),
+            deadline: None,
+            stop_paths: Vec::new(),
+            pgid_path: None,
+            exit_path: Some(dir.join("exit.json")),
+        }
+    }
+
+    fn recorded(dir: &std::path::Path) -> serde_json::Value {
+        serde_json::from_slice(&std::fs::read(dir.join("exit.json")).expect("exit.json"))
+            .expect("exit.json is JSON")
+    }
+
+    #[test]
+    fn a_harness_that_never_starts_records_spawn_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        supervise(&[plan(dir.path(), "/nonexistent/pi", &[])]);
+        assert_eq!(recorded(dir.path())["reason"], "spawn_failed");
+    }
+
+    #[test]
+    fn a_run_past_its_deadline_records_timed_out() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut plan = plan(dir.path(), "sleep", &["30"]);
+        plan.deadline = Some(Duration::from_millis(100));
+        supervise(&[plan]);
+        let exit = recorded(dir.path());
+        assert_eq!(exit["reason"], "timed_out");
+        assert_eq!(exit["signal"], libc::SIGTERM);
+    }
+
+    #[test]
+    fn every_disposition_has_its_own_exit_reason() {
+        let cases = [
+            (
+                Disposition::Exited {
+                    code: Some(3),
+                    signal: None,
+                },
+                "exited",
+            ),
+            (
+                Disposition::TimedOut {
+                    code: None,
+                    signal: Some(15),
+                },
+                "timed_out",
+            ),
+            (
+                Disposition::Aborted {
+                    trigger: Trigger::StopRequest,
+                    code: None,
+                    signal: Some(15),
+                },
+                "stopped",
+            ),
+            (
+                Disposition::Aborted {
+                    trigger: Trigger::Signal(2),
+                    code: None,
+                    signal: Some(15),
+                },
+                "interrupted",
+            ),
+            (
+                Disposition::SpawnFailed {
+                    message: String::new(),
+                },
+                "spawn_failed",
+            ),
+            (
+                Disposition::WaitFailed {
+                    message: String::new(),
+                },
+                "wait_failed",
+            ),
+        ];
+        for (disposition, reason) in cases {
+            let outcome = RunOutcome {
+                disposition,
+                duration: Duration::from_millis(1500),
+            };
+            let record = exit_record(&outcome);
+            assert_eq!(record["reason"], reason, "{record}");
+            assert_eq!(record["duration_ms"], 1500);
+        }
+        let exited = exit_record(&RunOutcome {
+            disposition: Disposition::Exited {
+                code: Some(3),
+                signal: None,
+            },
+            duration: Duration::ZERO,
+        });
+        assert_eq!(exited["code"], 3);
     }
 }
