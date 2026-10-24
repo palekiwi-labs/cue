@@ -99,6 +99,9 @@ pub struct RunPlan {
     pub stop_paths: Vec<PathBuf>,
     /// Where the harness process group id is recorded once it starts.
     pub pgid_path: Option<PathBuf>,
+    /// Where the harness's exit is recorded once it is reaped, so observers
+    /// can tell an ended run from a stalled one before the batch finalizes.
+    pub exit_path: Option<PathBuf>,
 }
 
 /// How a run ended. Isolated per run: one failure never ends the batch.
@@ -159,19 +162,23 @@ pub fn supervise(plans: &[RunPlan]) -> Vec<RunOutcome> {
 
             match run.child.try_wait() {
                 Ok(Some(status)) => {
-                    *state = State::Done(run.finish(status));
+                    let outcome = run.finish(status);
+                    record_exit(plan, &outcome);
+                    *state = State::Done(outcome);
                     progressed = true;
                     continue;
                 }
                 Ok(None) => {}
                 Err(err) => {
                     run.group.kill_now();
-                    *state = State::Done(RunOutcome {
+                    let outcome = RunOutcome {
                         disposition: Disposition::WaitFailed {
                             message: format!("could not wait on the harness: {err}"),
                         },
                         duration: run.started.elapsed(),
-                    });
+                    };
+                    record_exit(plan, &outcome);
+                    *state = State::Done(outcome);
                     progressed = true;
                     continue;
                 }
@@ -289,6 +296,32 @@ impl Run {
             duration: self.started.elapsed(),
         }
     }
+}
+
+/// Best effort: the record only informs observers. The receipt written at
+/// finalization stays authoritative, so a failed write changes no outcome.
+fn record_exit(plan: &RunPlan, outcome: &RunOutcome) {
+    let Some(path) = &plan.exit_path else { return };
+    let (reason, code, signal) = match &outcome.disposition {
+        Disposition::Exited { code, signal } => ("exited", *code, *signal),
+        Disposition::TimedOut { code, signal } => ("timed_out", *code, *signal),
+        Disposition::Aborted {
+            trigger: Trigger::StopRequest,
+            code,
+            signal,
+        } => ("stopped", *code, *signal),
+        Disposition::Aborted { code, signal, .. } => ("interrupted", *code, *signal),
+        Disposition::SpawnFailed { .. } | Disposition::WaitFailed { .. } => {
+            ("wait_failed", None, None)
+        }
+    };
+    let record = serde_json::json!({
+        "reason": reason,
+        "code": code,
+        "signal": signal,
+        "duration_ms": outcome.duration.as_millis() as u64,
+    });
+    let _ = crate::state::write_private(path, record.to_string());
 }
 
 fn spawn(plan: &RunPlan) -> State {

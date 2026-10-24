@@ -162,6 +162,58 @@ fn stopping_one_run_lets_its_sibling_complete() {
 }
 
 #[test]
+fn an_ended_run_is_reported_as_exited_while_its_siblings_run() {
+    let sandbox = Sandbox::new();
+    sandbox.global_manifest(MANIFEST);
+    let child = start(
+        &sandbox,
+        &spec(&[
+            ("alpha", "TOOL_WAIT=30"),
+            ("beta", "SLEEP=0"),
+            ("alpha", "SLEEP=30"),
+        ]),
+    );
+    wait_sessions(&sandbox, 3);
+    let runs = ps(&sandbox)[0]["runs"].as_array().unwrap().clone();
+    let stopped_id = runs[0]["run_id"].as_str().unwrap().to_string();
+    let natural_id = runs[1]["run_id"].as_str().unwrap().to_string();
+
+    wait_for("the tool call to be observed", || {
+        json(&sandbox, &["status", "--json", &stopped_id]).1["last_tool"].is_object()
+    });
+    json(&sandbox, &["stop", "--json", &stopped_id]);
+
+    let mut statuses = (serde_json::Value::Null, serde_json::Value::Null);
+    wait_for("both runs to be reported as exited", || {
+        statuses = (
+            json(&sandbox, &["status", "--json", &stopped_id]).1,
+            json(&sandbox, &["status", "--json", &natural_id]).1,
+        );
+        statuses.0["phase"] == "exited" && statuses.1["phase"] == "exited"
+    });
+    let (stopped, natural) = statuses;
+    assert_eq!(stopped["exit"]["reason"], "stopped", "{stopped}");
+    assert_eq!(stopped["last_tool"]["pending"], false, "{stopped}");
+    assert_eq!(natural["exit"]["reason"], "exited", "{natural}");
+    assert_eq!(natural["exit"]["code"], 0, "{natural}");
+    assert_eq!(
+        ps(&sandbox)[0]["state"],
+        "running",
+        "the sibling still runs"
+    );
+
+    // Elapsed and idle are frozen at exit rather than advancing.
+    std::thread::sleep(Duration::from_millis(1100));
+    let later = json(&sandbox, &["status", "--json", &natural_id]).1;
+    assert_eq!(later["elapsed_secs"], natural["elapsed_secs"], "{later}");
+    assert_eq!(later["idle_secs"], natural["idle_secs"], "{later}");
+
+    let batch_id = ps(&sandbox)[0]["batch_id"].as_str().unwrap().to_string();
+    json(&sandbox, &["stop", "--json", "--wait", &batch_id]);
+    child.wait_with_output().unwrap();
+}
+
+#[test]
 fn status_reports_the_last_tool_call_and_whether_it_is_pending() {
     let sandbox = Sandbox::new();
     sandbox.global_manifest(MANIFEST);
