@@ -406,6 +406,11 @@ impl Filter {
     }
 }
 
+/// The last second whose date has four year digits (9999-12-31T23:59:59Z).
+/// Date names and batch ids compare as text, so later bounds would sort
+/// below them; nothing can start that late anyway.
+const LAST_FOUR_DIGIT_YEAR: i64 = 253_402_300_799;
+
 /// The date directory name and batch-id prefix of a moment; both sort by
 /// time, so older entries compare below them.
 fn since_bounds(since: i64) -> (String, String) {
@@ -423,7 +428,10 @@ pub fn parse_since(text: &str, now: i64) -> Result<i64, String> {
         return Ok(secs);
     }
     let invalid = || format!("'{text}' is neither Unix seconds nor a duration like 30m, 2h or 7d");
-    let (number, unit) = text.split_at(text.len().saturating_sub(1));
+    let Some((last, _)) = text.char_indices().next_back() else {
+        return Err(invalid());
+    };
+    let (number, unit) = text.split_at(last);
     let scale = match unit {
         "s" => 1,
         "m" => 60,
@@ -445,8 +453,16 @@ pub fn parse_since(text: &str, now: i64) -> Result<i64, String> {
 /// the scan stops at the `since` bound or once `limit` batches are found.
 pub fn ps(filter: &Filter) -> Result<Value> {
     let agent_root = state::agent_root()?;
+    if filter
+        .since
+        .is_some_and(|since| since > LAST_FOUR_DIGIT_YEAR)
+    {
+        return Ok(json!({ "batches": [] }));
+    }
     let bounds = filter.since.map(since_bounds);
     let mut batches: Vec<Batch> = Vec::new();
+    // Active entries of dead batches, removed only once reported.
+    let mut dead_entries: Vec<(String, PathBuf)> = Vec::new();
     if filter.all {
         'days: for day in sorted_dirs(&agent_root.join("runs")).into_iter().rev() {
             let name = day.file_name().unwrap_or_default().to_string_lossy();
@@ -477,13 +493,13 @@ pub fn ps(filter: &Filter) -> Result<Value> {
             let Some(batch) = Batch::open(target) else {
                 continue;
             };
-            if !batch.state().alive() {
-                let _ = fs::remove_file(&entry);
-            }
             let recent = bounds
                 .as_ref()
                 .is_none_or(|(_, prefix)| batch.id() >= prefix.as_str());
             if recent && filter.matches(&batch) {
+                if !batch.state().alive() {
+                    dead_entries.push((batch.id().to_string(), entry));
+                }
                 batches.push(batch);
             }
         }
@@ -491,6 +507,11 @@ pub fn ps(filter: &Filter) -> Result<Value> {
     batches.sort_by(|a, b| b.id().cmp(a.id()));
     if let Some(limit) = filter.limit {
         batches.truncate(limit);
+    }
+    for (id, entry) in dead_entries {
+        if batches.iter().any(|batch| batch.id() == id) {
+            let _ = fs::remove_file(&entry);
+        }
     }
     let reports: Vec<Value> = batches.iter().map(Batch::report).collect();
     Ok(json!({ "batches": reports }))
@@ -619,7 +640,7 @@ pub fn record(
     json!({
         "batch_id": batch_id,
         "label": label,
-        "job": job.map(|job| json!({ "id": job.id, "label": job.label })),
+        "job": job,
         "pid": std::process::id(),
         "started_at": started_at,
         "runs": runs,
@@ -691,6 +712,21 @@ mod tests {
             "run_id": "r", "agent": "a", "phase": "exited",
             "exit": { "reason": reason, "code": code, "signal": signal },
         }))
+    }
+
+    #[test]
+    fn parse_since_accepts_seconds_and_durations() {
+        assert_eq!(parse_since("1700000000", 0), Ok(1700000000));
+        assert_eq!(parse_since("90s", 1000), Ok(910));
+        assert_eq!(parse_since("2h", 10000), Ok(2800));
+        assert_eq!(parse_since("1d", 100000), Ok(13600));
+    }
+
+    #[test]
+    fn parse_since_rejects_malformed_text_without_panicking() {
+        for text in ["", "h", "-5m", "5x", "\u{e9}", "5\u{b5}", "\u{1f600}"] {
+            assert!(parse_since(text, 1000).is_err(), "{text:?}");
+        }
     }
 
     #[test]

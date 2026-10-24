@@ -41,7 +41,7 @@ pub struct ResolvedBatch {
 
 /// The unit of work a batch belongs to: a caller running one job as several
 /// sequential batches names them all with the same id.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize)]
 pub struct Job {
     /// One safe path segment, validated like a run id.
     pub id: String,

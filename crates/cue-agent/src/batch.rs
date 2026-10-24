@@ -557,7 +557,7 @@ fn prepare_all(
             "context": task.context,
             "label": label,
             "batch_label": request.label,
-            "job": request.job.as_ref().map(|job| serde_json::json!({ "id": job.id, "label": job.label })),
+            "job": request.job,
             "repo": source.repo_id,
             "commit": source.commit_hash,
             "store_root": records.store_root,

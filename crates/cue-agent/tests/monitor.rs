@@ -114,7 +114,18 @@ fn a_killed_supervisor_is_reported_as_crashed_never_running() {
     let pgid = run["harness_pgid"].as_i64().unwrap();
     unsafe { libc::kill(-(pgid as i32), libc::SIGKILL) };
 
+    // Filtered listings that do not report the crash must leave it in place.
+    for filter in [
+        &["ps", "--json", "--job", "other"][..],
+        &["ps", "--json", "--since", "300000000000"][..],
+    ] {
+        let (output, value) = json(&sandbox, filter);
+        assert!(output.status.success(), "{output:?}");
+        assert_eq!(value["batches"], serde_json::json!([]), "{filter:?}");
+    }
+
     let listed = ps(&sandbox);
+    assert_eq!(listed.len(), 1, "the crash is still reported: {listed:?}");
     assert!(
         listed.iter().all(|batch| batch["state"] != "running"),
         "{listed:?}"

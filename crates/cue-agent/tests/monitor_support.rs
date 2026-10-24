@@ -154,6 +154,8 @@ fn ps_all_is_bounded_by_limit_and_since() {
         all
     });
     assert!(listed(&["--since", "99999999999"]).is_empty());
+    // Past year 9999 the bound is still after every batch.
+    assert!(listed(&["--since", "300000000000"]).is_empty());
 
     let bad = sandbox
         .cmd()
