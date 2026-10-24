@@ -79,6 +79,56 @@ fn native_creation_records_actual_address_and_provenance() {
     assert_eq!(events(&env).len(), 8);
 }
 
+#[test]
+fn empty_provenance_is_omitted_and_host_defaults_from_environment() {
+    let env = fixture();
+    env.command()
+        .env("CAST_HOST_NAME", "host-a")
+        .args([
+            "activity",
+            "add",
+            "--context",
+            "work",
+            "--kind",
+            "git_commit_attempt",
+            "--details",
+            "{}",
+            "--session-id",
+            "",
+            "--harness",
+            "",
+        ])
+        .assert()
+        .success();
+    let entries = events(&env);
+    assert_eq!(entries[0]["host"], "host-a");
+    assert!(entries[0].get("session_id").is_none());
+    assert!(entries[0].get("harness").is_none());
+    env.command()
+        .env("CAST_HOST_NAME", "host-a")
+        .args([
+            "activity",
+            "add",
+            "--context",
+            "work",
+            "--kind",
+            "git_commit_attempt",
+            "--details",
+            "{}",
+            "--host",
+            "",
+        ])
+        .assert()
+        .success();
+    assert_eq!(
+        events(&env)
+            .iter()
+            .filter(|e| e.get("host").is_none())
+            .count(),
+        1
+    );
+}
+
 fn seed(env: &TestEnv, timestamp: u64, id: &str) -> std::path::PathBuf {
     let dir = env.cue_store().join("acme/widgets/work/activity");
     std::fs::create_dir_all(&dir).unwrap();

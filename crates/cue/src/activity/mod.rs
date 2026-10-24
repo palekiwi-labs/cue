@@ -58,8 +58,8 @@ pub fn record(
         timestamp: u64::try_from(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis())?,
         kind,
         details,
-        session_id,
-        harness,
+        session_id: session_id.filter(|s| !s.is_empty()),
+        harness: harness.filter(|s| !s.is_empty()),
         host: host
             .or_else(|| std::env::var("CAST_HOST_NAME").ok())
             .filter(|h| !h.is_empty()),
