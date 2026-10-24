@@ -144,7 +144,6 @@ pub fn list(context_dir: &Path, since: Option<u64>, limit: Option<usize>) -> Res
 mod tests {
     use super::*;
     use std::collections::HashSet;
-    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[test]
     fn publication_never_replaces_an_existing_event_and_cleans_up_on_failure() {
@@ -172,10 +171,10 @@ mod tests {
     #[test]
     fn concurrent_writers_publish_only_complete_unique_events() {
         let dir = tempfile::tempdir().unwrap();
-        let done = AtomicUsize::new(0);
         std::thread::scope(|scope| {
+            let mut writers = Vec::new();
             for _ in 0..8 {
-                scope.spawn(|| {
+                writers.push(scope.spawn(|| {
                     for _ in 0..25 {
                         record(
                             dir.path(),
@@ -187,10 +186,9 @@ mod tests {
                         )
                         .unwrap();
                     }
-                    done.fetch_add(1, Ordering::Release);
-                });
+                }));
             }
-            while done.load(Ordering::Acquire) < 8 {
+            while !writers.iter().all(|writer| writer.is_finished()) {
                 let entries = list(dir.path(), None, None).unwrap();
                 assert!(entries.iter().all(|e| e.id.get_version_num() == 4));
                 // Parse every final file independently: list's warning-and-skip
@@ -205,6 +203,9 @@ mod tests {
                     }
                 }
                 std::thread::yield_now();
+            }
+            for writer in writers {
+                writer.join().unwrap();
             }
         });
         let entries = list(dir.path(), None, None).unwrap();
