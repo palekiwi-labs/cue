@@ -27,6 +27,8 @@ use std::time::{Duration, SystemTime};
 const LOCK: &str = "lock";
 const RECORD: &str = "batch.json";
 const FINALIZING: &str = "finalizing";
+/// Written by the supervisor when a run's harness is reaped.
+pub const EXIT: &str = "exit.json";
 const BATCH_STOP: &str = "stop";
 /// Bytes of a tool call's arguments shown in a status.
 const ARGUMENTS_EXCERPT: usize = 400;
@@ -244,12 +246,18 @@ impl Batch {
             .ok()
             .and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok())
             .is_some_and(|manifest| !manifest["launch_error"].is_null());
+        let exit: Option<Value> = fs::read(path.join(EXIT))
+            .ok()
+            .and_then(|bytes| serde_json::from_slice(&bytes).ok());
+        let exited_at = exit.as_ref().and_then(|_| modified(&path.join(EXIT)));
         let phase = if receipt.is_some() {
             "finished"
         } else if state == BatchState::Crashed {
             "crashed"
         } else if state == BatchState::Finalizing || launch_error {
             "finishing"
+        } else if exit.is_some() {
+            "exited"
         } else if events.exists() {
             "running"
         } else {
@@ -260,7 +268,8 @@ impl Batch {
             .ok()
             .and_then(|text| text.trim().parse().ok());
         let launched_at = modified(&path.join("harness.pgid"));
-        let now = SystemTime::now();
+        // An ended run's clock stops at its exit, so it never looks stalled.
+        let now = exited_at.unwrap_or_else(SystemTime::now);
         let elapsed = |since: Option<SystemTime>| {
             since.and_then(|at| now.duration_since(at).ok().map(|d| d.as_secs()))
         };
@@ -283,6 +292,13 @@ impl Batch {
                 "trace": receipt["trace"],
                 "trace_error": receipt["trace_error"],
             });
+        } else if let Some(exit) = &exit {
+            report["elapsed_secs"] = json!(exit["duration_ms"].as_u64().map(|ms| ms / 1000));
+            report["exit"] = json!({
+                "reason": exit["reason"],
+                "code": exit["code"],
+                "signal": exit["signal"],
+            });
         } else {
             report["elapsed_secs"] = json!(elapsed(launched_at));
         }
@@ -297,7 +313,8 @@ impl Batch {
                 Some(tool) => json!({
                     "name": tool.name,
                     "arguments": excerpt(&tool.arguments, ARGUMENTS_EXCERPT),
-                    "pending": tool.pending,
+                    // A tool cannot still be running once its harness exited.
+                    "pending": tool.pending && exit.is_none(),
                 }),
                 None => Value::Null,
             };
@@ -543,6 +560,17 @@ pub fn human_run(run: &Value) -> String {
     }
     if let Some(outcome) = run["result"]["outcome"].as_str() {
         line.push_str(&format!("  {outcome}"));
+    } else if let Some(reason) = run["exit"]["reason"].as_str() {
+        // The phase already says exited; repeat only a different reason.
+        if reason != "exited" {
+            line.push_str(&format!("  {reason}"));
+        }
+        if let Some(code) = run["exit"]["code"].as_i64() {
+            line.push_str(&format!("  code {code}"));
+        }
+        if let Some(signal) = run["exit"]["signal"].as_i64() {
+            line.push_str(&format!("  signal {signal}"));
+        }
     }
     line.push('\n');
     line
@@ -559,4 +587,28 @@ pub fn human_batch(batch: &Value) -> String {
         text.push_str(&human_run(run));
     }
     text
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn exited(reason: &str, code: Value, signal: Value) -> String {
+        human_run(&json!({
+            "run_id": "r", "agent": "a", "phase": "exited",
+            "exit": { "reason": reason, "code": code, "signal": signal },
+        }))
+    }
+
+    #[test]
+    fn an_exited_line_names_the_reason_once_with_its_status() {
+        assert_eq!(
+            exited("exited", json!(0), Value::Null),
+            "  r  a  exited  code 0\n"
+        );
+        assert_eq!(
+            exited("stopped", Value::Null, json!(15)),
+            "  r  a  exited  stopped  signal 15\n"
+        );
+    }
 }

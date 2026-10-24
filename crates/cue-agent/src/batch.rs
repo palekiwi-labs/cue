@@ -582,6 +582,7 @@ fn prepare_all(
                 deadline: records.deadline,
                 stop_paths: monitor::stop_paths(records.batch_path, &run_id),
                 pgid_path: Some(run_path.join("harness.pgid")),
+                exit_path: Some(run_path.join(monitor::EXIT)),
                 run_id,
             },
             position: number,
