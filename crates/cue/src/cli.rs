@@ -66,6 +66,12 @@ pub enum Commands {
         /// Set context by slug or <org>/<repo>/<slug> address; overrides $CUE_CONTEXT
         #[arg(long)]
         context: Option<String>,
+        /// Session that initiated this creation
+        #[arg(long)]
+        session_id: Option<String>,
+        /// Agent harness that owns the session ID
+        #[arg(long)]
+        harness: Option<String>,
         /// Overwrite existing file
         #[arg(long)]
         force: bool,

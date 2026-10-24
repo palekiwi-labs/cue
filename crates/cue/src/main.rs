@@ -41,6 +41,8 @@ fn main() -> anyhow::Result<()> {
             cue_type,
             force,
             context,
+            session_id,
+            harness,
         } => {
             let resolved_content: Vec<u8> = if clipboard {
                 resolve_clipboard(&filename)?
@@ -68,6 +70,8 @@ fn main() -> anyhow::Result<()> {
                     cue_type,
                     force,
                     context,
+                    session_id,
+                    harness,
                     store_root: store_root.map(std::path::Path::to_path_buf),
                 },
             )?;

@@ -15,6 +15,8 @@ pub struct AddOptions {
     pub force: bool,
     pub context: Option<String>,
     pub store_root: Option<PathBuf>,
+    pub session_id: Option<String>,
+    pub harness: Option<String>,
 }
 
 /// Shared inputs locating a central artifact write: the repository, the
@@ -37,6 +39,8 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
         force,
         context,
         store_root,
+        session_id,
+        harness,
     } = opts;
 
     let write = CentralWrite {
@@ -48,25 +52,40 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
         store_root: store_root.as_deref(),
     };
 
-    if matches!(
-        cue_type.as_str(),
-        "task" | "spec" | "plan" | "note" | "trace"
-    ) {
-        return add_central_markdown(write, frontmatter, &cue_type);
+    let path = match cue_type.as_str() {
+        "task" | "spec" | "plan" | "note" | "trace" => {
+            add_central_markdown(write, frontmatter, &cue_type)
+        }
+        "bin" => add_central_bin(write, frontmatter),
+        "review" => add_central_json(write, frontmatter, &cue_type),
+        "tmp" => add_central_tmp(write, frontmatter),
+        _ => unreachable!("artifact types are constrained by clap"),
+    }?;
+    let record = || -> Result<()> {
+        let store = store::root(store_root.as_deref())?;
+        let relative = path.strip_prefix(&store)?;
+        let context_path: PathBuf = relative.components().take(3).collect();
+        let details = serde_json::Map::from_iter([
+            (
+                "address".into(),
+                relative.to_string_lossy().replace('\\', "/").into(),
+            ),
+            ("type".into(), cue_type.into()),
+        ]);
+        crate::activity::record(
+            &store.join(context_path),
+            crate::activity::Kind::ArtifactCreated,
+            details,
+            session_id,
+            harness,
+            None,
+        )?;
+        Ok(())
+    };
+    if let Err(error) = record() {
+        eprintln!("Warning: artifact created but activity recording failed: {error:#}");
     }
-    if cue_type == "bin" {
-        return add_central_bin(write, frontmatter);
-    }
-    // `review` keeps the JSON object writer: a review is structured data cue
-    // reads back, so it is stored as an object with mergeable top-level
-    // metadata rather than as opaque bytes.
-    if cue_type == "review" {
-        return add_central_json(write, frontmatter, &cue_type);
-    }
-    if cue_type == "tmp" {
-        return add_central_tmp(write, frontmatter);
-    }
-    unreachable!("artifact types are constrained by clap")
+    Ok(path)
 }
 
 fn add_central_markdown(

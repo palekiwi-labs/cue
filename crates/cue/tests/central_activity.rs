@@ -25,6 +25,60 @@ fn events(env: &TestEnv) -> Vec<Value> {
     serde_json::from_slice(&output).unwrap()
 }
 
+#[test]
+fn native_creation_records_actual_address_and_provenance() {
+    let env = fixture();
+    for kind in [
+        "spec", "task", "plan", "note", "trace", "review", "bin", "tmp",
+    ] {
+        let output = env
+            .command()
+            .env_remove("CAST_HOST_NAME")
+            .args([
+                "add",
+                "subject",
+                "{}",
+                "--type",
+                kind,
+                "--context",
+                "work",
+                "--session-id",
+                "s1",
+                "--harness",
+                "other-harness",
+            ])
+            .assert()
+            .success()
+            .get_output()
+            .stdout
+            .clone();
+        let path = env.root().join(String::from_utf8(output).unwrap().trim());
+        let address = path
+            .strip_prefix(env.cue_store())
+            .unwrap()
+            .to_str()
+            .unwrap();
+        let entries = events(&env);
+        let matches: Vec<_> = entries
+            .iter()
+            .filter(|e| e["details"]["address"] == address)
+            .collect();
+        assert_eq!(matches.len(), 1);
+        let event = matches[0];
+        assert_eq!(event["kind"], "artifact_created");
+        assert_eq!(event["details"]["type"], kind);
+        assert_eq!(event["harness"], "other-harness");
+        assert_eq!(event["session_id"], "s1");
+        assert!(event.get("host").is_none());
+    }
+    assert_eq!(events(&env).len(), 8);
+    env.command()
+        .args(["add", "subject", "{}", "--context", "work"])
+        .assert()
+        .failure();
+    assert_eq!(events(&env).len(), 8);
+}
+
 fn seed(env: &TestEnv, timestamp: u64, id: &str) -> std::path::PathBuf {
     let dir = env.cue_store().join("acme/widgets/work/activity");
     std::fs::create_dir_all(&dir).unwrap();
