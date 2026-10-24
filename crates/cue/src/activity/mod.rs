@@ -83,7 +83,22 @@ fn publish(context_dir: &Path, event: &Event) -> Result<PathBuf> {
     Ok(path)
 }
 
-pub fn list(context_dir: &Path) -> Result<Vec<Event>> {
+const MAX_TIMESTAMP: u64 = (1 << 53) - 1;
+
+fn filename_identity(name: &str) -> Option<(u64, Uuid)> {
+    let stem = name.strip_suffix(".json")?;
+    if stem.len() != 57 || !stem.is_ascii() || stem.as_bytes()[20] != b'-' {
+        return None;
+    }
+    if !stem[..20].bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let timestamp = stem[..20].parse().ok()?;
+    let id = Uuid::parse_str(&stem[21..]).ok()?;
+    (id.to_string() == stem[21..]).then_some((timestamp, id))
+}
+
+pub fn list(context_dir: &Path, since: Option<u64>, limit: Option<usize>) -> Result<Vec<Event>> {
     let dir = context_dir.join("activity");
     let entries = match fs::read_dir(&dir) {
         Ok(entries) => entries,
@@ -93,10 +108,34 @@ pub fn list(context_dir: &Path) -> Result<Vec<Event>> {
     let mut events = Vec::new();
     for entry in entries {
         let entry = entry?;
-        if entry.path().extension().is_some_and(|ext| ext == "json") {
-            events.push(serde_json::from_slice::<Event>(&fs::read(entry.path())?)?);
+        let Some((timestamp, id)) = filename_identity(&entry.file_name().to_string_lossy()) else {
+            continue;
+        };
+        if !entry.file_type()?.is_file() {
+            continue;
+        }
+        let bytes = fs::read(entry.path())?;
+        let event = match serde_json::from_slice::<Event>(&bytes) {
+            Ok(event)
+                if event.timestamp == timestamp && event.id == id && timestamp <= MAX_TIMESTAMP =>
+            {
+                event
+            }
+            _ => {
+                eprintln!(
+                    "Warning: skipping malformed activity record {}",
+                    entry.path().display()
+                );
+                continue;
+            }
+        };
+        if since.is_none_or(|since| timestamp >= since) {
+            events.push(event);
         }
     }
     events.sort_by_key(|e| (e.timestamp, e.id));
+    if let Some(limit) = limit {
+        events.drain(..events.len().saturating_sub(limit));
+    }
     Ok(events)
 }

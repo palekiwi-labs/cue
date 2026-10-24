@@ -145,6 +145,12 @@ pub enum ActivityCommands {
     List {
         #[arg(long)]
         context: Option<String>,
+        /// Select the latest N matching events
+        #[arg(long)]
+        limit: Option<usize>,
+        /// Include timestamps at or after these Unix milliseconds
+        #[arg(long)]
+        since: Option<u64>,
         #[arg(long)]
         json: bool,
     },

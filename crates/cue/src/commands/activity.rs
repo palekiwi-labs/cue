@@ -20,10 +20,15 @@ pub fn handle(cwd: &Path, command: ActivityCommands, store: Option<&Path>) -> Re
                 println!("{}", path.display());
             }
         }
-        ActivityCommands::List { context, json } => {
+        ActivityCommands::List {
+            context,
+            json,
+            since,
+            limit,
+        } => {
             let dir = activity::context_dir(cwd, context.as_deref(), store)?
                 .context("No context selected; pass --context <context>")?;
-            let events = activity::list(&dir)?;
+            let events = activity::list(&dir, since, limit)?;
             if json {
                 println!("{}", serde_json::to_string_pretty(&events)?);
             } else {
