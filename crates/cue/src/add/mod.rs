@@ -79,7 +79,7 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
         ]);
         crate::activity::record(
             &store.join(context_path),
-            crate::activity::Kind::ArtifactCreated,
+            crate::activity::Kind::native(crate::activity::ARTIFACT_CREATED),
             details,
             session_id,
             harness,
