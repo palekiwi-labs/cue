@@ -345,6 +345,41 @@ fn readers_ignore_non_event_files_and_warn_for_bad_envelopes() {
         .stdout(predicates::str::contains("git_commit_attempt"));
 }
 
+#[cfg(unix)]
+#[test]
+fn literal_backslashes_remain_distinct_from_path_separators() {
+    let env = fixture();
+    for filename in [r"a\b", "a/b"] {
+        env.command()
+            .args([
+                "add",
+                filename,
+                "body",
+                "--type",
+                "note",
+                "--context",
+                "work",
+            ])
+            .assert()
+            .success();
+    }
+    let entries = events(&env);
+    let addresses: std::collections::HashSet<_> = entries
+        .iter()
+        .map(|event| event["details"]["address"].as_str().unwrap())
+        .collect();
+    assert_eq!(
+        addresses,
+        std::collections::HashSet::from([
+            r"acme/widgets/work/note/a\b.md",
+            "acme/widgets/work/note/a/b.md",
+        ])
+    );
+    for address in addresses {
+        assert!(env.cue_store().join(address).is_file());
+    }
+}
+
 fn seed(env: &TestEnv, timestamp: u64, id: &str) -> std::path::PathBuf {
     let dir = env.cue_store().join("acme/widgets/work/activity");
     std::fs::create_dir_all(&dir).unwrap();

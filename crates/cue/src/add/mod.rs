@@ -68,7 +68,12 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
         let details = serde_json::Map::from_iter([
             (
                 "address".into(),
-                relative.to_string_lossy().replace('\\', "/").into(),
+                relative
+                    .components()
+                    .map(|component| component.as_os_str().to_string_lossy())
+                    .collect::<Vec<_>>()
+                    .join("/")
+                    .into(),
             ),
             ("type".into(), cue_type.into()),
         ]);
