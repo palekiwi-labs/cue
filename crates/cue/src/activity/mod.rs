@@ -139,3 +139,83 @@ pub fn list(context_dir: &Path, since: Option<u64>, limit: Option<usize>) -> Res
     }
     Ok(events)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashSet;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn publication_never_replaces_an_existing_event_and_cleans_up_on_failure() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut event = Event {
+            id: Uuid::new_v4(),
+            timestamp: 1,
+            kind: Kind::SessionAssociated,
+            host: None,
+            harness: None,
+            session_id: None,
+            details: Map::new(),
+        };
+        let path = publish(dir.path(), &event).unwrap();
+        let original = fs::read(&path).unwrap();
+        event.details.insert("changed".into(), true.into());
+        assert!(publish(dir.path(), &event).is_err());
+        assert_eq!(fs::read(path).unwrap(), original);
+        assert_eq!(
+            fs::read_dir(dir.path().join("activity")).unwrap().count(),
+            1
+        );
+    }
+
+    #[test]
+    fn concurrent_writers_publish_only_complete_unique_events() {
+        let dir = tempfile::tempdir().unwrap();
+        let done = AtomicUsize::new(0);
+        std::thread::scope(|scope| {
+            for _ in 0..8 {
+                scope.spawn(|| {
+                    for _ in 0..25 {
+                        record(
+                            dir.path(),
+                            Kind::GitCommitAttempt,
+                            Map::new(),
+                            None,
+                            None,
+                            None,
+                        )
+                        .unwrap();
+                    }
+                    done.fetch_add(1, Ordering::Release);
+                });
+            }
+            while done.load(Ordering::Acquire) < 8 {
+                let entries = list(dir.path(), None, None).unwrap();
+                assert!(entries.iter().all(|e| e.id.get_version_num() == 4));
+                // Parse every final file independently: list's warning-and-skip
+                // policy must not hide a transient partially published payload.
+                if let Ok(paths) = fs::read_dir(dir.path().join("activity")) {
+                    for path in paths {
+                        let path = path.unwrap().path();
+                        if filename_identity(path.file_name().unwrap().to_str().unwrap()).is_some()
+                        {
+                            serde_json::from_slice::<Event>(&fs::read(path).unwrap()).unwrap();
+                        }
+                    }
+                }
+                std::thread::yield_now();
+            }
+        });
+        let entries = list(dir.path(), None, None).unwrap();
+        assert_eq!(entries.len(), 200);
+        assert_eq!(
+            entries.iter().map(|e| e.id).collect::<HashSet<_>>().len(),
+            200
+        );
+        assert_eq!(
+            fs::read_dir(dir.path().join("activity")).unwrap().count(),
+            200
+        );
+    }
+}

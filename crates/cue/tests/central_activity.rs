@@ -129,6 +129,222 @@ fn empty_provenance_is_omitted_and_host_defaults_from_environment() {
     );
 }
 
+#[test]
+fn recording_failure_does_not_fail_artifact_creation() {
+    let env = fixture();
+    std::fs::write(
+        env.cue_store().join("acme/widgets/work/activity"),
+        "obstruction",
+    )
+    .unwrap();
+    env.command()
+        .args(["add", "nested/artifact", "body", "--context", "work"])
+        .assert()
+        .success()
+        .stderr(predicates::str::contains("activity recording failed"));
+    assert!(
+        env.cue_store()
+            .join("acme/widgets/work/spec/nested/artifact.md")
+            .is_file()
+    );
+    env.command()
+        .args([
+            "activity",
+            "add",
+            "--context",
+            "work",
+            "--kind",
+            "git_commit_attempt",
+            "--details",
+            "{}",
+        ])
+        .assert()
+        .failure();
+    env.command()
+        .args([
+            "activity",
+            "list",
+            "--context",
+            "work",
+            "--limit",
+            "0",
+            "--json",
+        ])
+        .assert()
+        .failure();
+}
+
+#[test]
+fn canonical_destination_controls_native_attribution() {
+    let env = fixture();
+    let foreign = env.cue_store().join("other/repo/target");
+    std::fs::create_dir_all(&foreign).unwrap();
+    std::fs::write(foreign.join("context.md"), "fixture").unwrap();
+    for force in [false, true] {
+        let mut command = env.command();
+        command.env_remove("CAST_HOST_NAME").args([
+            "add",
+            "nested/file",
+            "body",
+            "--context",
+            "other/repo/target",
+        ]);
+        if force {
+            command.arg("--force");
+        }
+        command.assert().success();
+    }
+    assert!(events(&env).is_empty());
+    let output = env
+        .command()
+        .args([
+            "activity",
+            "list",
+            "--context",
+            "other/repo/target",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let entries: Vec<Value> = serde_json::from_slice(&output).unwrap();
+    assert_eq!(entries.len(), 2);
+    for entry in entries {
+        assert_eq!(
+            entry["details"]["address"],
+            "other/repo/target/spec/nested/file.md"
+        );
+        for key in ["session_id", "harness", "host"] {
+            assert!(entry.get(key).is_none());
+        }
+    }
+}
+
+#[test]
+fn context_and_payload_validation_never_invents_a_destination() {
+    let env = fixture();
+    assert!(events(&env).is_empty());
+    let args = [
+        "activity",
+        "add",
+        "--kind",
+        "git_commit_attempt",
+        "--details",
+        "{}",
+    ];
+    env.command().args(args).assert().success().stdout("");
+    assert!(events(&env).is_empty());
+    env.command()
+        .args(["activity", "list", "--json"])
+        .assert()
+        .failure();
+    for selector in ["missing", "../invalid", "acme/widgets/missing"] {
+        env.command()
+            .args(args)
+            .args(["--context", selector])
+            .assert()
+            .failure();
+        env.command()
+            .args(["activity", "list", "--context", selector, "--json"])
+            .assert()
+            .failure();
+    }
+    for details in ["[]", "null", "\"string\"", "{"] {
+        env.command()
+            .args([
+                "activity",
+                "add",
+                "--context",
+                "work",
+                "--kind",
+                "git_commit_attempt",
+                "--details",
+                details,
+            ])
+            .assert()
+            .failure();
+    }
+    env.command()
+        .args([
+            "activity",
+            "add",
+            "--context",
+            "work",
+            "--kind",
+            "unknown",
+            "--details",
+            "{}",
+        ])
+        .assert()
+        .failure();
+    assert!(events(&env).is_empty());
+    env.command()
+        .env("CUE_CONTEXT", "acme/widgets/work")
+        .args(args)
+        .assert()
+        .success();
+    assert_eq!(events(&env).len(), 1);
+}
+
+#[test]
+fn readers_ignore_non_event_files_and_warn_for_bad_envelopes() {
+    let env = fixture();
+    let id = "00000000-0000-4000-8000-000000000001";
+    let path = seed(&env, 1, id);
+    let dir = path.parent().unwrap();
+    for name in [
+        "0000000000000000001-00000000-0000-4000-8000-000000000001.json",
+        "00000000000000000002-00000000-0000-4000-8000-00000000000A.json",
+        "00000000000000000001-00000000-0000-4000-8000-000000000001.sync-conflict-test.json",
+        ".activity-staging-test",
+        "unrelated.json",
+    ] {
+        std::fs::write(dir.join(name), "{").unwrap();
+    }
+    std::fs::create_dir(dir.join(format!("{:020}-{id}.json", 2))).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(&path, dir.join(format!("{:020}-{id}.json", 3))).unwrap();
+    for (timestamp, key, value) in [
+        (4, "id", json!("00000000-0000-4000-8000-000000000002")),
+        (5, "kind", json!("unknown")),
+        (6, "details", json!([])),
+        (7, "harness", json!(123)),
+        ((1 << 53), "details", json!({})),
+    ] {
+        let path = seed(&env, timestamp, id);
+        let mut event: Value = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+        event[key] = value;
+        std::fs::write(path, event.to_string()).unwrap();
+    }
+    let output = env
+        .command()
+        .args(["activity", "list", "--context", "work", "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .clone();
+    assert_eq!(
+        serde_json::from_slice::<Vec<Value>>(&output.stdout)
+            .unwrap()
+            .len(),
+        1
+    );
+    assert_eq!(
+        String::from_utf8(output.stderr)
+            .unwrap()
+            .matches("Warning:")
+            .count(),
+        5
+    );
+    env.command()
+        .args(["activity", "list", "--context", "work"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("git_commit_attempt"));
+}
+
 fn seed(env: &TestEnv, timestamp: u64, id: &str) -> std::path::PathBuf {
     let dir = env.cue_store().join("acme/widgets/work/activity");
     std::fs::create_dir_all(&dir).unwrap();
