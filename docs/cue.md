@@ -36,6 +36,13 @@ Scoped commands resolve their active context in this order:
 Agents should set `$CUE_CONTEXT` for child processes and sessions so they
 inherit the intended context without changing repository configuration.
 
+### Context activity
+
+`cue activity add` and `cue activity list` record and inspect automatic context
+activity. Successful `cue add` calls emit native artifact events, with optional
+`--harness` and `--session-id` provenance. See [activity](activity.md) for the
+CLI, event contract, producer ownership, and synchronization guarantees.
+
 ### Render artifacts
 
 `cue render` emits explicitly named files as `<artifact path="...">` blocks for

@@ -16,6 +16,7 @@ image = { version = "0.25", features = ["png", "jpeg"] }
 serde_json = "1.0.149"
 serde_yaml = "0.9"
 tempfile = "3.27.0"
+uuid = { version = "1", features = ["v4", "serde"] }
 
 [dev-dependencies]
 assert_cmd = "2.2.1"

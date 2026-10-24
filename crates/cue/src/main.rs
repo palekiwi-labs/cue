@@ -1,3 +1,4 @@
+mod activity;
 mod add;
 mod address;
 mod cli;
@@ -40,6 +41,8 @@ fn main() -> anyhow::Result<()> {
             cue_type,
             force,
             context,
+            session_id,
+            harness,
         } => {
             let resolved_content: Vec<u8> = if clipboard {
                 resolve_clipboard(&filename)?
@@ -67,6 +70,8 @@ fn main() -> anyhow::Result<()> {
                     cue_type,
                     force,
                     context,
+                    session_id,
+                    harness,
                     store_root: store_root.map(std::path::Path::to_path_buf),
                 },
             )?;
@@ -92,6 +97,9 @@ fn main() -> anyhow::Result<()> {
         }
         Commands::Render { entries, context } => {
             commands::render::handle(&cwd, entries, context, store_root)?;
+        }
+        Commands::Activity { command } => {
+            commands::activity::handle(&cwd, command, store_root)?;
         }
         Commands::Log { command } => {
             commands::log::handle(&cwd, command, store_root)?;
