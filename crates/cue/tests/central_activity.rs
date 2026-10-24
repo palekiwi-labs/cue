@@ -90,7 +90,7 @@ fn empty_provenance_is_omitted_and_host_defaults_from_environment() {
             "--context",
             "work",
             "--kind",
-            "git_commit_attempt",
+            "git_commit",
             "--details",
             "{}",
             "--session-id",
@@ -112,7 +112,7 @@ fn empty_provenance_is_omitted_and_host_defaults_from_environment() {
             "--context",
             "work",
             "--kind",
-            "git_commit_attempt",
+            "git_commit",
             "--details",
             "{}",
             "--host",
@@ -154,7 +154,7 @@ fn recording_failure_does_not_fail_artifact_creation() {
             "--context",
             "work",
             "--kind",
-            "git_commit_attempt",
+            "git_commit",
             "--details",
             "{}",
         ])
@@ -226,14 +226,7 @@ fn canonical_destination_controls_native_attribution() {
 fn context_and_payload_validation_never_invents_a_destination() {
     let env = fixture();
     assert!(events(&env).is_empty());
-    let args = [
-        "activity",
-        "add",
-        "--kind",
-        "git_commit_attempt",
-        "--details",
-        "{}",
-    ];
+    let args = ["activity", "add", "--kind", "git_commit", "--details", "{}"];
     env.command().args(args).assert().success().stdout("");
     assert!(events(&env).is_empty());
     env.command()
@@ -259,7 +252,7 @@ fn context_and_payload_validation_never_invents_a_destination() {
                 "--context",
                 "work",
                 "--kind",
-                "git_commit_attempt",
+                "git_commit",
                 "--details",
                 details,
             ])
@@ -273,7 +266,7 @@ fn context_and_payload_validation_never_invents_a_destination() {
             "--context",
             "work",
             "--kind",
-            "unknown",
+            "Not a kind",
             "--details",
             "{}",
         ])
@@ -308,7 +301,7 @@ fn readers_ignore_non_event_files_and_warn_for_bad_envelopes() {
     std::os::unix::fs::symlink(&path, dir.join(format!("{:020}-{id}.json", 3))).unwrap();
     for (timestamp, key, value) in [
         (4, "id", json!("00000000-0000-4000-8000-000000000002")),
-        (5, "kind", json!("unknown")),
+        (5, "kind", json!("Not a kind")),
         (6, "details", json!([])),
         (7, "harness", json!(123)),
         ((1 << 53), "details", json!({})),
@@ -342,7 +335,7 @@ fn readers_ignore_non_event_files_and_warn_for_bad_envelopes() {
         .args(["activity", "list", "--context", "work"])
         .assert()
         .success()
-        .stdout(predicates::str::contains("git_commit_attempt"));
+        .stdout(predicates::str::contains("git_commit"));
 }
 
 #[cfg(unix)]
@@ -387,7 +380,7 @@ fn seed(env: &TestEnv, timestamp: u64, id: &str) -> std::path::PathBuf {
     std::fs::write(
         &path,
         serde_json::to_vec(&json!({
-            "id": id, "timestamp": timestamp, "kind": "git_commit_attempt", "details": {}
+            "id": id, "timestamp": timestamp, "kind": "git_commit", "details": {}
         }))
         .unwrap(),
     )
@@ -495,4 +488,79 @@ fn activity_round_trip_preserves_identity_and_provenance() {
     let id = entry["id"].as_str().unwrap();
     assert_eq!(id.len(), 36);
     assert_eq!(&id[14..15], "4");
+}
+
+#[test]
+fn producers_choose_their_own_kinds() {
+    let env = fixture();
+    for kind in ["git_commit", "deploy_finished", "x1"] {
+        env.command()
+            .args([
+                "activity",
+                "add",
+                "--context",
+                "work",
+                "--kind",
+                kind,
+                "--details",
+                "{}",
+            ])
+            .assert()
+            .success();
+    }
+    let kinds: Vec<_> = events(&env)
+        .iter()
+        .map(|e| e["kind"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(kinds.len(), 3);
+    for kind in ["git_commit", "deploy_finished", "x1"] {
+        assert!(kinds.contains(&kind.to_string()));
+    }
+    env.command()
+        .args(["activity", "list", "--context", "work"])
+        .assert()
+        .success()
+        .stdout(predicates::str::contains("deploy_finished"));
+}
+
+#[test]
+fn malformed_and_native_kinds_are_rejected_from_producers() {
+    let env = fixture();
+    for kind in [
+        "",
+        "Git_commit",
+        "git commit",
+        "1st",
+        "git-commit",
+        &"a".repeat(65),
+    ] {
+        env.command()
+            .args([
+                "activity",
+                "add",
+                "--context",
+                "work",
+                "--kind",
+                kind,
+                "--details",
+                "{}",
+            ])
+            .assert()
+            .failure();
+    }
+    env.command()
+        .args([
+            "activity",
+            "add",
+            "--context",
+            "work",
+            "--kind",
+            "artifact_created",
+            "--details",
+            "{}",
+        ])
+        .assert()
+        .failure()
+        .stderr(predicates::str::contains("reserved"));
+    assert!(events(&env).is_empty());
 }

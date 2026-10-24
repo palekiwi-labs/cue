@@ -37,7 +37,7 @@ pub fn handle(cwd: &Path, command: ActivityCommands, store: Option<&Path>) -> Re
                         "{} {} {} {}",
                         event.timestamp,
                         event.id,
-                        serde_json::to_value(event.kind)?.as_str().unwrap(),
+                        event.kind.as_str(),
                         serde_json::to_string(&event.details)?
                     );
                 }

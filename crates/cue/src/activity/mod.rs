@@ -7,13 +7,60 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
-#[derive(Clone, Copy, Debug, Deserialize, Serialize, clap::ValueEnum)]
-#[serde(rename_all = "snake_case")]
-#[value(rename_all = "snake_case")]
-pub enum Kind {
-    ArtifactCreated,
-    GitCommitAttempt,
-    SessionAssociated,
+/// An event kind: lowercase snake_case, starting with a letter, at most
+/// 64 bytes. Producers choose their own kinds; cue only reserves the kinds
+/// it records natively (see [`NATIVE_KINDS`]).
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
+#[serde(try_from = "String", into = "String")]
+pub struct Kind(String);
+
+/// Kinds cue records itself. Producers may not write them, so native
+/// events and extension events keep disjoint ownership.
+pub const NATIVE_KINDS: &[&str] = &[ARTIFACT_CREATED];
+pub const ARTIFACT_CREATED: &str = "artifact_created";
+
+impl Kind {
+    pub fn native(name: &'static str) -> Self {
+        debug_assert!(NATIVE_KINDS.contains(&name));
+        Kind(name.to_string())
+    }
+
+    /// Parse a kind supplied by a producer, rejecting native kinds.
+    pub fn producer(name: &str) -> Result<Self> {
+        let kind = Kind::try_from(name.to_string())?;
+        if NATIVE_KINDS.contains(&name) {
+            bail!("Activity kind {name} is reserved for events cue records itself");
+        }
+        Ok(kind)
+    }
+
+    pub fn as_str(&self) -> &str {
+        &self.0
+    }
+}
+
+impl TryFrom<String> for Kind {
+    type Error = anyhow::Error;
+
+    fn try_from(name: String) -> Result<Self> {
+        let mut bytes = name.bytes();
+        let valid = name.len() <= 64
+            && bytes.next().is_some_and(|b| b.is_ascii_lowercase())
+            && bytes.all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'_');
+        if !valid {
+            bail!(
+                "Invalid activity kind {name:?}: use lowercase snake_case starting with a letter, \
+                 at most 64 bytes"
+            );
+        }
+        Ok(Kind(name))
+    }
+}
+
+impl From<Kind> for String {
+    fn from(kind: Kind) -> String {
+        kind.0
+    }
 }
 
 #[derive(Debug, Deserialize, Serialize)]
@@ -151,7 +198,7 @@ mod tests {
         let mut event = Event {
             id: Uuid::new_v4(),
             timestamp: 1,
-            kind: Kind::SessionAssociated,
+            kind: Kind::producer("session_associated").unwrap(),
             host: None,
             harness: None,
             session_id: None,
@@ -178,7 +225,7 @@ mod tests {
                     for _ in 0..25 {
                         record(
                             dir.path(),
-                            Kind::GitCommitAttempt,
+                            Kind::producer("git_commit").unwrap(),
                             Map::new(),
                             None,
                             None,

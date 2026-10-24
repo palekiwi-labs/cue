@@ -1,0 +1,31 @@
+{
+  "label": "Review the branch diff",
+  "defaults": {
+    "context": "acme/widgets/cue-agent-runtime-mvp",
+    "env": { "RUST_LOG": "info" }
+  },
+  "tasks": [
+    {
+      "agent": "diff-reviewer",
+      "prompt": "Review this diff for defects.\n\n<diff goes here>"
+    },
+    {
+      "agent": "diff-reviewer",
+      "label": "Second opinion",
+      "model": "gemini-pro",
+      "prompt": "Review this diff for defects, concentrating on error handling.\n\n<diff goes here>"
+    },
+    {
+      "agent": "consultant",
+      "prompt": "Is the teardown order in this diff correct under an interrupt during the grace window?\n\n<diff goes here>",
+      "env": { "CUE_CONTEXT": null }
+    },
+    {
+      "agent": "explore",
+      "cwd": "/home/you/code/acme/other-service",
+      "context": null,
+      "env": null,
+      "prompt": "Map how this service calls the widgets API."
+    }
+  ]
+}

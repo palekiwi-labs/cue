@@ -7,8 +7,8 @@ not measure progress, infer focus, or provide an audit-grade record.
 
 ```sh
 cue activity add --context acme/project/work \
-  --kind git_commit_attempt \
-  --details '{"command":"git commit -m example","cwd":"/workspace/project"}' \
+  --kind git_commit \
+  --details '{"hash":"0123abcd","branch":"main","title":"Fix parser"}' \
   --harness pi --session-id session-123
 
 cue activity list --context acme/project/work --limit 20 --json
@@ -20,7 +20,9 @@ cue add findings 'Research findings' --type note --context work \
 
 `activity add` accepts:
 
-- `--kind`: `artifact_created`, `git_commit_attempt`, or `session_associated`.
+- `--kind`: a producer-defined kind in lowercase snake_case, starting with a
+  letter, at most 64 bytes (for example `git_commit`, `session_associated`).
+  Kinds cue records itself (`artifact_created`) are reserved and rejected.
 - `--details`: a required JSON object; fields are producer-defined.
 - `--session-id` and `--harness`: optional provenance. Harness names are strings,
   not a fixed list. No harness is inferred when absent.
@@ -67,7 +69,8 @@ one context, identified by the selector.
 
 IDs are random UUID v4; timestamps are Unix milliseconds. Context is implicit in
 storage. Provenance fields are optional. Readers tolerate unknown envelope
-fields, but do not return them; unsupported kinds are malformed records.
+fields, but do not return them. Any well-formed kind is accepted on read; a
+kind that breaks the naming rule makes the record malformed.
 
 Cue records `artifact_created` exactly once after each successful `cue add`,
 including `--force` replacement. This denotes successful artifact publication,
@@ -76,11 +79,10 @@ event. Recording failures only warn on stderr; the created artifact still
 succeeds. The actual destination determines attribution, including cross-scope
 addresses and the generated timestamp/revision directory of `tmp` artifacts.
 
-Harness integrations own `git_commit_attempt` and `session_associated` events.
-For git attempts, details should contain the observed `command` and execution
-`cwd`; do not claim a verified commit hash. Session association records belong
-to the newly selected context, with session and harness in the envelope.
-Integrations must not duplicate cue's native artifact events. Creating a context
+Every other kind belongs to its producer, which also defines its details.
+Cue does not interpret them. Session association records belong to the newly
+selected context, with session and harness in the envelope. Integrations must
+not duplicate cue's native artifact events. Creating a context
 does not record an event in this initial implementation.
 
 ## Storage and reliability
