@@ -1,12 +1,13 @@
+mod activity;
 mod add;
+mod address;
 mod cli;
 mod commands;
 mod config;
-mod context;
 mod git;
-mod init;
 mod list;
 mod log;
+mod render;
 
 use crate::add::resolve_clipboard;
 use crate::cli::{Cli, Commands};
@@ -28,11 +29,9 @@ fn main() -> anyhow::Result<()> {
         }
         None => env::current_dir()?,
     };
+    let store_root = cli.store.as_deref();
 
     match cli.command {
-        Commands::Init => {
-            commands::init::handle(&cwd)?;
-        }
         Commands::Add {
             filename,
             content,
@@ -40,9 +39,10 @@ fn main() -> anyhow::Result<()> {
             clipboard,
             frontmatter,
             cue_type,
-            root,
             force,
-            task,
+            context,
+            session_id,
+            harness,
         } => {
             let resolved_content: Vec<u8> = if clipboard {
                 resolve_clipboard(&filename)?
@@ -68,17 +68,17 @@ fn main() -> anyhow::Result<()> {
                     content: resolved_content,
                     frontmatter,
                     cue_type,
-                    save_at_root: root,
                     force,
-                    scope_name: task,
+                    context,
+                    session_id,
+                    harness,
+                    store_root: store_root.map(std::path::Path::to_path_buf),
                 },
             )?;
         }
         Commands::List {
-            task,
-            all,
-            cue_type,
-            include_gitignored,
+            context,
+            cue_types,
             json,
             frontmatter,
             filters,
@@ -86,33 +86,29 @@ fn main() -> anyhow::Result<()> {
             commands::list::handle(
                 &cwd,
                 commands::list::ListOptions {
-                    scope: task,
-                    all,
-                    cue_type,
-                    include_gitignored,
+                    context,
+                    cue_types,
                     json,
                     frontmatter,
+                    store_root: store_root.map(std::path::Path::to_path_buf),
                     filters,
                 },
             )?;
         }
+        Commands::Render { entries, context } => {
+            commands::render::handle(&cwd, entries, context, store_root)?;
+        }
+        Commands::Activity { command } => {
+            commands::activity::handle(&cwd, command, store_root)?;
+        }
         Commands::Log { command } => {
-            commands::log::handle(&cwd, command)?;
+            commands::log::handle(&cwd, command, store_root)?;
         }
-        Commands::Switch { target, json } => {
-            commands::switch::handle(&cwd, target, json)?;
-        }
-        Commands::Status { task, json } => {
-            commands::status::handle(&cwd, task, json)?;
+        Commands::Status { context, json } => {
+            commands::status::handle(&cwd, context, json, store_root)?;
         }
         Commands::Context { command } => {
-            commands::context::handle(&cwd, command)?;
-        }
-        Commands::Config { command } => {
-            commands::config::handle(&cwd, command)?;
-        }
-        Commands::Project { command } => {
-            commands::project::handle(&cwd, command)?;
+            commands::context::handle(&cwd, command, store_root)?;
         }
     }
 

@@ -93,7 +93,7 @@ pub struct SessionUpdated {
     pub project_dir: String,
     pub harness: String,
     /// The session that spawned this one (sub-agent back-edge). `None` for
-    /// primary sessions. Set-once-if-some in the curator summary.
+    /// primary sessions. Set-once-if-some in derived session summaries.
     pub parent_id: Option<String>,
     /// Agent identifier, e.g. `"claude"`. Last-writer-wins in the summary.
     pub agent: Option<String>,
