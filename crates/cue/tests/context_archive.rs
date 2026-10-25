@@ -274,3 +274,63 @@ fn an_archived_context_still_resolves_by_address() {
         .assert()
         .success();
 }
+
+/// Replace the `archived_at` line planted by `plant_archived` with `line`.
+fn plant_line(env: &helpers::TestEnv, slug: &str, line: &str) {
+    plant_archived(env, slug, "0");
+    let path = context_dir(env, slug).join("context.md");
+    let text = std::fs::read_to_string(&path).unwrap();
+    std::fs::write(path, text.replacen("archived_at: 0", line, 1)).unwrap();
+}
+
+#[test]
+fn archiving_a_null_stamp_replaces_it() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    create(&env, &["release"]);
+    plant_line(&env, "release", "archived_at: null");
+    env.command()
+        .args(["context", "archive", "release"])
+        .assert()
+        .success();
+    let record = read_record(&env, "release");
+    assert!(!record.contains("null"));
+    assert_eq!(record.matches("archived_at: ").count(), 1);
+    assert_eq!(stdout(&env, &["context", "list"]), "");
+}
+
+#[test]
+fn a_key_spelling_the_editor_cannot_edit_is_refused() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    create(&env, &["release"]);
+    plant_line(&env, "release", "\"archived_at\": 1");
+    let before = read_record(&env, "release");
+    env.command()
+        .args(["context", "unarchive", "release"])
+        .assert()
+        .failure();
+    assert_eq!(read_record(&env, "release"), before);
+}
+
+#[test]
+fn unarchive_accepts_an_address_and_tree_root_respects_archival() {
+    let env = fixture();
+    env.command()
+        .args(["context", "tree", "--root", "program"])
+        .assert()
+        .failure();
+    env.command()
+        .args(["context", "tree", "--root", "program", "--archived"])
+        .assert()
+        .success();
+    env.command()
+        .args(["context", "unarchive", "acme/widgets/program"])
+        .assert()
+        .success()
+        .stdout("unarchived acme/widgets/program\n");
+    env.command()
+        .args(["context", "tree", "--root", "program"])
+        .assert()
+        .success();
+}

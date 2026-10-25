@@ -42,6 +42,12 @@ pub fn remove(text: &str, key: &str) -> Result<Option<String>> {
     )))
 }
 
+/// A fence line, recognised as `artifact::extract_frontmatter_yaml` does so
+/// the editor and the reader agree on where the block ends.
+fn is_fence(content: &str) -> bool {
+    content.trim() == "---"
+}
+
 /// The frontmatter lines of a document, as byte ranges into it.
 struct Block<'a> {
     lines: Vec<Line<'a>>,
@@ -71,7 +77,7 @@ impl<'a> Block<'a> {
             }
         });
 
-        let opening = raw.next().filter(|line| line.content == "---");
+        let opening = raw.next().filter(|line| is_fence(line.content));
         let Some(opening) = opening else {
             bail!("document has no frontmatter");
         };
@@ -83,7 +89,7 @@ impl<'a> Block<'a> {
 
         let mut lines = Vec::new();
         for line in raw {
-            if line.content == "---" {
+            if is_fence(line.content) {
                 return Ok(Self {
                     lines,
                     closing_start: line.start,
@@ -198,6 +204,17 @@ Body with\n---\nfence-like lines.\n";
         assert!(insert_if_absent("no fence\n", "k", "v").is_err());
         assert!(insert_if_absent("---\nkind: work\n", "k", "v").is_err());
         assert!(remove("---\nkind: work\n", "k").is_err());
+    }
+
+    #[test]
+    fn fences_with_trailing_whitespace_match_the_reader() {
+        let doc = "--- \nkind: work\n---\t\nbody\n---\nmore\n";
+        let edited = insert_if_absent(doc, "archived_at", "1").unwrap().unwrap();
+        assert_eq!(
+            edited,
+            "--- \nkind: work\narchived_at: 1\n---\t\nbody\n---\nmore\n"
+        );
+        assert_eq!(remove(&edited, "archived_at").unwrap().unwrap(), doc);
     }
 
     #[test]
