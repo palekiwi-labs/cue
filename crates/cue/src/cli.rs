@@ -273,6 +273,20 @@ pub enum ContextCommands {
         #[arg(long)]
         branch: Option<String>,
     },
+    /// Mark contexts archived, leaving them out of listings by default
+    Archive {
+        /// Context slugs in the current repository scope, or full
+        /// '<org>/<repo>/<slug>' addresses
+        #[arg(required = true)]
+        contexts: Vec<String>,
+    },
+    /// Clear the archived mark from contexts
+    Unarchive {
+        /// Context slugs in the current repository scope, or full
+        /// '<org>/<repo>/<slug>' addresses
+        #[arg(required = true)]
+        contexts: Vec<String>,
+    },
     /// Remove a context association from a Git branch
     Unset {
         /// Branch to configure; defaults to the current branch

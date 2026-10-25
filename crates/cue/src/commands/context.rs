@@ -164,7 +164,101 @@ pub fn handle(
         ContextCommands::Pins { scope } => handle_pins(cwd, scope, store_root),
         ContextCommands::Switch { slug, branch } => handle_switch(cwd, &slug, branch),
         ContextCommands::Unset { branch } => handle_unset(cwd, branch),
+        ContextCommands::Archive { contexts } => {
+            handle_archival(cwd, &contexts, Archival::Archive, store_root)
+        }
+        ContextCommands::Unarchive { contexts } => {
+            handle_archival(cwd, &contexts, Archival::Unarchive, store_root)
+        }
     }
+}
+
+#[derive(Clone, Copy)]
+enum Archival {
+    Archive,
+    Unarchive,
+}
+
+impl Archival {
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Archive => "archived",
+            Self::Unarchive => "unarchived",
+        }
+    }
+}
+
+/// Set or clear `archived_at` on each named context.
+///
+/// Each context is handled on its own: one that fails is reported and the
+/// rest are still processed, and the command fails if any did. Archival only
+/// edits the record. It checks nothing about the context and leaves pins,
+/// branch associations and the directory where they are, so the address
+/// keeps resolving for everything that names it.
+fn handle_archival(
+    cwd: &Path,
+    contexts: &[String],
+    archival: Archival,
+    store_root: Option<&Path>,
+) -> anyhow::Result<()> {
+    let mut failed = 0;
+    for selector in contexts {
+        match archive_one(cwd, selector, archival, store_root) {
+            Ok(address) => println!("{} {address}", archival.verb()),
+            Err(error) => {
+                failed += 1;
+                eprintln!("error: {selector}: {error:#}");
+            }
+        }
+    }
+    if failed > 0 {
+        anyhow::bail!(
+            "{failed} of {} contexts could not be {}",
+            contexts.len(),
+            archival.verb()
+        );
+    }
+    Ok(())
+}
+
+fn archive_one(
+    cwd: &Path,
+    selector: &str,
+    archival: Archival,
+    store_root: Option<&Path>,
+) -> anyhow::Result<String> {
+    let resolved = cuelib::head::resolve_selector(selector)?;
+    let address = resolved.address(cwd)?;
+    let context_dir = resolved.context_dir(cwd, store_root)?;
+    let path = context_dir.join("context.md");
+    if !path.is_file() {
+        anyhow::bail!("no context at {address}");
+    }
+
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("could not read {}", path.display()))?;
+    let edited = match archival {
+        // Archiving an archived context keeps the stamp it already has.
+        Archival::Archive => {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+            cuelib::frontmatter::insert_if_absent(&text, "archived_at", &now.to_string())
+        }
+        Archival::Unarchive => cuelib::frontmatter::remove(&text, "archived_at"),
+    }
+    .with_context(|| format!("could not edit {}", path.display()))?;
+
+    if let Some(edited) = edited {
+        // Replace the record whole, so a reader never sees a partial write.
+        // The temporary file takes the record's permissions, which it would
+        // otherwise replace with its own private mode.
+        let mut file = tempfile::NamedTempFile::new_in(&context_dir)?;
+        file.as_file()
+            .set_permissions(std::fs::metadata(&path)?.permissions())?;
+        std::io::Write::write_all(&mut file, edited.as_bytes())?;
+        file.persist(&path)
+            .with_context(|| format!("could not write {}", path.display()))?;
+    }
+    Ok(address)
 }
 
 /// Pin state lives outside every context, under the store root, as a directory

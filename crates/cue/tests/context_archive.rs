@@ -141,3 +141,136 @@ fn malformed_archived_at_fails_like_malformed_created_at() {
         .failure()
         .stderr(predicates::str::contains("invalid context metadata"));
 }
+
+fn read_record(env: &helpers::TestEnv, slug: &str) -> String {
+    std::fs::read_to_string(context_dir(env, slug).join("context.md")).expect("read context.md")
+}
+
+#[test]
+fn archive_appends_archived_at_and_unarchive_restores_the_record() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    create(&env, &["program"]);
+    create(
+        &env,
+        &[
+            "release",
+            "--title",
+            "Release: cue",
+            "--ref",
+            "acme/widgets/program",
+        ],
+    );
+    let path = context_dir(&env, "release").join("context.md");
+    let mode = std::fs::metadata(&path).unwrap().permissions();
+    let before = read_record(&env, "release");
+
+    env.command()
+        .args(["context", "archive", "release"])
+        .assert()
+        .success()
+        .stdout("archived acme/widgets/release\n");
+    let archived = read_record(&env, "release");
+    let (head, tail) = archived
+        .rsplit_once("archived_at: ")
+        .expect("archived_at appended");
+    let (stamp, rest) = tail.split_once('\n').unwrap();
+    assert!(stamp.parse::<u64>().unwrap() > 1_700_000_000);
+    assert_eq!(rest, "---\n");
+    assert_eq!(format!("{head}{rest}"), before);
+
+    env.command()
+        .args(["context", "unarchive", "release"])
+        .assert()
+        .success()
+        .stdout("unarchived acme/widgets/release\n");
+    assert_eq!(read_record(&env, "release"), before);
+    assert_eq!(std::fs::metadata(&path).unwrap().permissions(), mode);
+}
+
+#[test]
+fn archiving_twice_keeps_the_first_stamp_and_unarchiving_twice_is_harmless() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    create(&env, &["release"]);
+    plant_archived(&env, "release", "1800000000");
+    let archived = read_record(&env, "release");
+
+    env.command()
+        .args(["context", "archive", "release"])
+        .assert()
+        .success();
+    assert_eq!(read_record(&env, "release"), archived);
+
+    create(&env, &["live"]);
+    let live = read_record(&env, "live");
+    env.command()
+        .args(["context", "unarchive", "live"])
+        .assert()
+        .success();
+    assert_eq!(read_record(&env, "live"), live);
+}
+
+#[test]
+fn any_kind_can_be_archived() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    create(&env, &["codebase", "--kind", "reference"]);
+    env.command()
+        .args(["context", "archive", "codebase"])
+        .assert()
+        .success();
+    assert!(read_record(&env, "codebase").contains("\narchived_at: "));
+}
+
+#[test]
+fn each_context_is_processed_and_any_failure_fails_the_command() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    create(&env, &["one"]);
+    create(&env, &["two"]);
+    env.command()
+        .args(["context", "archive", "one", "missing", "acme/widgets/two"])
+        .assert()
+        .failure()
+        .stdout("archived acme/widgets/one\narchived acme/widgets/two\n")
+        .stderr(predicates::str::contains("acme/widgets/missing"));
+    assert!(read_record(&env, "one").contains("archived_at"));
+    assert!(read_record(&env, "two").contains("archived_at"));
+}
+
+#[test]
+fn an_archived_context_still_resolves_by_address() {
+    let env = helpers::TestEnv::new();
+    env.setup_repo_with_origin();
+    create(&env, &["program"]);
+    env.command()
+        .args(["context", "archive", "program"])
+        .assert()
+        .success();
+
+    create(&env, &["child", "--parent", "acme/widgets/program"]);
+    env.command()
+        .args(["status", "--context", "program"])
+        .assert()
+        .success();
+    env.command()
+        .args([
+            "log",
+            "add",
+            "--context",
+            "program",
+            "--title",
+            "still here",
+        ])
+        .assert()
+        .success();
+    env.command()
+        .args(["add", "index.md", "why", "--context", "program"])
+        .assert()
+        .success();
+    env.command()
+        .args(["render", "spec/index.md", "--context", "program"])
+        .assert()
+        .success();
+}
