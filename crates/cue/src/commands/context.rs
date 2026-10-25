@@ -42,6 +42,7 @@ struct StoredContextMetadata {
     mode: Option<String>,
     description: Option<String>,
     created_at: u64,
+    archived_at: Option<u64>,
     parent: Option<String>,
     #[serde(default)]
     refs: Vec<String>,
@@ -56,6 +57,8 @@ struct ContextListEntry {
     mode: Option<String>,
     description: Option<String>,
     created_at: u64,
+    /// When the operator archived the context; null when it is not archived.
+    archived_at: Option<u64>,
     parent: Option<String>,
     refs: Vec<String>,
     /// Populated only when the selection asks for activity, as JSON output
@@ -110,6 +113,7 @@ pub fn handle(
         ContextCommands::List {
             json,
             pinned,
+            archived,
             scope,
             sort,
             filters,
@@ -119,6 +123,7 @@ pub fn handle(
             ContextListOptions {
                 json,
                 pinned,
+                archived,
                 scope,
                 sort,
                 filters,
@@ -129,6 +134,7 @@ pub fn handle(
         ContextCommands::Tree {
             json,
             pinned,
+            archived,
             scope,
             root,
             sort,
@@ -139,6 +145,7 @@ pub fn handle(
                 store_root,
                 ContextSelection {
                     pinned,
+                    archived,
                     scope,
                     filters,
                     membership: json,
@@ -157,7 +164,120 @@ pub fn handle(
         ContextCommands::Pins { scope } => handle_pins(cwd, scope, store_root),
         ContextCommands::Switch { slug, branch } => handle_switch(cwd, &slug, branch),
         ContextCommands::Unset { branch } => handle_unset(cwd, branch),
+        ContextCommands::Archive { contexts } => {
+            handle_archival(cwd, &contexts, Archival::Archive, store_root)
+        }
+        ContextCommands::Unarchive { contexts } => {
+            handle_archival(cwd, &contexts, Archival::Unarchive, store_root)
+        }
     }
+}
+
+#[derive(Clone, Copy)]
+enum Archival {
+    Archive,
+    Unarchive,
+}
+
+impl Archival {
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Archive => "archived",
+            Self::Unarchive => "unarchived",
+        }
+    }
+}
+
+/// Set or clear `archived_at` on each named context.
+///
+/// Each context is handled on its own: one that fails is reported and the
+/// rest are still processed, and the command fails if any did. Archival only
+/// edits the record. It checks nothing about the context and leaves pins,
+/// branch associations and the directory where they are, so the address
+/// keeps resolving for everything that names it.
+fn handle_archival(
+    cwd: &Path,
+    contexts: &[String],
+    archival: Archival,
+    store_root: Option<&Path>,
+) -> anyhow::Result<()> {
+    let mut failed = 0;
+    for selector in contexts {
+        match archive_one(cwd, selector, archival, store_root) {
+            Ok(address) => println!("{} {address}", archival.verb()),
+            Err(error) => {
+                failed += 1;
+                eprintln!("error: {selector}: {error:#}");
+            }
+        }
+    }
+    if failed > 0 {
+        anyhow::bail!(
+            "{failed} of {} contexts could not be {}",
+            contexts.len(),
+            archival.verb()
+        );
+    }
+    Ok(())
+}
+
+fn archive_one(
+    cwd: &Path,
+    selector: &str,
+    archival: Archival,
+    store_root: Option<&Path>,
+) -> anyhow::Result<String> {
+    let resolved = cuelib::head::resolve_selector(selector)?;
+    let address = resolved.address(cwd)?;
+    let context_dir = resolved.context_dir(cwd, store_root)?;
+    let path = context_dir.join("context.md");
+    if !path.is_file() {
+        anyhow::bail!("no context at {address}");
+    }
+
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("could not read {}", path.display()))?;
+    // Whether the context is archived is decided by the parsed record, as
+    // listings decide it. The text editor only handles the canonical
+    // `archived_at:` line; any other spelling is refused rather than left in
+    // place while reporting success.
+    let yaml = extract_frontmatter_yaml(&path).unwrap_or_default();
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&yaml)
+        .with_context(|| format!("invalid context metadata at {}", path.display()))?;
+    let stamp = parsed.get("archived_at");
+    let remove = |text: &str| {
+        cuelib::frontmatter::remove(text, "archived_at")?
+            .context("archived_at is not written as a plain 'archived_at:' line")
+    };
+    let edited = match (archival, stamp) {
+        // Archiving an archived context keeps the stamp it already has.
+        (Archival::Archive, Some(stamp)) if !stamp.is_null() => Ok(None),
+        (Archival::Archive, stamp) => (|| {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+            // A null stamp is not archived; its line is replaced.
+            let text = match stamp {
+                Some(_) => remove(&text)?,
+                None => text.clone(),
+            };
+            cuelib::frontmatter::insert_if_absent(&text, "archived_at", &now.to_string())
+        })(),
+        (Archival::Unarchive, None) => Ok(None),
+        (Archival::Unarchive, Some(_)) => remove(&text).map(Some),
+    }
+    .with_context(|| format!("could not edit {}", path.display()))?;
+
+    if let Some(edited) = edited {
+        // Replace the record whole, so a reader never sees a partial write.
+        // The temporary file takes the record's permissions, which it would
+        // otherwise replace with its own private mode.
+        let mut file = tempfile::NamedTempFile::new_in(&context_dir)?;
+        file.as_file()
+            .set_permissions(std::fs::metadata(&path)?.permissions())?;
+        std::io::Write::write_all(&mut file, edited.as_bytes())?;
+        file.persist(&path)
+            .with_context(|| format!("could not write {}", path.display()))?;
+    }
+    Ok(address)
 }
 
 /// Pin state lives outside every context, under the store root, as a directory
@@ -454,6 +574,7 @@ fn target_branch(cwd: &Path, branch: Option<String>, action: &str) -> anyhow::Re
 struct ContextListOptions {
     json: bool,
     pinned: bool,
+    archived: bool,
     scope: Option<String>,
     sort: Option<ContextSort>,
     filters: Vec<Filter>,
@@ -477,6 +598,7 @@ fn handle_list(
     let ContextListOptions {
         json,
         pinned,
+        archived,
         scope,
         sort,
         filters,
@@ -488,6 +610,7 @@ fn handle_list(
         store_root,
         ContextSelection {
             pinned,
+            archived,
             scope,
             filters,
             membership: json,
@@ -527,6 +650,8 @@ fn handle_list(
 /// fields must be populated.
 struct ContextSelection {
     pinned: bool,
+    /// Keep archived contexts, which are otherwise treated as absent.
+    archived: bool,
     scope: Option<String>,
     filters: Vec<Filter>,
     /// Report each row's working-set membership.
@@ -543,6 +668,7 @@ fn select_contexts(
 ) -> anyhow::Result<Vec<ContextListEntry>> {
     let ContextSelection {
         pinned,
+        archived,
         scope,
         filters,
         membership,
@@ -565,9 +691,13 @@ fn select_contexts(
     // truncates what matched rather than what was enumerated: a limit over an
     // unfiltered listing would discard matching contexts before they were
     // tested.
+    let keep = Keep {
+        filters: &filters,
+        archived,
+    };
     let mut contexts = Vec::new();
     if pinned {
-        collect_pinned_contexts(&store_root, &pins, &filters, &mut contexts)?;
+        collect_pinned_contexts(&store_root, &pins, &keep, &mut contexts)?;
     } else {
         match prefix.as_deref() {
             None => {
@@ -579,17 +709,12 @@ fn select_contexts(
                     if scope.starts_with('.') {
                         continue;
                     }
-                    collect_scope_contexts(&scope_dir, &scope, &filters, &mut contexts)?;
+                    collect_scope_contexts(&scope_dir, &scope, &keep, &mut contexts)?;
                 }
             }
             Some(scopes) => {
                 for scope in scopes {
-                    collect_scope_contexts(
-                        &store_root.join(scope),
-                        scope,
-                        &filters,
-                        &mut contexts,
-                    )?;
+                    collect_scope_contexts(&store_root.join(scope), scope, &keep, &mut contexts)?;
                 }
             }
         }
@@ -657,12 +782,12 @@ fn read_log_activity(contexts: &mut [ContextListEntry]) -> anyhow::Result<()> {
 fn collect_scope_contexts(
     scope_dir: &Path,
     scope: &str,
-    filters: &[Filter],
+    keep: &Keep<'_>,
     contexts: &mut Vec<ContextListEntry>,
 ) -> anyhow::Result<()> {
     for context_dir in read_optional_dir(scope_dir)? {
         let context = entry_name(&context_dir)?.to_string();
-        if let Some(entry) = read_context_entry(&context_dir, scope, &context, filters)? {
+        if let Some(entry) = read_context_entry(&context_dir, scope, &context, keep)? {
             contexts.push(entry);
         }
     }
@@ -677,23 +802,33 @@ fn collect_scope_contexts(
 fn collect_pinned_contexts(
     store_root: &Path,
     pins: &[(String, String)],
-    filters: &[Filter],
+    keep: &Keep<'_>,
     contexts: &mut Vec<ContextListEntry>,
 ) -> anyhow::Result<()> {
     for (scope, context) in pins {
         // Resolution is direct concatenation onto the store root, which is
         // what makes narrowing to the working set cost one read per pin.
         let context_dir = store_root.join(scope).join(context);
-        if let Some(entry) = read_context_entry(&context_dir, scope, context, filters)? {
+        if let Some(entry) = read_context_entry(&context_dir, scope, context, keep)? {
             contexts.push(entry);
         }
     }
     Ok(())
 }
 
+/// Which enumerated contexts become listing rows.
+struct Keep<'a> {
+    filters: &'a [Filter],
+    archived: bool,
+}
+
 /// Read one context directory into a listing row, or `None` when it holds no
-/// `context.md` and so is not a context at all, or when its metadata does not
+/// `context.md` and so is not a context at all, when it is archived and
+/// archived contexts were not asked for, or when its metadata does not
 /// satisfy every filter.
+///
+/// An archived context is dropped here, where every listing and tree passes,
+/// so it is absent from all of them alike, the pinned working set included.
 ///
 /// Filters are evaluated against the `context.md` frontmatter rather than the
 /// row built from it, so a context is queried on the metadata it declares.
@@ -703,7 +838,7 @@ fn read_context_entry(
     context_dir: &Path,
     scope: &str,
     context: &str,
-    filters: &[Filter],
+    keep: &Keep<'_>,
 ) -> anyhow::Result<Option<ContextListEntry>> {
     let context_path = context_dir.join("context.md");
     if !context_path.is_file() {
@@ -718,10 +853,14 @@ fn read_context_entry(
     let metadata: StoredContextMetadata = serde_yaml::from_str(&frontmatter)
         .with_context(|| format!("invalid context metadata at {}", context_path.display()))?;
 
-    if !filters.is_empty() {
+    if metadata.archived_at.is_some() && !keep.archived {
+        return Ok(None);
+    }
+
+    if !keep.filters.is_empty() {
         let queryable: serde_json::Value =
             serde_yaml::from_str(&frontmatter).unwrap_or(serde_json::Value::Null);
-        if !apply_filters(&queryable, filters) {
+        if !apply_filters(&queryable, keep.filters) {
             return Ok(None);
         }
     }
@@ -734,6 +873,7 @@ fn read_context_entry(
         mode: metadata.mode,
         description: metadata.description,
         created_at: metadata.created_at,
+        archived_at: metadata.archived_at,
         parent: metadata.parent,
         refs: metadata.refs,
         last_logged_nanos: None,

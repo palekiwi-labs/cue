@@ -197,6 +197,9 @@ pub enum ContextCommands {
         /// List only the pinned working set
         #[arg(long)]
         pinned: bool,
+        /// Include archived contexts, which are otherwise left out
+        #[arg(long)]
+        archived: bool,
         /// Query repo, store, or a configured name (defaults to config, then repo)
         #[arg(long, value_name = "SCOPE")]
         scope: Option<String>,
@@ -228,6 +231,9 @@ pub enum ContextCommands {
         /// Build the tree from the pinned working set only
         #[arg(long)]
         pinned: bool,
+        /// Include archived contexts, which are otherwise left out
+        #[arg(long)]
+        archived: bool,
         /// Query repo, store, or a configured name (defaults to config, then repo)
         #[arg(long, value_name = "SCOPE")]
         scope: Option<String>,
@@ -266,6 +272,20 @@ pub enum ContextCommands {
         /// Branch to configure; defaults to the current branch
         #[arg(long)]
         branch: Option<String>,
+    },
+    /// Mark contexts archived, leaving them out of listings by default
+    Archive {
+        /// Context slugs in the current repository scope, or full
+        /// '<org>/<repo>/<slug>' addresses
+        #[arg(required = true)]
+        contexts: Vec<String>,
+    },
+    /// Clear the archived mark from contexts
+    Unarchive {
+        /// Context slugs in the current repository scope, or full
+        /// '<org>/<repo>/<slug>' addresses
+        #[arg(required = true)]
+        contexts: Vec<String>,
     },
     /// Remove a context association from a Git branch
     Unset {

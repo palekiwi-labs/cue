@@ -739,6 +739,7 @@ fn context_list_json_fields_are_unchanged_by_selection() -> anyhow::Result<()> {
         assert_eq!(
             fields,
             [
+                "archived_at",
                 "context",
                 "created_at",
                 "description",
@@ -1254,6 +1255,7 @@ fn context_list_pinned_json_reports_full_rows() -> anyhow::Result<()> {
     assert_eq!(
         fields,
         [
+            "archived_at",
             "context",
             "created_at",
             "description",
