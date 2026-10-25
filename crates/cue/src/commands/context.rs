@@ -1,134 +1,924 @@
-use crate::cli::ContextCommands;
-use crate::config::Config;
-use crate::context::{
-    ContextSource, context_json_path, gather_context, init_context, load_context_or_config,
-};
+use crate::cli::{ContextCommands, ContextSort};
+use crate::list::{Filter, apply_filters};
+use anyhow::Context as _;
+use cuelib::artifact::extract_frontmatter_yaml;
 use cuelib::store;
-use std::path::Path;
+use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
+use std::time::{SystemTime, UNIX_EPOCH};
 
-pub fn handle(cwd: &Path, command: ContextCommands) -> anyhow::Result<()> {
+mod tree;
+
+#[derive(Serialize)]
+struct NewContextMetadata<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    title: Option<&'a str>,
+    kind: &'static str,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mode: Option<&'static str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    description: Option<&'a str>,
+    created_at: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    parent: Option<&'a str>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    refs: Option<&'a [String]>,
+}
+
+struct NewContextOptions<'a> {
+    title: Option<&'a str>,
+    kind: &'static str,
+    mode: Option<&'static str>,
+    description: Option<&'a str>,
+    parent: Option<&'a str>,
+    refs: &'a [String],
+}
+
+#[derive(Deserialize)]
+struct StoredContextMetadata {
+    title: Option<String>,
+    kind: String,
+    mode: Option<String>,
+    description: Option<String>,
+    created_at: u64,
+    archived_at: Option<u64>,
+    parent: Option<String>,
+    #[serde(default)]
+    refs: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct ContextListEntry {
+    context: String,
+    scope: String,
+    title: Option<String>,
+    kind: String,
+    mode: Option<String>,
+    description: Option<String>,
+    created_at: u64,
+    /// When the operator archived the context; null when it is not archived.
+    archived_at: Option<u64>,
+    parent: Option<String>,
+    refs: Vec<String>,
+    /// Populated only when the selection asks for activity, as JSON output
+    /// and recency ordering do. Preserve nanoseconds for ordering, but expose
+    /// whole Unix seconds (or null) in JSON.
+    #[serde(rename = "last_logged_at", serialize_with = "serialize_seconds")]
+    last_logged_nanos: Option<u64>,
+    /// Whether the context is in the operator's working set. Populated only
+    /// when the selection asks for membership, as JSON output does; plain
+    /// output reports identifiers alone.
+    pinned: bool,
+    path: PathBuf,
+}
+
+/// Report a nanosecond log stamp as whole Unix seconds.
+///
+/// `None` is written as null rather than omitted.
+fn serialize_seconds<S: serde::Serializer>(
+    nanos: &Option<u64>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    nanos
+        .map(|nanos| nanos / 1_000_000_000)
+        .serialize(serializer)
+}
+
+pub fn handle(
+    cwd: &Path,
+    command: ContextCommands,
+    store_root: Option<&Path>,
+) -> anyhow::Result<()> {
     match command {
-        ContextCommands::Init { force, task } => handle_init(cwd, force, task.as_deref()),
-        ContextCommands::Show { task } => handle_show(cwd, task.as_deref()),
-        ContextCommands::Profiles { task } => handle_profiles(cwd, task.as_deref()),
-        ContextCommands::Render { profile, task } => handle_render(cwd, profile, task.as_deref()),
-        ContextCommands::Path { all, task } => handle_path(cwd, all, task.as_deref()),
+        ContextCommands::Create {
+            name,
+            title,
+            kind,
+            mode,
+            description,
+            parent,
+            refs,
+        } => {
+            let options = NewContextOptions {
+                title: title.as_deref(),
+                kind: kind.as_str(),
+                mode: mode.map(|mode| mode.as_str()),
+                description: description.as_deref(),
+                parent: parent.as_deref(),
+                refs: &refs,
+            };
+            handle_create(cwd, &name, options, store_root)
+        }
+        ContextCommands::List {
+            json,
+            pinned,
+            archived,
+            scope,
+            sort,
+            filters,
+            limit,
+        } => handle_list(
+            cwd,
+            ContextListOptions {
+                json,
+                pinned,
+                archived,
+                scope,
+                sort,
+                filters,
+                limit,
+            },
+            store_root,
+        ),
+        ContextCommands::Tree {
+            json,
+            pinned,
+            archived,
+            scope,
+            root,
+            sort,
+            filters,
+        } => {
+            let contexts = select_contexts(
+                cwd,
+                store_root,
+                ContextSelection {
+                    pinned,
+                    archived,
+                    scope,
+                    filters,
+                    membership: json,
+                    activity: json || sort == Some(ContextSort::Recency),
+                },
+            )?;
+            let root = root
+                .map(|selector| cuelib::head::resolve_selector(&selector)?.address(cwd))
+                .transpose()?;
+            let recency = sort == Some(ContextSort::Recency);
+            let tree = tree::build(contexts, root.as_deref(), recency)?;
+            tree::print(&tree, json)
+        }
+        ContextCommands::Pin { context } => handle_pin(cwd, &context, store_root),
+        ContextCommands::Unpin { context } => handle_unpin(cwd, &context, store_root),
+        ContextCommands::Pins { scope } => handle_pins(cwd, scope, store_root),
+        ContextCommands::Switch { slug, branch } => handle_switch(cwd, &slug, branch),
+        ContextCommands::Unset { branch } => handle_unset(cwd, branch),
+        ContextCommands::Archive { contexts } => {
+            handle_archival(cwd, &contexts, Archival::Archive, store_root)
+        }
+        ContextCommands::Unarchive { contexts } => {
+            handle_archival(cwd, &contexts, Archival::Unarchive, store_root)
+        }
     }
 }
 
-fn handle_init(cwd: &Path, force: bool, task: Option<&str>) -> anyhow::Result<()> {
-    let store_root = store::main_worktree_root(cwd)?;
-    let config = Config::load(&store_root)?;
-    let resolved_store = store::open(cwd, &config)?;
-    let config_path = init_context(cwd, force, task)?;
-    let relative_path = config_path
-        .strip_prefix(&resolved_store.store_dir)
-        .or_else(|_| config_path.strip_prefix(&store_root))
-        .unwrap_or(&config_path);
-    println!("Created {}", relative_path.display());
+#[derive(Clone, Copy)]
+enum Archival {
+    Archive,
+    Unarchive,
+}
+
+impl Archival {
+    fn verb(self) -> &'static str {
+        match self {
+            Self::Archive => "archived",
+            Self::Unarchive => "unarchived",
+        }
+    }
+}
+
+/// Set or clear `archived_at` on each named context.
+///
+/// Each context is handled on its own: one that fails is reported and the
+/// rest are still processed, and the command fails if any did. Archival only
+/// edits the record. It checks nothing about the context and leaves pins,
+/// branch associations and the directory where they are, so the address
+/// keeps resolving for everything that names it.
+fn handle_archival(
+    cwd: &Path,
+    contexts: &[String],
+    archival: Archival,
+    store_root: Option<&Path>,
+) -> anyhow::Result<()> {
+    let mut failed = 0;
+    for selector in contexts {
+        match archive_one(cwd, selector, archival, store_root) {
+            Ok(address) => println!("{} {address}", archival.verb()),
+            Err(error) => {
+                failed += 1;
+                eprintln!("error: {selector}: {error:#}");
+            }
+        }
+    }
+    if failed > 0 {
+        anyhow::bail!(
+            "{failed} of {} contexts could not be {}",
+            contexts.len(),
+            archival.verb()
+        );
+    }
     Ok(())
 }
 
-fn handle_show(cwd: &Path, task: Option<&str>) -> anyhow::Result<()> {
-    let store_root = store::main_worktree_root(cwd)?;
-    let config = Config::load(&store_root)?;
-    let resolved = store::open(cwd, &config)?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
-    let config_path = context_json_path(&resolved.store_dir, &scope);
-
-    let (context_config, source) = load_context_or_config(&config_path, &config.context)?;
-    if source == ContextSource::ConfigDefault {
-        eprintln!("(no context.json; showing config default)");
+fn archive_one(
+    cwd: &Path,
+    selector: &str,
+    archival: Archival,
+    store_root: Option<&Path>,
+) -> anyhow::Result<String> {
+    let resolved = cuelib::head::resolve_selector(selector)?;
+    let address = resolved.address(cwd)?;
+    let context_dir = resolved.context_dir(cwd, store_root)?;
+    let path = context_dir.join("context.md");
+    if !path.is_file() {
+        anyhow::bail!("no context at {address}");
     }
-    println!("{}", serde_json::to_string_pretty(&context_config)?);
 
-    Ok(())
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("could not read {}", path.display()))?;
+    // Whether the context is archived is decided by the parsed record, as
+    // listings decide it. The text editor only handles the canonical
+    // `archived_at:` line; any other spelling is refused rather than left in
+    // place while reporting success.
+    let yaml = extract_frontmatter_yaml(&path).unwrap_or_default();
+    let parsed: serde_yaml::Value = serde_yaml::from_str(&yaml)
+        .with_context(|| format!("invalid context metadata at {}", path.display()))?;
+    let stamp = parsed.get("archived_at");
+    let remove = |text: &str| {
+        cuelib::frontmatter::remove(text, "archived_at")?
+            .context("archived_at is not written as a plain 'archived_at:' line")
+    };
+    let edited = match (archival, stamp) {
+        // Archiving an archived context keeps the stamp it already has.
+        (Archival::Archive, Some(stamp)) if !stamp.is_null() => Ok(None),
+        (Archival::Archive, stamp) => (|| {
+            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
+            // A null stamp is not archived; its line is replaced.
+            let text = match stamp {
+                Some(_) => remove(&text)?,
+                None => text.clone(),
+            };
+            cuelib::frontmatter::insert_if_absent(&text, "archived_at", &now.to_string())
+        })(),
+        (Archival::Unarchive, None) => Ok(None),
+        (Archival::Unarchive, Some(_)) => remove(&text).map(Some),
+    }
+    .with_context(|| format!("could not edit {}", path.display()))?;
+
+    if let Some(edited) = edited {
+        // Replace the record whole, so a reader never sees a partial write.
+        // The temporary file takes the record's permissions, which it would
+        // otherwise replace with its own private mode.
+        let mut file = tempfile::NamedTempFile::new_in(&context_dir)?;
+        file.as_file()
+            .set_permissions(std::fs::metadata(&path)?.permissions())?;
+        std::io::Write::write_all(&mut file, edited.as_bytes())?;
+        file.persist(&path)
+            .with_context(|| format!("could not write {}", path.display()))?;
+    }
+    Ok(address)
 }
 
-fn handle_profiles(cwd: &Path, task: Option<&str>) -> anyhow::Result<()> {
-    let store_root = store::main_worktree_root(cwd)?;
-    let config = Config::load(&store_root)?;
-    let resolved = store::open(cwd, &config)?;
-    let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
-    let config_path = context_json_path(&resolved.store_dir, &scope);
-
-    let (context_config, source) = load_context_or_config(&config_path, &config.context)?;
-    if source == ContextSource::ConfigDefault {
-        eprintln!("(no context.json; showing config default)");
-    }
-    let mut names: Vec<_> = context_config.keys().collect();
-    names.sort();
-
-    for name in names {
-        println!("{}", name);
-    }
-
-    Ok(())
+/// Pin state lives outside every context, under the store root, as a directory
+/// of zero-byte marker files at `<store>/.state/pins/<org>/<repo>/<slug>`. It
+/// is operator state rather than metadata describing a context.
+fn pins_dir(store_root: &Path) -> PathBuf {
+    store_root.join(".state").join("pins")
 }
 
-fn handle_render(cwd: &Path, profile: Option<String>, task: Option<&str>) -> anyhow::Result<()> {
-    let store_root = store::main_worktree_root(cwd)?;
-    let config = Config::load(&store_root)?;
-    let resolved_store = store::open(cwd, &config)?;
-    let (resolved, source) = gather_context(cwd, profile.as_deref(), task)?;
-    if source == ContextSource::ConfigDefault {
-        eprintln!("(no context.json; using config default)");
-    }
+/// The accepted pin argument forms, quoted back in every error so the message
+/// names the shape that was expected.
+const PIN_FORM: &str = "expected a context slug in the current repository scope \
+     or a canonical '<org>/<repo>/<slug>' address";
 
-    for artifact in resolved.artifacts {
-        let relative_path = artifact
-            .path
-            .strip_prefix(&resolved_store.store_dir)
-            .or_else(|_| artifact.path.strip_prefix(&store_root))
-            .unwrap_or(&artifact.path);
-        let normalized_path = relative_path.display().to_string().replace('\\', "/");
-
-        println!(
-            "<artifact path=\"{}\">\n{}\n</artifact>\n",
-            normalized_path, artifact.content
+/// Resolve a pin argument to a canonical context address.
+///
+/// Resolution is shape-only. A pin names a context that may not exist yet and
+/// may outlive the context it names, so no store lookup is performed. The
+/// repository scope is resolved only for the bare-slug form, so the address
+/// form pins a context from anywhere.
+fn resolve_pin_address(cwd: &Path, value: &str) -> anyhow::Result<String> {
+    // Checked on the whole value rather than per segment, matching
+    // `address::validate_shape`: `~` is a shell and path convention, and a
+    // value leading with it is a path being passed where an address belongs.
+    if value.starts_with('~') {
+        anyhow::bail!(
+            "Invalid context '{value}': home-relative paths are not addresses; {PIN_FORM}"
         );
     }
 
-    if let Some(instructions) = resolved.instructions {
-        println!("<instructions>\n{}\n</instructions>", instructions);
+    let segments: Vec<&str> = value.split('/').collect();
+    let address = match segments.as_slice() {
+        [slug] => {
+            validate_pin_segment(value, slug)?;
+            format!("{}/{slug}", scope_prefix(cwd)?)
+        }
+        [org, repo, slug] => {
+            for segment in [org, repo, slug] {
+                validate_pin_segment(value, segment)?;
+            }
+            format!("{org}/{repo}/{slug}")
+        }
+        _ => anyhow::bail!("Invalid context '{value}': {PIN_FORM}"),
+    };
+    Ok(address)
+}
+
+/// Each address segment must be a single, safe path segment: a pin argument
+/// becomes a filesystem path under the store's state directory, and is also
+/// printed back as a line of `pins` output.
+fn validate_pin_segment(value: &str, segment: &str) -> anyhow::Result<()> {
+    cuelib::head::validate_slug(segment)
+        .map_err(|_| anyhow::anyhow!("Invalid context '{value}': {PIN_FORM}"))
+}
+
+/// Resolve once for both context and pin walks. None means the whole store;
+/// an empty set means no matching scopes, not an unrestricted query.
+fn query_scope_prefixes(
+    cwd: &Path,
+    scope: Option<&str>,
+    store_root: &Path,
+) -> anyhow::Result<Option<Vec<String>>> {
+    let config = crate::config::Config::load(cwd)?;
+    let name = scope.unwrap_or(&config.default_scope);
+    if let Some(matchers) = config.scopes.get(name) {
+        let prefixes = scope_dirs(store_root)?
+            .into_iter()
+            .map(|(prefix, _)| prefix)
+            .filter(|prefix| !prefix.starts_with('.'))
+            .filter(|prefix| {
+                let matches = |matcher: &str| {
+                    matcher == prefix
+                        || matcher.strip_suffix("/*").is_some_and(|org| {
+                            prefix
+                                .split_once('/')
+                                .is_some_and(|(actual, _)| actual == org)
+                        })
+                };
+                matchers
+                    .iter()
+                    .any(|matcher| !matcher.starts_with('!') && matches(matcher))
+                    && !matchers
+                        .iter()
+                        .any(|matcher| matcher.strip_prefix('!').is_some_and(matches))
+            })
+            .collect();
+        return Ok(Some(prefixes));
+    }
+    match name {
+        "repo" => Ok(Some(vec![scope_prefix(cwd)?])),
+        "store" => Ok(None),
+        name => anyhow::bail!(
+            "unknown query scope '{name}': expected repo, store, or a configured name"
+        ),
+    }
+}
+
+/// The current repository scope, as the `<org>/<repo>` prefix of an address.
+fn scope_prefix(cwd: &Path) -> anyhow::Result<String> {
+    let scope = store::repository_scope(cwd)?;
+    Ok(scope
+        .to_str()
+        .context("repository scope is not valid UTF-8")?
+        .to_string())
+}
+
+fn handle_pin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow::Result<()> {
+    let address = resolve_pin_address(cwd, context)?;
+    let marker = pins_dir(&store::root(store_root)?).join(&address);
+    let scope_dir = marker
+        .parent()
+        .context("pin marker path has no scope directory")?;
+    std::fs::create_dir_all(scope_dir)
+        .with_context(|| format!("could not create pin state at {}", scope_dir.display()))?;
+
+    // An exclusive create is atomic, and treating an existing marker as
+    // success makes the pin idempotent without a read-modify-write.
+    match std::fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(&marker)
+    {
+        Ok(_) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("could not pin context at {}", marker.display()));
+        }
     }
 
+    println!("pinned {address}");
     Ok(())
 }
 
-fn handle_path(cwd: &Path, all: bool, task: Option<&str>) -> anyhow::Result<()> {
-    let store_root = store::main_worktree_root(cwd)?;
-    let config = Config::load(&store_root)?;
-    let resolved = store::open(cwd, &config)?;
+fn handle_unpin(cwd: &Path, context: &str, store_root: Option<&Path>) -> anyhow::Result<()> {
+    let address = resolve_pin_address(cwd, context)?;
+    let marker = pins_dir(&store::root(store_root)?).join(&address);
 
-    if all {
-        if !resolved.store_dir.exists() {
-            return Ok(());
-        }
-
-        let mut paths = Vec::new();
-        for entry in std::fs::read_dir(&resolved.store_dir)? {
-            let entry = entry?;
-            if entry.file_type()?.is_dir() {
-                let context_file = entry.path().join("context.json");
-                if context_file.exists() {
-                    paths.push(context_file);
-                }
-            }
-        }
-        paths.sort();
-        for path in paths {
-            println!("{}", path.display());
-        }
-    } else {
-        let scope = cuelib::head::resolve_scope(&resolved.head_dir, task)?;
-        let config_path = context_json_path(&resolved.store_dir, &scope);
-        if config_path.exists() {
-            println!("{}", config_path.display());
-        } else {
-            anyhow::bail!("Context file not found for scope: {}", scope);
+    // An unlink is atomic; an absent marker is already the desired state. The
+    // emptied scope directory is deliberately left in place, because pruning
+    // would reintroduce a write race.
+    match std::fs::remove_file(&marker) {
+        Ok(()) => {}
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("could not unpin context at {}", marker.display()));
         }
     }
 
+    println!("unpinned {address}");
+    Ok(())
+}
+
+/// List the working set at the configured or explicit query breadth.
+/// Only the built-in repo scope requires a repository origin.
+fn handle_pins(cwd: &Path, scope: Option<String>, store_root: Option<&Path>) -> anyhow::Result<()> {
+    let store_root = store::root(store_root)?;
+    let pins_dir = pins_dir(&store_root);
+    let prefix = query_scope_prefixes(cwd, scope.as_deref(), &store_root)?;
+    let mut addresses: Vec<String> = read_pins(prefix.as_deref(), &pins_dir)?
+        .into_iter()
+        .map(|(scope, context)| format!("{scope}/{context}"))
+        .collect();
+
+    // Alphabetical order by canonical address is deterministic and stable;
+    // there is no recency or operator-chosen ordering.
+    addresses.sort();
+    for address in addresses {
+        println!("{address}");
+    }
+    Ok(())
+}
+
+/// The pinned working set at the requested breadth, as `(scope, context)`
+/// pairs in directory order.
+///
+/// Reading pin state costs one directory listing per scope and opens nothing,
+/// because a pin is a name rather than a document.
+fn read_pins(prefix: Option<&[String]>, pins_dir: &Path) -> anyhow::Result<Vec<(String, String)>> {
+    let mut pins = Vec::new();
+    match prefix {
+        None => {
+            // Joining the scope directories and the filename is what yields an
+            // address, so only entries with that shape are pins.
+            for (scope, scope_dir) in scope_dirs(pins_dir)? {
+                collect_scope_pins(&scope_dir, &scope, &mut pins)?;
+            }
+        }
+        Some(scopes) => {
+            for scope in scopes {
+                collect_scope_pins(&pins_dir.join(scope), scope, &mut pins)?;
+            }
+        }
+    }
+    Ok(pins)
+}
+
+/// Append the pins held directly in one `<org>/<repo>` directory.
+fn collect_scope_pins(
+    scope_dir: &Path,
+    scope: &str,
+    pins: &mut Vec<(String, String)>,
+) -> anyhow::Result<()> {
+    for marker in read_optional_dir(scope_dir)? {
+        if !marker.is_file() {
+            continue;
+        }
+        pins.push((scope.to_string(), entry_name(&marker)?.to_string()));
+    }
+    Ok(())
+}
+
+/// Every `<org>/<repo>` scope directory directly below `root`, paired with the
+/// `<org>/<repo>` prefix its contents address.
+///
+/// Joining the two directory levels is what yields an address, so entries
+/// without that shape are skipped rather than failing the walk. What counts as
+/// a scope at a given root is the caller's concern: this walks shape only.
+fn scope_dirs(root: &Path) -> anyhow::Result<Vec<(String, PathBuf)>> {
+    let mut scopes = Vec::new();
+    for org in read_optional_dir(root)? {
+        if !org.is_dir() {
+            continue;
+        }
+        let org_name = entry_name(&org)?.to_string();
+        for repo in read_optional_dir(&org)? {
+            if !repo.is_dir() {
+                continue;
+            }
+            let scope = format!("{org_name}/{}", entry_name(&repo)?);
+            scopes.push((scope, repo));
+        }
+    }
+    Ok(scopes)
+}
+
+/// Read a directory, treating a missing one as empty.
+///
+/// Absence is the ordinary case for both callers: a store may hold no pin
+/// state at all, scope directories left behind by the last unpin in a scope
+/// are retained rather than pruned, and a repository scope holding no context
+/// has no directory.
+fn read_optional_dir(dir: &Path) -> anyhow::Result<Vec<PathBuf>> {
+    let entries = match std::fs::read_dir(dir) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(error) => {
+            return Err(error)
+                .with_context(|| format!("could not read directory at {}", dir.display()));
+        }
+    };
+    let mut paths = Vec::new();
+    for entry in entries {
+        paths.push(entry?.path());
+    }
+    Ok(paths)
+}
+
+fn entry_name(entry: &Path) -> anyhow::Result<&str> {
+    entry
+        .file_name()
+        .and_then(|name| name.to_str())
+        .with_context(|| format!("store entry name is not valid UTF-8: {}", entry.display()))
+}
+
+fn handle_switch(cwd: &Path, slug: &str, branch: Option<String>) -> anyhow::Result<()> {
+    let branch = target_branch(cwd, branch, "switch")?;
+    cuelib::git::set_branch_context(cwd, &branch, slug)?;
+    println!("switched branch '{branch}' to context '{slug}'");
+    Ok(())
+}
+
+fn handle_unset(cwd: &Path, branch: Option<String>) -> anyhow::Result<()> {
+    let branch = target_branch(cwd, branch, "unset")?;
+    cuelib::git::unset_branch_context(cwd, &branch)?;
+    println!("unset context for branch '{branch}'");
+    Ok(())
+}
+
+fn target_branch(cwd: &Path, branch: Option<String>, action: &str) -> anyhow::Result<String> {
+    let branch = branch
+        .or_else(|| cuelib::git::current_branch(cwd))
+        .with_context(|| {
+            format!(
+                "cannot {action} context in detached HEAD; specify target branch with --branch <name>"
+            )
+        })?;
+    Ok(branch)
+}
+
+/// What a context listing was asked for: which contexts to enumerate, which
+/// of them to keep, and how to order and truncate what remains.
+struct ContextListOptions {
+    json: bool,
+    pinned: bool,
+    archived: bool,
+    scope: Option<String>,
+    sort: Option<ContextSort>,
+    filters: Vec<Filter>,
+    limit: Option<usize>,
+}
+
+/// List contexts at the configured or explicit query breadth.
+/// Only the built-in repo scope requires a repository origin.
+///
+/// `pinned` selects what is enumerated rather than narrowing what was
+/// enumerated. Pin state is a flat directory of markers so that the working
+/// set is answerable in one directory listing; enumerating every context in
+/// the store and discarding the unpinned ones would spend the cost that
+/// design exists to avoid, and grows with the store rather than with the
+/// working set.
+fn handle_list(
+    cwd: &Path,
+    options: ContextListOptions,
+    store_root: Option<&Path>,
+) -> anyhow::Result<()> {
+    let ContextListOptions {
+        json,
+        pinned,
+        archived,
+        scope,
+        sort,
+        filters,
+        limit,
+    } = options;
+    let recency = sort == Some(ContextSort::Recency);
+    let mut contexts = select_contexts(
+        cwd,
+        store_root,
+        ContextSelection {
+            pinned,
+            archived,
+            scope,
+            filters,
+            membership: json,
+            activity: recency || json,
+        },
+    )?;
+
+    if recency {
+        // A context with no log entry has no activity to order by and sorts
+        // last, which `None` compares as under the reversed key. The sort is
+        // stable and the input is already in canonical address order, so
+        // contexts sharing a stamp keep that order. The key is the nanosecond
+        // stamp rather than the second that is reported, so entries written
+        // within one second stay in the order they happened.
+        contexts.sort_by_key(|context| std::cmp::Reverse(context.last_logged_nanos));
+    }
+
+    // Truncation is applied to the finished order, so a limit selects the
+    // leading rows of what was asked for rather than an arbitrary subset that
+    // is then ordered. A limit of zero selects nothing, which is a listing of
+    // no contexts and not an error.
+    if let Some(limit) = limit {
+        contexts.truncate(limit);
+    }
+
+    if json {
+        println!("{}", serde_json::to_string_pretty(&contexts)?);
+        return Ok(());
+    }
+    for context in contexts {
+        println!("{}/{}", context.scope, context.context);
+    }
+    Ok(())
+}
+
+/// Which contexts a listing or tree is built from, and which derived row
+/// fields must be populated.
+struct ContextSelection {
+    pinned: bool,
+    /// Keep archived contexts, which are otherwise treated as absent.
+    archived: bool,
+    scope: Option<String>,
+    filters: Vec<Filter>,
+    /// Report each row's working-set membership.
+    membership: bool,
+    /// Read each row's latest log activity.
+    activity: bool,
+}
+
+/// Enumerate and filter contexts, in canonical address order.
+fn select_contexts(
+    cwd: &Path,
+    store_root: Option<&Path>,
+    selection: ContextSelection,
+) -> anyhow::Result<Vec<ContextListEntry>> {
+    let ContextSelection {
+        pinned,
+        archived,
+        scope,
+        filters,
+        membership,
+        activity,
+    } = selection;
+    let store_root = store::root(store_root)?;
+    let prefix = query_scope_prefixes(cwd, scope.as_deref(), &store_root)?;
+
+    // Pin state is read when it selects the listing, and when JSON reports
+    // each row's membership. Either way it is one directory listing per scope
+    // and opens nothing, so reporting membership on an already-enumerated
+    // listing costs a read that does not grow with the store.
+    let pins = if pinned || membership {
+        read_pins(prefix.as_deref(), &pins_dir(&store_root))?
+    } else {
+        Vec::new()
+    };
+
+    // Selection happens as rows are read, so `--sort` orders and `--limit`
+    // truncates what matched rather than what was enumerated: a limit over an
+    // unfiltered listing would discard matching contexts before they were
+    // tested.
+    let keep = Keep {
+        filters: &filters,
+        archived,
+    };
+    let mut contexts = Vec::new();
+    if pinned {
+        collect_pinned_contexts(&store_root, &pins, &keep, &mut contexts)?;
+    } else {
+        match prefix.as_deref() {
+            None => {
+                for (scope, scope_dir) in scope_dirs(&store_root)? {
+                    // Directly below the store root, a dot-named directory is
+                    // store-internal state such as `.state`, never a
+                    // repository scope: an origin-derived scope cannot be
+                    // dot-named.
+                    if scope.starts_with('.') {
+                        continue;
+                    }
+                    collect_scope_contexts(&scope_dir, &scope, &keep, &mut contexts)?;
+                }
+            }
+            Some(scopes) => {
+                for scope in scopes {
+                    collect_scope_contexts(&store_root.join(scope), scope, &keep, &mut contexts)?;
+                }
+            }
+        }
+    }
+
+    // Ordering by canonical address is deterministic and stable. Within one
+    // scope this is ordering by slug, so the default view is unchanged. It is
+    // also the tiebreak any requested ordering falls back on, so it is
+    // established first.
+    contexts
+        .sort_by(|left, right| (&left.scope, &left.context).cmp(&(&right.scope, &right.context)));
+
+    // Scan filenames once per context when needed for ordering or JSON.
+    // Plain default listing does not scan log directories.
+    if activity {
+        read_log_activity(&mut contexts)?;
+    }
+
+    // Membership is a fact about a context rather than a property of the
+    // selection that found it, so it is reported on every JSON row, including
+    // the rows of a listing already narrowed to the working set. A consumer
+    // reads one field without branching on which query produced the row.
+    if membership {
+        mark_pinned(&mut contexts, &pins);
+    }
+    Ok(contexts)
+}
+
+/// Record which listed contexts are in the working set.
+///
+/// Membership is matched on the whole `(scope, context)` pair, so a pin only
+/// ever marks the context it addresses. A pin naming a context that does not
+/// exist matches no row, which is the same silence `--pinned` keeps: `cue
+/// context pins` is what reports raw pin state.
+fn mark_pinned(contexts: &mut [ContextListEntry], pins: &[(String, String)]) {
+    let pins: HashSet<(&str, &str)> = pins
+        .iter()
+        .map(|(scope, context)| (scope.as_str(), context.as_str()))
+        .collect();
+    for entry in contexts {
+        entry.pinned = pins.contains(&(entry.scope.as_str(), entry.context.as_str()));
+    }
+}
+
+/// Record each context's latest log activity, as the nanosecond stamp of its
+/// newest log entry.
+///
+/// Log filenames are scanned before the listing is ordered or written out, so a log
+/// directory that cannot be listed fails rather than silently leaving a
+/// context standing as one with no activity.
+fn read_log_activity(contexts: &mut [ContextListEntry]) -> anyhow::Result<()> {
+    for context in contexts {
+        let context_dir = context.path.parent().with_context(|| {
+            format!("context path has no directory: {}", context.path.display())
+        })?;
+        context.last_logged_nanos = crate::log::latest_timestamp(context_dir)?;
+    }
+    Ok(())
+}
+
+/// Append the contexts held directly in one `<org>/<repo>` directory.
+///
+/// A context is a directory containing `context.md`; anything else in a scope
+/// directory is skipped rather than failing the listing.
+fn collect_scope_contexts(
+    scope_dir: &Path,
+    scope: &str,
+    keep: &Keep<'_>,
+    contexts: &mut Vec<ContextListEntry>,
+) -> anyhow::Result<()> {
+    for context_dir in read_optional_dir(scope_dir)? {
+        let context = entry_name(&context_dir)?.to_string();
+        if let Some(entry) = read_context_entry(&context_dir, scope, &context, keep)? {
+            contexts.push(entry);
+        }
+    }
+    Ok(())
+}
+
+/// Append the contexts the working set names, resolving each pin by address.
+///
+/// A pin is a name, and the context it names may never have existed or may
+/// have been deleted since. Such a pin has no row to report, so it is skipped:
+/// the working set keeps it, and `cue context pins` is what reports it.
+fn collect_pinned_contexts(
+    store_root: &Path,
+    pins: &[(String, String)],
+    keep: &Keep<'_>,
+    contexts: &mut Vec<ContextListEntry>,
+) -> anyhow::Result<()> {
+    for (scope, context) in pins {
+        // Resolution is direct concatenation onto the store root, which is
+        // what makes narrowing to the working set cost one read per pin.
+        let context_dir = store_root.join(scope).join(context);
+        if let Some(entry) = read_context_entry(&context_dir, scope, context, keep)? {
+            contexts.push(entry);
+        }
+    }
+    Ok(())
+}
+
+/// Which enumerated contexts become listing rows.
+struct Keep<'a> {
+    filters: &'a [Filter],
+    archived: bool,
+}
+
+/// Read one context directory into a listing row, or `None` when it holds no
+/// `context.md` and so is not a context at all, when it is archived and
+/// archived contexts were not asked for, or when its metadata does not
+/// satisfy every filter.
+///
+/// An archived context is dropped here, where every listing and tree passes,
+/// so it is absent from all of them alike, the pinned working set included.
+///
+/// Filters are evaluated against the `context.md` frontmatter rather than the
+/// row built from it, so a context is queried on the metadata it declares.
+/// Conventional fields cue does not model are therefore filterable, matching
+/// `cue list`.
+fn read_context_entry(
+    context_dir: &Path,
+    scope: &str,
+    context: &str,
+    keep: &Keep<'_>,
+) -> anyhow::Result<Option<ContextListEntry>> {
+    let context_path = context_dir.join("context.md");
+    if !context_path.is_file() {
+        return Ok(None);
+    }
+    let frontmatter = extract_frontmatter_yaml(&context_path).with_context(|| {
+        format!(
+            "could not read context metadata at {}",
+            context_path.display()
+        )
+    })?;
+    let metadata: StoredContextMetadata = serde_yaml::from_str(&frontmatter)
+        .with_context(|| format!("invalid context metadata at {}", context_path.display()))?;
+
+    if metadata.archived_at.is_some() && !keep.archived {
+        return Ok(None);
+    }
+
+    if !keep.filters.is_empty() {
+        let queryable: serde_json::Value =
+            serde_yaml::from_str(&frontmatter).unwrap_or(serde_json::Value::Null);
+        if !apply_filters(&queryable, keep.filters) {
+            return Ok(None);
+        }
+    }
+
+    Ok(Some(ContextListEntry {
+        context: context.to_string(),
+        scope: scope.to_string(),
+        title: metadata.title,
+        kind: metadata.kind,
+        mode: metadata.mode,
+        description: metadata.description,
+        created_at: metadata.created_at,
+        archived_at: metadata.archived_at,
+        parent: metadata.parent,
+        refs: metadata.refs,
+        last_logged_nanos: None,
+        pinned: false,
+        path: context_path,
+    }))
+}
+
+fn handle_create(
+    cwd: &Path,
+    name: &str,
+    options: NewContextOptions<'_>,
+    store_root: Option<&Path>,
+) -> anyhow::Result<()> {
+    cuelib::head::validate_slug(name)?;
+
+    let store_root = store::root(store_root)?;
+    if let Some(parent) = options.parent {
+        crate::address::validate_reference("parent", parent, &store_root)?;
+    }
+    for reference in options.refs {
+        crate::address::validate_reference("ref", reference, &store_root)?;
+    }
+
+    let repository_scope = store::repository_scope(cwd)?;
+    let repository_dir = store_root.join(&repository_scope);
+    let context_dir = repository_dir.join(name);
+    let context_path = context_dir.join("context.md");
+    if context_path.exists() {
+        anyhow::bail!("Context already exists: {name}");
+    }
+
+    let metadata = NewContextMetadata {
+        title: options.title,
+        kind: options.kind,
+        mode: options.mode,
+        description: options.description,
+        created_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+        parent: options.parent,
+        refs: (!options.refs.is_empty()).then_some(options.refs),
+    };
+    let frontmatter = serde_yaml::to_string(&metadata)?;
+    std::fs::create_dir_all(&context_dir)?;
+    std::fs::write(context_path, format!("---\n{frontmatter}---\n"))?;
+
+    println!("Created {}/{}", repository_scope.display(), name);
     Ok(())
 }
