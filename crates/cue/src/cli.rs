@@ -197,6 +197,9 @@ pub enum ContextCommands {
         /// List only the pinned working set
         #[arg(long)]
         pinned: bool,
+        /// Include archived contexts, which are otherwise left out
+        #[arg(long)]
+        archived: bool,
         /// Query repo, store, or a configured name (defaults to config, then repo)
         #[arg(long, value_name = "SCOPE")]
         scope: Option<String>,
@@ -228,6 +231,9 @@ pub enum ContextCommands {
         /// Build the tree from the pinned working set only
         #[arg(long)]
         pinned: bool,
+        /// Include archived contexts, which are otherwise left out
+        #[arg(long)]
+        archived: bool,
         /// Query repo, store, or a configured name (defaults to config, then repo)
         #[arg(long, value_name = "SCOPE")]
         scope: Option<String>,
