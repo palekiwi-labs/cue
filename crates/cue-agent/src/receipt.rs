@@ -26,6 +26,8 @@ pub struct RunReceipt {
     pub run_id: String,
     pub batch_id: String,
     pub agent: String,
+    /// The harness this run executed in ("pi" or "claude-code").
+    pub harness: String,
     pub model: Option<String>,
     pub outcome: Outcome,
     pub exit_code: Option<i32>,

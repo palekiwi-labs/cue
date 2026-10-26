@@ -189,6 +189,7 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
                         "dir": run_dir_name(&task.agent.name, index + 1),
                         "agent": task.agent.name,
                         "model": task.agent.model,
+                        "harness": task.agent.harness.as_str(),
                         "position": index + 1,
                         "label": task.label.as_ref().or(request.label.as_ref()),
                         "context": task.context,
@@ -237,6 +238,14 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
         Some(first) if versions.all(|version| version == first) => first.clone(),
         _ => None,
     };
+    let harness_name = |runs: &[RunReceipt]| {
+        let first = runs.first().map(|run| run.harness.as_str());
+        if runs.iter().all(|run| Some(run.harness.as_str()) == first) {
+            first.unwrap_or(harness::Harness::Pi.as_str()).to_string()
+        } else {
+            "mixed".to_string()
+        }
+    };
 
     // An interrupt or stop that arrived during preparation launches nothing
     // more.
@@ -268,7 +277,7 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
         };
         let launched = prepared.not_launched.is_none()
             && !matches!(outcome.disposition, Disposition::SpawnFailed { .. });
-        let capture = harness::capture(&prepared.plan.events_path);
+        let capture = harness::capture(prepared.agent.harness, &prepared.plan.events_path);
         let (result, exit_code, signal, error) = classify(&outcome.disposition, &capture);
 
         let stderr_excerpt = read_stderr_excerpt(&prepared.plan.stderr_path)
@@ -278,6 +287,7 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
             run_id: prepared.plan.run_id.clone(),
             batch_id: batch_id.clone(),
             agent: prepared.agent.name.clone(),
+            harness: prepared.agent.harness.as_str().to_string(),
             model: prepared.agent.model.clone().or(capture.model.clone()),
             outcome: result,
             exit_code,
@@ -408,7 +418,7 @@ fn run(admitted: Admitted) -> Result<BatchOutcome> {
             batch_id,
             batch_path,
             cap: MAX_TASKS,
-            harness: harness::PROGRAM.to_string(),
+            harness: harness_name(&runs),
             harness_version,
             runs,
         },
@@ -456,13 +466,20 @@ fn prepare_all(
         let system_prompt_path = run_path.join("system-prompt.md");
         let system_prompt_arg =
             (!agent.system_prompt.is_empty()).then(|| system_prompt_path.clone());
-        let argv = harness::argv(&run_id, &agent, &task.prompt, system_prompt_arg.as_deref());
+        let argv = harness::argv(
+            agent.harness,
+            &run_id,
+            &agent,
+            &task.prompt,
+            system_prompt_arg.as_deref(),
+        );
         let label = task.label.clone().or_else(|| request.label.clone());
 
         let mut not_launched = None;
-        // The id names a harness session as well as a directory, so it is
-        // checked against the harness's own rule rather than assumed valid.
-        if !ids::is_valid(&run_id) {
+        // The id names a pi harness session as well as a directory, so it is
+        // checked against pi's own rule rather than assumed valid. No other
+        // harness receives a session id from cue-agent.
+        if agent.harness == harness::Harness::Pi && !ids::is_valid(&run_id) {
             not_launched = Some(failed_before_launch(format!(
                 "generated run id '{run_id}' is not a valid harness session id"
             )));
@@ -514,7 +531,7 @@ fn prepare_all(
         let mut program = None;
         let mut version = None;
         if not_launched.is_none() {
-            match harness::locate(&task.env, &cwd) {
+            match harness::locate(agent.harness, &task.env, &cwd) {
                 Ok(found) => {
                     let key = (found.clone(), cwd.clone(), task.env.clone());
                     version = match probes.iter().find(|(probe, _)| *probe == key) {
@@ -548,7 +565,7 @@ fn prepare_all(
             "batch_id": records.batch_id,
             "agent": agent.name,
             "model": agent.model,
-            "harness": harness::PROGRAM,
+            "harness": agent.harness.as_str(),
             "harness_version": version,
             "harness_path": program,
             "argv": argv,
@@ -590,7 +607,7 @@ fn prepare_all(
 
         prepared.push(Prepared {
             plan: RunPlan {
-                program: program.unwrap_or_else(|| PathBuf::from(harness::PROGRAM)),
+                program: program.unwrap_or_else(|| PathBuf::from(agent.harness.program())),
                 argv,
                 cwd,
                 env: task.env.clone(),
@@ -666,10 +683,7 @@ fn classify(
             signal,
         } => (Outcome::Aborted, *code, *signal, Some(trigger.message())),
         Disposition::Exited { code, signal } => {
-            let failed_stop = matches!(
-                capture.stop_reason.as_deref(),
-                Some("error") | Some("aborted")
-            );
+            let failed_stop = capture.is_error;
             if *code == Some(0) && !failed_stop {
                 (Outcome::Completed, *code, *signal, None)
             } else {
@@ -709,7 +723,7 @@ fn write_trace(
     let source = trace::provenance(&prepared.plan.cwd);
     let fields = trace::frontmatter(
         run,
-        harness::PROGRAM,
+        prepared.agent.harness.as_str(),
         prepared.harness_version.as_deref(),
         prepared.label.as_deref(),
         batch_label,

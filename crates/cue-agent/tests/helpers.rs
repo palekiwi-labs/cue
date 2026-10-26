@@ -44,6 +44,19 @@ impl Sandbox {
         write_executable(&self.pi_dir().join("pi"), body);
     }
 
+    /// Install a fake `claude` on the sandbox `PATH`, beside `pi`.
+    pub fn install_claude(&self) {
+        write_executable(&self.pi_dir().join("claude"), FAKE_CLAUDE);
+    }
+
+    /// Recorded argv of the fake claude's last invocation.
+    pub fn recorded_claude_argv(&self) -> Vec<String> {
+        let path = self.harness_log().join("claude.argv");
+        let raw = std::fs::read_to_string(&path)
+            .unwrap_or_else(|err| panic!("missing claude argv record {}: {err}", path.display()));
+        raw.lines().map(str::to_string).collect()
+    }
+
     /// A `PATH` value that puts `dir` first, ahead of the inherited entries
     /// (which supply `bash` and `env` for the fake scripts). The sandbox's own
     /// `pi` directory is deliberately absent.
@@ -357,6 +370,56 @@ pub fn spec(tasks: &[(&str, &str)]) -> serde_json::Value {
         .collect();
     serde_json::json!({ "tasks": tasks })
 }
+
+/// The fake claude-code harness.
+///
+/// It behaves like `claude -p --output-format stream-json`: JSONL events on
+/// stdout, diagnostics on stderr, behaviour selected by directives in the
+/// prompt (the last argument; cue-agent passes no session id to claude).
+pub const FAKE_CLAUDE: &str = r#"#!/usr/bin/env bash
+# Fake claude-code harness. Records argv, then acts on prompt directives.
+set -u
+
+if [[ "${1:-}" == "--version" ]]; then
+  printf '%s\n' "${FAKE_CLAUDE_VERSION:-fake-claude 1.0.0 (Claude Code)}"
+  exit 0
+fi
+
+args=("$@")
+prompt="${args[${#args[@]} - 1]}"
+
+if [[ -n "${FAKE_HARNESS_LOG:-}" ]]; then
+  mkdir -p "$FAKE_HARNESS_LOG"
+  : >"$FAKE_HARNESS_LOG/claude.argv"
+  for arg in "${args[@]}"; do
+    printf '%s\n' "$arg" >>"$FAKE_HARNESS_LOG/claude.argv"
+  done
+fi
+
+init='{"type":"system","subtype":"init","cwd":"/w","session_id":"cc-s1","model":"cc-haiku","tools":["Bash","Read"],"claude_code_version":"fake"}'
+
+case "$prompt" in
+  *CC_API_ERROR*)
+    # Exits 0 while the stream reports failure: exit status must not decide.
+    printf '%s\n' "$init"
+    printf '%s\n' '{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","content":[{"type":"text","text":"Failed to authenticate: key rejected"}],"usage":{}},"is_api_error_message":true}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","result":"Failed to authenticate: key rejected","total_cost_usd":0,"num_turns":1}'
+    ;;
+  *CC_TOOL*)
+    printf '%s\n' "$init"
+    printf '%s\n' '{"type":"assistant","message":{"id":"m1","model":"cc-haiku","role":"assistant","stop_reason":"tool_use","content":[{"type":"text","text":"Let me look."},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":2,"cache_creation_input_tokens":1}}}'
+    printf '%s\n' '{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}'
+    printf '%s\n' '{"type":"assistant","message":{"id":"m2","model":"cc-haiku","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"tools said fine"}],"usage":{"input_tokens":20,"output_tokens":6}}}'
+    printf '%s\n' '{"type":"result","subtype":"success","is_error":false,"result":"tools said fine","total_cost_usd":0.002,"num_turns":2,"session_id":"cc-s1"}'
+    ;;
+  *)
+    printf '%s\n' "$init"
+    answer="echo: $prompt"
+    printf '{"type":"assistant","message":{"id":"m1","model":"cc-haiku","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"%s"}],"usage":{"input_tokens":10,"output_tokens":4}}}\n' "$answer"
+    printf '{"type":"result","subtype":"success","is_error":false,"result":"%s","total_cost_usd":0.002,"num_turns":1,"session_id":"cc-s1"}\n' "$answer"
+    ;;
+esac
+"#;
 
 /// A fake `cue` binary: records its argv and the body it was given, then
 /// reports success.
