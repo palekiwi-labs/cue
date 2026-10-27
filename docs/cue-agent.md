@@ -354,17 +354,28 @@ for pi's own `~/.pi`.
 
 An agent with `"harness": "claude-code"` runs `claude` headless:
 `-p --output-format stream-json --verbose --permission-mode dontAsk`, with
-the prompt as the positional argument, transported verbatim as for pi.
-Field mapping: `model` to `--model`; `tools` to `--allowedTools`
-(comma-joined; `[]` passes `--tools ""`, disabling all tools); `thinking`
+the prompt as the positional argument after `--`, transported verbatim as
+for pi. Field mapping: `model` to `--model`; `tools` to both `--tools`
+(which tools exist) and `--allowedTools` (which are pre-approved), each
+comma-joined; `[]` passes `--tools ""`, disabling all tools. `dontAsk`
+denies any tool that is not pre-approved, so with `tools` unset claude keeps
+its own tool set and `Read,Edit,Write,Bash` are pre-approved; other tools
+(MCP connectors, web search) are denied unless the operator's claude
+settings allow them. Manifest tool names are claude's (`Read`, `Bash`), not
+pi's. `thinking`
 to `--effort` when the level is one of `low`, `medium`, `high`, `xhigh`,
 `max` and dropped otherwise; the supplementary-instructions file to
 `--append-system-prompt-file`. No session id is passed (claude's requires a
 UUID); the session id from the stream's init event is recorded instead.
-claude-code exits 0 even when the run fails, so the terminal result event's
-`is_error` decides the run's outcome, not the exit status.
+The last `result` event decides the run: its `is_error` sets the outcome
+(claude-code exits 0 even when the run fails), and it supplies the response,
+cost, turns and token totals. A run that starts background sub-agents emits
+one result per resumed segment; tokens and cost are cumulative over the
+process, sub-agents included, while turns are the last segment's. Events of
+sub-agents are ignored. A run killed before any result keeps the main
+agent's last text as its response.
 
-A task whose `pi` cannot be found is not an admission error: it becomes a
+A task whose harness executable cannot be found is not an admission error: it becomes a
 failed run with an `error` explaining why, and the other tasks still run.
 
 The version probe runs the same resolved executable with `--version`, in the

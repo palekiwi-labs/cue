@@ -80,7 +80,8 @@ pub type EnvOverlay = BTreeMap<String, Option<String>>;
 /// one and the same executable, and records which one it was.
 pub fn locate(harness: Harness, env: &EnvOverlay, cwd: &Path) -> Result<PathBuf> {
     let program = harness.program();
-    let path = search_path(env, std::env::var_os("PATH"))?;
+    let path = search_path(env, std::env::var_os("PATH"))
+        .with_context(|| format!("could not find {program}"))?;
     std::env::split_paths(&path)
         .map(|dir| cwd.join(dir).join(program))
         .find(|candidate| is_executable(candidate))
@@ -107,11 +108,8 @@ fn search_path(env: &EnvOverlay, inherited: Option<OsString>) -> Result<OsString
 /// The platform's default executable search path, `confstr(_CS_PATH)`.
 fn default_search_path() -> Result<OsString> {
     use std::os::unix::ffi::OsStringExt;
-    let unavailable = || {
-        anyhow::anyhow!(
-            "could not find a harness: PATH is unset and the platform defines no default search path"
-        )
-    };
+    let unavailable =
+        || anyhow::anyhow!("PATH is unset and the platform defines no default search path");
     // SAFETY: a null buffer with length 0 only asks for the required size,
     // including the terminating NUL; 0 means no value or an error.
     let len = unsafe { libc::confstr(libc::_CS_PATH, std::ptr::null_mut(), 0) };
@@ -283,6 +281,10 @@ fn pi_argv(
 /// Like pi, claude-code streams its events to stdout, so the same file-backed
 /// capture applies. Unlike pi, its `--session-id` demands a UUID, so none is
 /// passed: the session id it emits in the stream is recorded instead.
+/// Tools pre-approved for a claude-code agent whose manifest leaves `tools`
+/// unset.
+const CLAUDE_DEFAULT_ALLOWED_TOOLS: &str = "Read,Edit,Write,Bash";
+
 fn claude_argv(agent: &Agent, prompt: &str, system_prompt_path: Option<&Path>) -> Vec<String> {
     let mut args = vec![
         "-p".to_string(),
@@ -306,24 +308,34 @@ fn claude_argv(agent: &Agent, prompt: &str, system_prompt_path: Option<&Path>) -
         args.push("--effort".to_string());
         args.push(thinking.to_string());
     }
+    // --tools restricts which tools exist; --allowedTools pre-approves them,
+    // which dontAsk otherwise denies. Unset tools keep claude's tool set and
+    // pre-approve the core coding tools, so the agent can edit and run
+    // commands as a pi agent can.
     match agent.tools.as_deref() {
-        None => {}
+        None => {
+            args.push("--allowedTools".to_string());
+            args.push(CLAUDE_DEFAULT_ALLOWED_TOOLS.to_string());
+        }
         Some([]) => {
-            // The documented "disable all tools" form of --tools.
             args.push("--tools".to_string());
             args.push(String::new());
         }
         Some(tools) => {
-            // A single comma-joined value, so the positional prompt is never
-            // swallowed by --tools' variadic form.
+            let tools = tools.join(",");
+            args.push("--tools".to_string());
+            args.push(tools.clone());
             args.push("--allowedTools".to_string());
-            args.push(tools.join(","));
+            args.push(tools);
         }
     }
     if let Some(path) = system_prompt_path {
         args.push("--append-system-prompt-file".to_string());
         args.push(path.to_string_lossy().into_owned());
     }
+    // --tools and --allowedTools are variadic: without the terminator they
+    // swallow the prompt, and a prompt starting with '-' would be an option.
+    args.push("--".to_string());
     args.push(prompt.to_string());
     args
 }
@@ -495,12 +507,10 @@ fn absorb_pi_line(capture: &mut Capture, line: &str) {
                 .get("errorMessage")
                 .and_then(|v| v.as_str())
                 .map(str::to_owned);
-            if matches!(
+            capture.is_error = matches!(
                 capture.stop_reason.as_deref(),
                 Some("error") | Some("aborted")
-            ) {
-                capture.is_error = true;
-            }
+            );
             // pi continues after any message carrying tool calls, whatever its
             // stop reason, unless a tool terminates the run. Which happened is
             // known only from how the run ended, so the text is held apart.
@@ -520,9 +530,13 @@ fn absorb_pi_line(capture: &mut Capture, line: &str) {
     }
 }
 
-/// One claude-code `stream-json` line, in the shapes observed from
-/// claude-code 2.1.306: `system` init, `assistant`/`user` messages carrying
-/// Anthropic-API content blocks, and one terminal `result` event.
+/// One claude-code `stream-json` line (shapes seen from claude-code 2.1.306).
+///
+/// The `result` event is the source of truth: it carries the final text,
+/// failure, cost, turns and token totals. A run that spawns background
+/// sub-agents emits more than one; the last one wins. Assistant events only
+/// feed the live monitor and a fallback response for a run killed before any
+/// result. Events of sub-agents (`parent_tool_use_id` set) are ignored.
 fn absorb_claude_line(capture: &mut Capture, line: &str) {
     if line.trim().is_empty() {
         return;
@@ -531,6 +545,9 @@ fn absorb_claude_line(capture: &mut Capture, line: &str) {
         capture.malformed_lines += 1;
         return;
     };
+    let from_subagent = event
+        .get("parent_tool_use_id")
+        .is_some_and(|id| !id.is_null());
     match event.get("type").and_then(|value| value.as_str()) {
         Some("system") => {
             if event.get("subtype").and_then(|v| v.as_str()) == Some("init") {
@@ -546,29 +563,12 @@ fn absorb_claude_line(capture: &mut Capture, line: &str) {
                 }
             }
         }
-        Some("assistant") => {
+        Some("assistant") if !from_subagent => {
             let Some(message) = event.get("message") else {
                 return;
             };
-            capture.turns += 1;
-            if let Some(usage) = message.get("usage") {
-                capture.tokens_input += number(usage, "input_tokens");
-                capture.tokens_output += number(usage, "output_tokens");
-                capture.cache_read += number(usage, "cache_read_input_tokens");
-                capture.cache_write += number(usage, "cache_creation_input_tokens");
-            }
-            if capture.model.is_none() {
-                capture.model = message
-                    .get("model")
-                    .and_then(|value| value.as_str())
-                    .filter(|model| *model != "<synthetic>")
-                    .map(str::to_string);
-            }
-            capture.stop_reason = message
-                .get("stop_reason")
-                .and_then(|v| v.as_str())
-                .map(str::to_owned);
-            // A synthetic error message carries the failure in its text.
+            // A synthetic error message carries the failure in its text; a
+            // later result event overrides it.
             if event.get("is_api_error_message").and_then(|v| v.as_bool()) == Some(true) {
                 capture.is_error = true;
                 capture.error_message = assistant_text(message).filter(|text| !text.is_empty());
@@ -576,18 +576,11 @@ fn absorb_claude_line(capture: &mut Capture, line: &str) {
             if let Some(call) = last_claude_tool_use(message) {
                 capture.last_tool = Some(call);
             }
-            let text = assistant_text(message).unwrap_or_default();
-            if has_claude_tool_use(message) {
-                capture.response = String::new();
-                capture.tool_call_response = Some(text);
-            } else {
+            if let Some(text) = assistant_text(message).filter(|text| !text.is_empty()) {
                 capture.response = text;
-                capture.tool_call_response = None;
             }
         }
-        Some("user") => {
-            // A tool result resolves its tool call; anything else the user
-            // message carries is not capture's business.
+        Some("user") if !from_subagent => {
             let Some(content) = event
                 .get("message")
                 .and_then(|message| message.get("content"))
@@ -599,54 +592,51 @@ fn absorb_claude_line(capture: &mut Capture, line: &str) {
                 if part.get("type").and_then(|v| v.as_str()) != Some("tool_result") {
                     continue;
                 }
-                if let Some(tool) = &mut capture.last_tool {
-                    let resolved =
-                        match (&tool.id, part.get("tool_use_id").and_then(|v| v.as_str())) {
-                            (Some(id), Some(result)) => id == result,
-                            // A tool_use block without an id resolves to any
-                            // tool_result: there is nothing better to match on.
-                            (None, _) => true,
-                            _ => false,
-                        };
-                    if resolved {
-                        tool.pending = false;
-                    }
+                if let Some(tool) = &mut capture.last_tool
+                    && tool.id.as_deref() == part.get("tool_use_id").and_then(|v| v.as_str())
+                {
+                    tool.pending = false;
                 }
             }
         }
         Some("result") => {
-            // The terminal event is authoritative for turns, cost, the final
-            // text and, critically, failure: claude-code exits 0 even when
-            // the run failed, so is_error must be honoured over the exit
-            // status.
-            if let Some(turns) = event.get("num_turns").and_then(|v| v.as_u64()) {
-                capture.turns = turns;
-            }
-            capture.cost_usd = event
-                .get("total_cost_usd")
-                .and_then(|v| v.as_f64())
-                .unwrap_or(capture.cost_usd);
-            let is_error = event.get("is_error").and_then(|v| v.as_bool()) == Some(true);
-            let result_text = event
+            // claude-code exits 0 even when the run failed, so is_error must
+            // be honoured over the exit status.
+            capture.is_error = event.get("is_error").and_then(|v| v.as_bool()) == Some(true);
+            let text = event
                 .get("result")
                 .and_then(|v| v.as_str())
                 .map(str::to_string);
-            if is_error {
-                capture.is_error = true;
-                if capture.error_message.is_none() {
-                    capture.error_message = result_text.clone().or_else(|| {
-                        event
-                            .get("terminal_reason")
-                            .and_then(|v| v.as_str())
-                            .map(str::to_string)
-                    });
-                }
+            if capture.is_error {
+                capture.error_message = text.or_else(|| {
+                    event
+                        .get("terminal_reason")
+                        .and_then(|v| v.as_str())
+                        .map(str::to_string)
+                });
                 capture.response = String::new();
-                capture.tool_call_response = None;
-            } else if let Some(text) = result_text {
-                capture.response = text;
-                capture.tool_call_response = None;
+            } else {
+                capture.error_message = None;
+                capture.response = text.unwrap_or_default();
             }
+            capture.tool_call_response = None;
+            capture.stop_reason = event
+                .get("stop_reason")
+                .and_then(|v| v.as_str())
+                .map(str::to_owned);
+            capture.turns = event.get("num_turns").and_then(|v| v.as_u64()).unwrap_or(0);
+            capture.cost_usd = event
+                .get("total_cost_usd")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
+            // modelUsage is cumulative over the whole process, sub-agents
+            // included, and keyed by model.
+            let models = event.get("modelUsage").and_then(|v| v.as_object());
+            let total = |key: &str| models.map_or(0, |m| m.values().map(|u| number(u, key)).sum());
+            capture.tokens_input = total("inputTokens");
+            capture.tokens_output = total("outputTokens");
+            capture.cache_read = total("cacheReadInputTokens");
+            capture.cache_write = total("cacheCreationInputTokens");
         }
         _ => {}
     }
@@ -670,17 +660,6 @@ fn last_claude_tool_use(message: &serde_json::Value) -> Option<ToolCall> {
             .unwrap_or_default(),
         pending: true,
     })
-}
-
-fn has_claude_tool_use(message: &serde_json::Value) -> bool {
-    message
-        .get("content")
-        .and_then(|content| content.as_array())
-        .is_some_and(|parts| {
-            parts
-                .iter()
-                .any(|part| part.get("type").and_then(|v| v.as_str()) == Some("tool_use"))
-        })
 }
 
 /// All text parts of an assistant message, in order, without added separators.
@@ -831,6 +810,7 @@ mod tests {
         assert_eq!(result.turns, 2);
         assert_eq!(result.stop_reason, None);
         assert_eq!(result.error_message, None);
+        assert!(!result.is_error, "a later success clears an earlier error");
         use std::io::Write;
         writeln!(
             std::fs::OpenOptions::new()
@@ -1173,7 +1153,7 @@ mod tests {
             Harness::ClaudeCode,
             "run-1",
             &claude_agent(),
-            "Find the bug",
+            "-find the bug",
             Some(Path::new("/tmp/sp.md")),
         );
         assert_eq!(
@@ -1189,11 +1169,14 @@ mod tests {
                 "claude-haiku-5-5",
                 "--effort",
                 "high",
+                "--tools",
+                "Read,Bash",
                 "--allowedTools",
                 "Read,Bash",
                 "--append-system-prompt-file",
                 "/tmp/sp.md",
-                "Find the bug",
+                "--",
+                "-find the bug",
             ]
         );
     }
@@ -1204,117 +1187,81 @@ mod tests {
         agent.tools = Some(Vec::new());
         agent.thinking = Some("off".into());
         assert_eq!(
-            argv(Harness::ClaudeCode, "r", &agent, "hi", None),
-            vec![
-                "-p",
-                "--output-format",
-                "stream-json",
-                "--verbose",
-                "--permission-mode",
-                "dontAsk",
-                "--model",
-                "claude-haiku-5-5",
-                // "off" has no effort counterpart: dropped, not rejected.
-                "--tools",
-                "",
-                "hi"
-            ]
+            &argv(Harness::ClaudeCode, "r", &agent, "hi", None)[6..],
+            // "off" has no effort counterpart: dropped, not rejected.
+            ["--model", "claude-haiku-5-5", "--tools", "", "--", "hi"]
         );
         agent.thinking = None;
         agent.tools = None;
         agent.model = None;
         assert_eq!(
             &argv(Harness::ClaudeCode, "r", &agent, "hi", None)[6..],
-            ["hi"]
+            ["--allowedTools", "Read,Edit,Write,Bash", "--", "hi"]
         );
     }
 
-    /// claude-code stream lines, in the shapes observed from 2.1.306.
-    fn claude_lines(lines: &[&str]) -> String {
-        lines.join("\n") + "\n"
-    }
-
-    #[test]
-    fn claude_capture_reads_init_assistant_and_result() {
+    fn claude_capture(lines: &[&str]) -> Capture {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("events.jsonl");
-        std::fs::write(
-            &path,
-            claude_lines(&[
-                r#"{"type":"system","subtype":"init","session_id":"u-1","model":"claude-haiku-5-5"}"#,
-                r#"{"type":"assistant","message":{"id":"m1","model":"claude-haiku-5-5","role":"assistant","stop_reason":"tool_use","content":[{"type":"text","text":"Let me look."},{"type":"tool_use","id":"t1","name":"Bash","input":{"command":"ls"}}],"usage":{"input_tokens":10,"output_tokens":4,"cache_read_input_tokens":2,"cache_creation_input_tokens":1}}}"#,
-                r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#,
-                r#"{"type":"assistant","message":{"id":"m2","model":"claude-haiku-5-5","role":"assistant","stop_reason":"end_turn","content":[{"type":"text","text":"first\n"},{"type":"text","text":"last"}],"usage":{"input_tokens":20,"output_tokens":6}}}"#,
-                r#"{"type":"result","subtype":"success","is_error":false,"result":"first\nlast","total_cost_usd":0.0015,"num_turns":2,"session_id":"u-1"}"#,
-            ]),
-        )
-        .unwrap();
-        let capture = capture(Harness::ClaudeCode, &path);
-        assert_eq!(capture.session_id.as_deref(), Some("u-1"));
+        std::fs::write(&path, lines.join("\n") + "\n").unwrap();
+        capture(Harness::ClaudeCode, &path)
+    }
+
+    /// A recorded claude-code 2.1.306 run (trimmed to the fields capture
+    /// reads): the main agent starts a background sub-agent, ends a first
+    /// segment, and is resumed when the sub-agent finishes. Each segment ends
+    /// in its own result event.
+    const CLAUDE_BACKGROUND_SUBAGENT: &[&str] = &[
+        r#"{"type":"system","subtype":"init","session_id":"a5fb","model":"claude-haiku-5-5"}"#,
+        r#"{"type":"assistant","parent_tool_use_id":null,"message":{"id":"m1","model":"claude-haiku-5-5","content":[{"type":"tool_use","id":"toolu_main","name":"Agent","input":{"subagent_type":"general-purpose"}}]}}"#,
+        r#"{"type":"user","parent_tool_use_id":null,"message":{"content":[{"type":"tool_result","tool_use_id":"toolu_main"}]}}"#,
+        r#"{"type":"assistant","parent_tool_use_id":"toolu_main","message":{"id":"s1","model":"claude-haiku-5-5","content":[{"type":"tool_use","id":"toolu_sub","name":"Bash","input":{"command":"cat probe.txt"}}]}}"#,
+        r#"{"type":"user","parent_tool_use_id":"toolu_main","message":{"content":[{"type":"tool_result","tool_use_id":"toolu_sub"}]}}"#,
+        r#"{"type":"assistant","parent_tool_use_id":null,"message":{"id":"m2","model":"claude-haiku-5-5","content":[{"type":"thinking","thinking":""}]}}"#,
+        r#"{"type":"assistant","parent_tool_use_id":null,"message":{"id":"m2","model":"claude-haiku-5-5","content":[{"type":"text","text":"The sub-agent is still running."}]}}"#,
+        r#"{"type":"assistant","parent_tool_use_id":"toolu_main","message":{"id":"s2","model":"claude-haiku-5-5","content":[{"type":"text","text":"SUBAGENT-SAYS hello"}]}}"#,
+        r#"{"type":"system","subtype":"init","session_id":"a5fb","model":"claude-haiku-5-5"}"#,
+        r#"{"type":"assistant","parent_tool_use_id":null,"message":{"id":"m3","model":"claude-haiku-5-5","content":[{"type":"text","text":"It said: SUBAGENT-SAYS hello"}]}}"#,
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"The sub-agent is still running.","stop_reason":"end_turn","num_turns":2,"total_cost_usd":0.004930325,"result_index":0,"modelUsage":{"claude-haiku-5-5":{"inputTokens":12,"outputTokens":547,"cacheReadInputTokens":71400,"cacheCreationInputTokens":25467}}}"#,
+        r#"{"type":"result","subtype":"success","is_error":false,"result":"It said: SUBAGENT-SAYS hello","stop_reason":"end_turn","num_turns":1,"total_cost_usd":0.004930325,"result_index":1,"modelUsage":{"claude-haiku-5-5":{"inputTokens":12,"outputTokens":547,"cacheReadInputTokens":71400,"cacheCreationInputTokens":25467}}}"#,
+    ];
+
+    #[test]
+    fn the_last_claude_result_event_decides_the_run() {
+        let capture = claude_capture(CLAUDE_BACKGROUND_SUBAGENT);
+        assert_eq!(capture.session_id.as_deref(), Some("a5fb"));
         assert_eq!(capture.model.as_deref(), Some("claude-haiku-5-5"));
-        assert_eq!(capture.turns, 2, "num_turns from the result event");
-        assert_eq!(capture.tokens_input, 30);
-        assert_eq!(capture.tokens_output, 10);
-        assert_eq!(capture.cache_read, 2);
-        assert_eq!(capture.cache_write, 1);
-        assert_eq!(capture.cost_usd, 0.0015);
-        assert_eq!(capture.response, "first\nlast");
+        assert_eq!(capture.final_response(true), "It said: SUBAGENT-SAYS hello");
         assert!(!capture.is_error);
-        let tool = capture.last_tool.as_ref().unwrap();
-        assert_eq!(tool.name, "Bash");
-        assert!(!tool.pending, "the tool_result resolved it");
-        assert_eq!(tool.arguments, r#"{"command":"ls"}"#);
+        assert_eq!(capture.cost_usd, 0.004930325, "cumulative, not summed");
+        // modelUsage is cumulative, sub-agents included.
+        assert_eq!(capture.tokens_input, 12);
+        assert_eq!(capture.tokens_output, 547);
+        assert_eq!(capture.cache_read, 71400);
+        assert_eq!(capture.cache_write, 25467);
+        let tool = capture.last_tool.unwrap();
+        assert_eq!(tool.name, "Agent", "the sub-agent's Bash call is not ours");
+        assert!(!tool.pending);
     }
 
     #[test]
-    fn a_claude_tool_use_preamble_is_final_only_for_a_completed_run() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("events.jsonl");
-        std::fs::write(
-            &path,
-            claude_lines(&[
-                r#"{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]},"usage":{}}"#,
-                r#"{"type":"user","message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1","content":"ok"}]}}"#,
-            ]),
-        )
-        .unwrap();
-        let ended = capture(Harness::ClaudeCode, &path);
-        assert_eq!(ended.response, "");
-        assert_eq!(ended.final_response(false), "");
-        assert_eq!(ended.final_response(true), "");
-        assert!(
-            !ended.last_tool.unwrap().pending,
-            "the tool_result resolved it"
+    fn a_claude_run_without_result_falls_back_to_the_main_agents_text() {
+        // Killed after the sub-agent spoke but before any result event.
+        let capture = claude_capture(&CLAUDE_BACKGROUND_SUBAGENT[..8]);
+        assert_eq!(
+            capture.final_response(false),
+            "The sub-agent is still running."
         );
-
-        // A terminal answer after the tool turn replaces the preamble.
-        std::fs::write(
-            &path,
-            claude_lines(&[
-                r#"{"type":"assistant","message":{"role":"assistant","stop_reason":"tool_use","content":[{"type":"tool_use","id":"t1","name":"Bash","input":{}}]},"usage":{}}"#,
-                r#"{"type":"result","subtype":"success","is_error":false,"result":"all done","total_cost_usd":0.1,"num_turns":1}"#,
-            ]),
-        )
-        .unwrap();
-        let finished = capture(Harness::ClaudeCode, &path);
-        assert_eq!(finished.final_response(false), "all done");
-        assert_eq!(finished.final_response(true), "all done");
+        assert_eq!(capture.tokens_output, 0);
     }
 
     #[test]
     fn a_claude_result_event_makes_an_exit_zero_run_failed() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("events.jsonl");
-        std::fs::write(
-            &path,
-            claude_lines(&[
-                r#"{"type":"system","subtype":"init","session_id":"u-2","model":"claude-haiku-5-5"}"#,
-                r#"{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","content":[{"type":"text","text":"Failed to authenticate: OAuth session expired"}],"usage":{}},"is_api_error_message":true}"#,
-                r#"{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","result":"Failed to authenticate: OAuth session expired","total_cost_usd":0,"num_turns":1}"#,
-            ]),
-        )
-        .unwrap();
-        let capture = capture(Harness::ClaudeCode, &path);
+        let capture = claude_capture(&[
+            r#"{"type":"system","subtype":"init","session_id":"u-2","model":"claude-haiku-5-5"}"#,
+            r#"{"type":"assistant","message":{"model":"<synthetic>","role":"assistant","stop_reason":"stop_sequence","content":[{"type":"text","text":"Failed to authenticate: OAuth session expired"}],"usage":{}},"is_api_error_message":true}"#,
+            r#"{"type":"result","subtype":"success","is_error":true,"terminal_reason":"api_error","result":"Failed to authenticate: OAuth session expired","total_cost_usd":0,"num_turns":1}"#,
+        ]);
         assert!(
             capture.is_error,
             "the result event decides, not exit status"
@@ -1324,24 +1271,27 @@ mod tests {
             capture.error_message.as_deref(),
             Some("Failed to authenticate: OAuth session expired")
         );
-        // A synthetic model is not a model.
         assert_eq!(capture.model.as_deref(), Some("claude-haiku-5-5"));
     }
 
     #[test]
+    fn a_successful_claude_result_clears_an_earlier_error() {
+        let capture = claude_capture(&[
+            r#"{"type":"assistant","message":{"model":"<synthetic>","content":[{"type":"text","text":"Overloaded"}]},"is_api_error_message":true}"#,
+            r#"{"type":"result","subtype":"success","is_error":false,"result":"done","num_turns":2}"#,
+        ]);
+        assert!(!capture.is_error);
+        assert_eq!(capture.error_message, None);
+        assert_eq!(capture.response, "done");
+    }
+
+    #[test]
     fn claude_capture_skips_malformed_and_unknown_lines() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = dir.path().join("events.jsonl");
-        std::fs::write(
-            &path,
-            claude_lines(&[
-                "not json",
-                r#"{"type":"stream_event","event":{}}"#,
-                r#"{"type":"result","subtype":"success","is_error":false,"result":"ok","num_turns":1}"#,
-            ]),
-        )
-        .unwrap();
-        let capture = capture(Harness::ClaudeCode, &path);
+        let capture = claude_capture(&[
+            "not json",
+            r#"{"type":"stream_event","event":{}}"#,
+            r#"{"type":"result","subtype":"success","is_error":false,"result":"ok","num_turns":1}"#,
+        ]);
         assert_eq!(capture.malformed_lines, 1);
         assert_eq!(capture.response, "ok");
     }
