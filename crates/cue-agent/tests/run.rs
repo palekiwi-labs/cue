@@ -395,12 +395,13 @@ fn tools_select_pi_defaults_none_or_an_explicit_list() {
 
 #[test]
 fn an_isolated_agent_reaches_pi_with_every_isolation_flag() {
-    const FLAGS: [&str; 5] = [
+    const FLAGS: [&str; 6] = [
         "--no-extensions",
         "--no-skills",
         "--no-context-files",
         "--no-prompt-templates",
         "--no-mcp",
+        "--no-approve",
     ];
     let sandbox = Sandbox::new();
     sandbox.global_manifest(r#"{"agents":{"plain":{},"iso":{"isolated":true}}}"#);

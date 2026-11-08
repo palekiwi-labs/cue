@@ -101,9 +101,30 @@ Agent fields, all optional except the agent's own key:
   comma-separated `--tools` selection.
 - `isolated` — boolean, default `false`. When `true`, Pi runs with
   `--no-extensions --no-skills --no-context-files --no-prompt-templates
-  --no-mcp`, so only Pi's base prompt, the agent's `system_prompt` and its
-  `tools` shape the run. Pi only: `true` on a `claude-code` agent is
+  --no-mcp --no-approve`. Pi only: `true` on a `claude-code` agent is
   rejected. Manifest-only; tasks cannot override it.
+
+Isolation disables extension-provided tools, including `cue-*`, `delegate`,
+`codemode`, and `tool_search`, even if named in `tools`. Use only Pi's core
+built-in tools for an isolated agent: `read`, `bash`, `powershell` (Windows),
+`edit`, `write`, `grep`, `find`, and `ls`. Tool names are passed through to Pi,
+not validated against a hardcoded list by `cue-agent`.
+
+With Pi 1.3.0, `--no-approve` ignores trust-gated project configuration and
+resources even for an already trusted project, including `.pi/SYSTEM.md`,
+`.pi/APPEND_SYSTEM.md`, and project settings such as model and tool defaults.
+User-level settings, model configuration, and authentication remain available.
+The initial project `sessionDir` lookup happens before trust is resolved;
+`cue-agent` still passes `--no-session`.
+
+This is resource isolation, not a sandbox or a guarantee of a manifest-only
+prompt. `--no-context-files` disables `AGENTS.md` and `CLAUDE.md` discovery,
+not system-prompt files. User-level `SYSTEM.md` may still replace Pi's base
+prompt, and user-level `APPEND_SYSTEM.md` may still add instructions when no
+agent `system_prompt` is supplied. In Pi 1.3.0, the CLI append prompt takes
+precedence over `APPEND_SYSTEM.md`. The agent's `system_prompt` remains
+append-only; `cue-agent` does not replace the base prompt or reset Pi's agent
+directory.
 
 Agents carry no `model` or `thinking` field: the selected profile supplies
 both, so a model and its thinking level always travel together.

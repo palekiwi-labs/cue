@@ -84,8 +84,9 @@ pub struct Agent {
     pub system_prompt: String,
     /// `None` leaves the harness defaults alone; `Some(vec![])` means no tools.
     pub tools: Option<Vec<String>>,
-    /// Run without extensions, skills, context files, prompt templates or MCP,
-    /// so only the manifest's own prompt and tools shape the agent. pi only.
+    /// Disable extensions (and their tools), skills, context files, prompt
+    /// templates, MCP and trust-gated project resources. User-level settings
+    /// and system-prompt files may still apply. Pi only.
     pub isolated: bool,
     /// Effective thinking level: the selected profile's, unless a task
     /// overrides it.
@@ -845,7 +846,7 @@ mod tests {
     }
 
     #[test]
-    fn isolated_must_be_a_boolean_on_a_pi_agent() {
+    fn isolated_must_be_a_boolean_and_pi_only_when_true() {
         let (_dir, manifest) = layers("{}", r#"{"agents": {"a": {"isolated": "yes"}}}"#);
         assert!(format!("{:#}", manifest.unwrap_err()).contains("expected a boolean"));
         let (_dir, manifest) = layers(

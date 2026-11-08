@@ -236,12 +236,13 @@ pub fn argv(
     }
 }
 
-const PI_ISOLATION_FLAGS: [&str; 5] = [
+const PI_ISOLATION_FLAGS: [&str; 6] = [
     "--no-extensions",
     "--no-skills",
     "--no-context-files",
     "--no-prompt-templates",
     "--no-mcp",
+    "--no-approve",
 ];
 
 fn pi_argv(
@@ -994,7 +995,7 @@ mod tests {
     }
 
     #[test]
-    fn an_isolated_agent_loads_nothing_beyond_its_manifest() {
+    fn an_isolated_agent_passes_resource_and_project_trust_flags() {
         let mut agent = agent();
         agent.model = None;
         agent.tools = None;
@@ -1008,6 +1009,7 @@ mod tests {
                 "--no-context-files",
                 "--no-prompt-templates",
                 "--no-mcp",
+                "--no-approve",
                 "hello"
             ]
         );
