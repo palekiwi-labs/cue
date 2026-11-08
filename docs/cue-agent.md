@@ -86,6 +86,9 @@ The root accepts only `timeout`, `worktree_root`, `models`, and `agents`:
 Agent fields, all optional except the agent's own key:
 
 - `description` — what the agent is for; this is what a calling model reads.
+- `harness` — the harness this agent runs in: `pi` (the default when
+  omitted) or `claude-code`. There is no task-level or CLI harness override.
+  Agents with different harnesses can share one batch.
 - `models` — ordered, nonempty, duplicate-free allowlist of registry
   aliases; the first entry is the default model. Every alias must exist in
   the merged registry. Omit it (or clear it with `null`) to run on the harness
@@ -326,9 +329,13 @@ an environment value can still expose it in captured output or metadata.
 
 ### Finding the harness
 
-The harness is always `pi`, found by normal executable lookup on each task's
+Each agent's harness (`pi` by default, `claude-code` when its manifest entry
+says so) is found by normal executable lookup on each task's
 effective environment and working directory. There is no override flag or
-variable.
+variable. The task API stays pi-shaped; claude-code is a translation target
+(see below), never a second API. Harness setup — authentication,
+configuration, skills — is the operator's responsibility, exactly as it is
+for pi's own `~/.pi`.
 
 - The effective `PATH` is the inherited value unless the task's overlay sets
   or removes it.
@@ -343,7 +350,32 @@ variable.
   The child still runs without `PATH`; if the platform defines no default,
   lookup fails for that task.
 
-A task whose `pi` cannot be found is not an admission error: it becomes a
+### claude-code translation
+
+An agent with `"harness": "claude-code"` runs `claude` headless:
+`-p --output-format stream-json --verbose --permission-mode dontAsk`, with
+the prompt as the positional argument after `--`, transported verbatim as
+for pi. Field mapping: `model` to `--model`; `tools` to both `--tools`
+(which tools exist) and `--allowedTools` (which are pre-approved), each
+comma-joined; `[]` passes `--tools ""`, disabling all tools. `dontAsk`
+denies any tool that is not pre-approved, so with `tools` unset claude keeps
+its own tool set and `Read,Edit,Write,Bash` are pre-approved; other tools
+(MCP connectors, web search) are denied unless the operator's claude
+settings allow them. Manifest tool names are claude's (`Read`, `Bash`), not
+pi's. `thinking`
+to `--effort` when the level is one of `low`, `medium`, `high`, `xhigh`,
+`max` and dropped otherwise; the supplementary-instructions file to
+`--append-system-prompt-file`. No session id is passed (claude's requires a
+UUID); the session id from the stream's init event is recorded instead.
+The last `result` event decides the run: its `is_error` sets the outcome
+(claude-code exits 0 even when the run fails), and it supplies the response,
+cost, turns and token totals. A run that starts background sub-agents emits
+one result per resumed segment; tokens and cost are cumulative over the
+process, sub-agents included, while turns are the last segment's. Events of
+sub-agents are ignored. A run killed before any result keeps the main
+agent's last text as its response.
+
+A task whose harness executable cannot be found is not an admission error: it becomes a
 failed run with an `error` explaining why, and the other tasks still run.
 
 The version probe runs the same resolved executable with `--version`, in the

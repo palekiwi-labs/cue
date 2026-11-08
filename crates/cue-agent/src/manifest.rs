@@ -27,7 +27,7 @@ pub const PROJECT_MANIFEST: &str = "cue-agent.json";
 const GLOBAL_MANIFEST: &str = "cue/cue-agent.json";
 
 const ROOT_FIELDS: [&str; 4] = ["timeout", "worktree_root", "models", "agents"];
-const AGENT_FIELDS: [&str; 4] = ["description", "models", "system_prompt", "tools"];
+const AGENT_FIELDS: [&str; 5] = ["description", "harness", "models", "system_prompt", "tools"];
 const PROFILE_FIELDS: [&str; 3] = ["id", "thinking", "provider"];
 
 /// One entry of the model alias registry.
@@ -63,6 +63,8 @@ impl Source {
 pub struct Agent {
     pub name: String,
     pub description: Option<String>,
+    /// The harness this agent runs in; pi unless the manifest says otherwise.
+    pub harness: crate::harness::Harness,
     /// Ordered allowlist of registry aliases; the first is the default.
     /// `None` runs on the harness default model and refuses task overrides.
     pub models: Option<Vec<String>>,
@@ -209,6 +211,7 @@ struct AgentLayer {
     models: Patch<Vec<String>>,
     system_prompt: Patch<StringSource>,
     tools: Patch<Vec<StringSource>>,
+    harness: Patch<StringSource>,
 }
 
 /// A merged field: its unread value and the layer that set it.
@@ -220,6 +223,7 @@ struct MergedAgent {
     models: Slot<Vec<String>>,
     system_prompt: Slot<StringSource>,
     tools: Slot<Vec<StringSource>>,
+    harness: Slot<StringSource>,
     source: Source,
 }
 
@@ -272,6 +276,7 @@ pub(crate) fn load_from(
                 models: None,
                 system_prompt: None,
                 tools: None,
+                harness: None,
                 source,
             });
             agent.source = source;
@@ -279,6 +284,7 @@ pub(crate) fn load_from(
             apply(&mut agent.models, patch.models, source);
             apply(&mut agent.system_prompt, patch.system_prompt, source);
             apply(&mut agent.tools, patch.tools, source);
+            apply(&mut agent.harness, patch.harness, source);
         }
     }
 
@@ -329,6 +335,12 @@ fn resolve_agent(
         value.resolve().context(field).map(Some)
     };
     let description = text("description", merged.description)?;
+    let harness = match text("harness", merged.harness)? {
+        Some(name) => {
+            crate::harness::Harness::parse(&name).with_context(|| format!("harness: '{name}'"))?
+        }
+        None => crate::harness::Harness::Pi,
+    };
     let system_prompt = text("system_prompt", merged.system_prompt)?.unwrap_or_default();
     let models = match merged.models {
         None => None,
@@ -361,6 +373,7 @@ fn resolve_agent(
     Ok(Agent {
         name: name.to_string(),
         description,
+        harness,
         model: profile.map(|p| p.id.clone()),
         model_alias: default.cloned(),
         models,
@@ -459,6 +472,7 @@ fn parse_agent(value: &Value, base: &Path, path: &str) -> Result<AgentLayer> {
     };
     agent.description = string("description")?;
     agent.system_prompt = string("system_prompt")?;
+    agent.harness = string("harness")?;
     agent.models = match fields.get("models") {
         None => Patch::Absent,
         Some(Value::Null) => Patch::Clear,

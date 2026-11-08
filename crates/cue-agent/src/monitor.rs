@@ -283,6 +283,7 @@ impl Batch {
             "position": run["position"],
             "label": run["label"],
             "context": run["context"],
+            "harness": run["harness"],
             "phase": phase,
             "run_path": path,
             "harness_pgid": pgid,
@@ -307,7 +308,11 @@ impl Batch {
             report["elapsed_secs"] = json!(elapsed(launched_at));
         }
         if events.exists() {
-            let observed = harness::capture(&events);
+            let harness = run["harness"]
+                .as_str()
+                .and_then(crate::harness::Harness::try_name)
+                .unwrap_or(crate::harness::Harness::Pi);
+            let observed = harness::capture(harness, &events);
             report["idle_secs"] = json!(elapsed(modified(&events)));
             report["turns"] = json!(observed.turns);
             report["tokens_input"] = json!(observed.tokens_input);

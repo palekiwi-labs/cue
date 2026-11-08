@@ -121,6 +121,7 @@ fn list_agents(json: bool) -> Result<()> {
                 serde_json::json!({
                     "name": agent.name,
                     "description": agent.description,
+                    "harness": agent.harness.as_str(),
                     "models": agent.models,
                     "default_model": agent.model_alias,
                     "model": agent.model,
