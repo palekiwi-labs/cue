@@ -27,7 +27,14 @@ pub const PROJECT_MANIFEST: &str = "cue-agent.json";
 const GLOBAL_MANIFEST: &str = "cue/cue-agent.json";
 
 const ROOT_FIELDS: [&str; 4] = ["timeout", "worktree_root", "models", "agents"];
-const AGENT_FIELDS: [&str; 5] = ["description", "harness", "models", "system_prompt", "tools"];
+const AGENT_FIELDS: [&str; 6] = [
+    "description",
+    "harness",
+    "isolated",
+    "models",
+    "system_prompt",
+    "tools",
+];
 const PROFILE_FIELDS: [&str; 3] = ["id", "thinking", "provider"];
 
 /// One entry of the model alias registry.
@@ -77,6 +84,10 @@ pub struct Agent {
     pub system_prompt: String,
     /// `None` leaves the harness defaults alone; `Some(vec![])` means no tools.
     pub tools: Option<Vec<String>>,
+    /// Disable extensions (and their tools), skills, context files, prompt
+    /// templates, MCP and trust-gated project resources. User-level settings
+    /// and system-prompt files may still apply. Pi only.
+    pub isolated: bool,
     /// Effective thinking level: the selected profile's, unless a task
     /// overrides it.
     pub thinking: Option<String>,
@@ -212,6 +223,7 @@ struct AgentLayer {
     system_prompt: Patch<StringSource>,
     tools: Patch<Vec<StringSource>>,
     harness: Patch<StringSource>,
+    isolated: Patch<bool>,
 }
 
 /// A merged field: its unread value and the layer that set it.
@@ -224,6 +236,7 @@ struct MergedAgent {
     system_prompt: Slot<StringSource>,
     tools: Slot<Vec<StringSource>>,
     harness: Slot<StringSource>,
+    isolated: Slot<bool>,
     source: Source,
 }
 
@@ -277,6 +290,7 @@ pub(crate) fn load_from(
                 system_prompt: None,
                 tools: None,
                 harness: None,
+                isolated: None,
                 source,
             });
             agent.source = source;
@@ -285,6 +299,7 @@ pub(crate) fn load_from(
             apply(&mut agent.system_prompt, patch.system_prompt, source);
             apply(&mut agent.tools, patch.tools, source);
             apply(&mut agent.harness, patch.harness, source);
+            apply(&mut agent.isolated, patch.isolated, source);
         }
     }
 
@@ -342,6 +357,19 @@ fn resolve_agent(
         None => crate::harness::Harness::Pi,
     };
     let system_prompt = text("system_prompt", merged.system_prompt)?.unwrap_or_default();
+    let isolated = match merged.isolated {
+        None => false,
+        Some((value, source)) => {
+            field_sources.insert("isolated", source);
+            value
+        }
+    };
+    if isolated && harness != crate::harness::Harness::Pi {
+        bail!(
+            "isolated: only the pi harness supports isolated agents, not '{}'",
+            harness.as_str()
+        );
+    }
     let models = match merged.models {
         None => None,
         Some((aliases, source)) => {
@@ -379,6 +407,7 @@ fn resolve_agent(
         models,
         system_prompt,
         tools,
+        isolated,
         thinking: profile.and_then(|p| p.thinking.clone()),
         source: merged.source,
         field_sources,
@@ -473,6 +502,12 @@ fn parse_agent(value: &Value, base: &Path, path: &str) -> Result<AgentLayer> {
     agent.description = string("description")?;
     agent.system_prompt = string("system_prompt")?;
     agent.harness = string("harness")?;
+    agent.isolated = match fields.get("isolated") {
+        None => Patch::Absent,
+        Some(Value::Null) => Patch::Clear,
+        Some(Value::Bool(value)) => Patch::Set(*value),
+        Some(other) => bail!("{path}.isolated: expected a boolean, found {}", kind(other)),
+    };
     agent.models = match fields.get("models") {
         None => Patch::Absent,
         Some(Value::Null) => Patch::Clear,
@@ -788,5 +823,41 @@ mod tests {
             r#"{"models": {"x": null}}"#,
         );
         assert!(format!("{:#}", manifest.unwrap_err()).contains("unknown model alias 'x'"));
+    }
+
+    #[test]
+    fn isolated_defaults_off_and_merges_across_layers() {
+        let (_dir, manifest) = layers(
+            r#"{"agents": {"on": {"isolated": true}, "off": {"isolated": true},
+                           "cleared": {"isolated": true}, "bare": {}}}"#,
+            r#"{"agents": {"off": {"isolated": false}, "cleared": {"isolated": null}}}"#,
+        );
+        let manifest = manifest.unwrap();
+        let on = manifest.get("on").unwrap();
+        assert!(on.isolated);
+        assert_eq!(on.field_sources.get("isolated"), Some(&Source::User));
+        let off = manifest.get("off").unwrap();
+        assert!(!off.isolated);
+        assert_eq!(off.field_sources.get("isolated"), Some(&Source::Project));
+        let cleared = manifest.get("cleared").unwrap();
+        assert!(!cleared.isolated);
+        assert_eq!(cleared.field_sources.get("isolated"), None);
+        assert!(!manifest.get("bare").unwrap().isolated);
+    }
+
+    #[test]
+    fn isolated_must_be_a_boolean_and_pi_only_when_true() {
+        let (_dir, manifest) = layers("{}", r#"{"agents": {"a": {"isolated": "yes"}}}"#);
+        assert!(format!("{:#}", manifest.unwrap_err()).contains("expected a boolean"));
+        let (_dir, manifest) = layers(
+            "{}",
+            r#"{"agents": {"a": {"harness": "claude-code", "isolated": true}}}"#,
+        );
+        assert!(format!("{:#}", manifest.unwrap_err()).contains("only the pi harness"));
+        let (_dir, manifest) = layers(
+            "{}",
+            r#"{"agents": {"a": {"harness": "claude-code", "isolated": false}}}"#,
+        );
+        assert!(manifest.is_ok());
     }
 }

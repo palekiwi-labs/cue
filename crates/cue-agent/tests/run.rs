@@ -394,6 +394,37 @@ fn tools_select_pi_defaults_none_or_an_explicit_list() {
 }
 
 #[test]
+fn an_isolated_agent_reaches_pi_with_every_isolation_flag() {
+    const FLAGS: [&str; 6] = [
+        "--no-extensions",
+        "--no-skills",
+        "--no-context-files",
+        "--no-prompt-templates",
+        "--no-mcp",
+        "--no-approve",
+    ];
+    let sandbox = Sandbox::new();
+    sandbox.global_manifest(r#"{"agents":{"plain":{},"iso":{"isolated":true}}}"#);
+    for (agent, isolated) in [("iso", true), ("plain", false)] {
+        let output = sandbox.run_json(&spec(&[(agent, "hello")]));
+        assert!(output.status.success(), "{output:?}");
+        let receipt = receipt(&output.stdout);
+        let run_id = run_of(&receipt, agent)["run_id"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        let argv = sandbox.recorded_argv(&run_id);
+        for flag in FLAGS {
+            assert_eq!(
+                argv.iter().any(|arg| arg == flag),
+                isolated,
+                "{agent}: {argv:?}"
+            );
+        }
+    }
+}
+
+#[test]
 fn a_file_sourced_system_prompt_is_appended_verbatim() {
     assert_appended_prompt("# Role\n\nSay \"hi\" \\ and {\"file\": \"x.md\"}\n\n");
 }

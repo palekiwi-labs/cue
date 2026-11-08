@@ -127,6 +127,7 @@ fn list_agents(json: bool) -> Result<()> {
                     "model": agent.model,
                     "system_prompt": agent.system_prompt,
                     "tools": agent.tools,
+                    "isolated": agent.isolated,
                     "thinking": agent.thinking,
                     "source": agent.source.as_str(),
                     "field_sources": agent
