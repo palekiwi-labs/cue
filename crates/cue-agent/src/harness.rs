@@ -236,6 +236,14 @@ pub fn argv(
     }
 }
 
+const PI_ISOLATION_FLAGS: [&str; 5] = [
+    "--no-extensions",
+    "--no-skills",
+    "--no-context-files",
+    "--no-prompt-templates",
+    "--no-mcp",
+];
+
 fn pi_argv(
     run_id: &str,
     agent: &Agent,
@@ -250,6 +258,9 @@ fn pi_argv(
         "--session-id".to_string(),
         run_id.to_string(),
     ];
+    if agent.isolated {
+        args.extend(PI_ISOLATION_FLAGS.iter().map(|flag| flag.to_string()));
+    }
     if let Some(model) = &agent.model {
         args.push("--model".to_string());
         args.push(model.clone());
@@ -917,6 +928,7 @@ mod tests {
             model: Some("anthropic/haiku".into()),
             system_prompt: "You explore.".into(),
             tools: Some(vec!["read".into(), "bash".into()]),
+            isolated: false,
             thinking: None,
             source: Source::User,
             field_sources: Default::default(),
@@ -979,6 +991,26 @@ mod tests {
         agent.tools = Some(Vec::new());
         let args = argv(Harness::Pi, "run-1", &agent, "hello", None);
         assert_eq!(&args[6..], ["--no-tools", "hello"]);
+    }
+
+    #[test]
+    fn an_isolated_agent_loads_nothing_beyond_its_manifest() {
+        let mut agent = agent();
+        agent.model = None;
+        agent.tools = None;
+        agent.isolated = true;
+        let args = argv(Harness::Pi, "run-1", &agent, "hello", None);
+        assert_eq!(
+            &args[6..],
+            [
+                "--no-extensions",
+                "--no-skills",
+                "--no-context-files",
+                "--no-prompt-templates",
+                "--no-mcp",
+                "hello"
+            ]
+        );
     }
 
     #[test]
@@ -1141,6 +1173,7 @@ mod tests {
             model: Some("claude-haiku-5-5".into()),
             system_prompt: "You review.".into(),
             tools: Some(vec!["Read".into(), "Bash".into()]),
+            isolated: false,
             thinking: Some("high".into()),
             source: Source::User,
             field_sources: Default::default(),

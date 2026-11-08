@@ -99,6 +99,11 @@ Agent fields, all optional except the agent's own key:
 - `tools` — omit or set to `null` for Pi defaults; `[]` passes `--no-tools`,
   disabling all tools including extension tools. A nonempty array passes a
   comma-separated `--tools` selection.
+- `isolated` — boolean, default `false`. When `true`, Pi runs with
+  `--no-extensions --no-skills --no-context-files --no-prompt-templates
+  --no-mcp`, so only Pi's base prompt, the agent's `system_prompt` and its
+  `tools` shape the run. Pi only: `true` on a `claude-code` agent is
+  rejected. Manifest-only; tasks cannot override it.
 
 Agents carry no `model` or `thinking` field: the selected profile supplies
 both, so a model and its thinking level always travel together.
