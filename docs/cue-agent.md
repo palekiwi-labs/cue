@@ -103,11 +103,23 @@ Agent fields, all optional except the agent's own key:
   `--no-extensions --no-skills --no-context-files --no-prompt-templates
   --no-mcp --no-approve`. Pi only: `true` on a `claude-code` agent is
   rejected. Manifest-only; tasks cannot override it.
+- `extensions` — array of strings naming Pi extensions to load, each passed
+  as `-e <entry>` in order. An entry starting with `./` or `../` resolves
+  against the directory of the manifest that declares it, and a leading `~/`
+  expands to the home directory; every other entry (absolute paths,
+  `npm:...` package sources, bare names) is passed through verbatim. Omission,
+  `null` or `[]` loads no extra extensions. A layer replaces the whole list.
+  Pi only: a nonempty list on a `claude-code` agent is rejected.
+  Manifest-only; tasks cannot override it.
 
-Isolation disables extension-provided tools, including `cue-*`, `delegate`,
-`codemode`, and `tool_search`, even if named in `tools`. Use only Pi's core
-built-in tools for an isolated agent: `read`, `bash`, `powershell` (Windows),
-`edit`, `write`, `grep`, `find`, and `ls`. Tool names are passed through to Pi,
+Isolation disables discovered extensions and their tools, including `cue-*`,
+`delegate`, `codemode`, and `tool_search`, even if named in `tools`.
+Extensions named in `extensions` still load in an isolated agent, since Pi
+honours an explicit `-e` alongside `--no-extensions`; use this for an
+extension the agent cannot run without, such as a provider authentication
+extension. Otherwise use only Pi's core built-in tools for an isolated agent:
+`read`, `bash`, `powershell` (Windows), `edit`, `write`, `grep`, `find`, and
+`ls`. Tool names are passed through to Pi,
 not validated against a hardcoded list by `cue-agent`.
 
 With Pi 1.3.0, `--no-approve` ignores trust-gated project configuration and

@@ -60,6 +60,22 @@ fn inline_and_file_prompts_override_each_other_atomically() {
 }
 
 #[test]
+fn the_listing_shows_resolved_extensions_and_their_source() {
+    let sandbox = Sandbox::new();
+    sandbox.global_manifest(r#"{"agents":{"a":{},"b":{}}}"#);
+    sandbox.local_manifest(r#"{"agents":{"a":{"extensions":["./ext.ts","npm:auth"]}}}"#);
+    let listed = listing(&sandbox);
+    let a = agent(&listed, "a");
+    let local = sandbox.project().join("ext.ts");
+    assert_eq!(
+        a["extensions"],
+        json!([local.to_string_lossy(), "npm:auth"])
+    );
+    assert_eq!(a["field_sources"]["extensions"], "project");
+    assert_eq!(agent(&listed, "b")["extensions"], json!([]));
+}
+
+#[test]
 fn a_shadowed_invalid_field_is_still_rejected() {
     for global in [
         r#"{"models":5}"#,

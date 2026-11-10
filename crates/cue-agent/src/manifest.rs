@@ -27,8 +27,9 @@ pub const PROJECT_MANIFEST: &str = "cue-agent.json";
 const GLOBAL_MANIFEST: &str = "cue/cue-agent.json";
 
 const ROOT_FIELDS: [&str; 4] = ["timeout", "worktree_root", "models", "agents"];
-const AGENT_FIELDS: [&str; 6] = [
+const AGENT_FIELDS: [&str; 7] = [
     "description",
+    "extensions",
     "harness",
     "isolated",
     "models",
@@ -88,6 +89,11 @@ pub struct Agent {
     /// templates, MCP and trust-gated project resources. User-level settings
     /// and system-prompt files may still apply. Pi only.
     pub isolated: bool,
+    /// Pi extensions loaded explicitly, even when the agent is isolated.
+    /// Entries starting with `./` or `../` are already resolved against the
+    /// declaring manifest's directory and a leading `~/` against the home
+    /// directory; anything else is passed through as written. Pi only.
+    pub extensions: Vec<String>,
     /// Effective thinking level: the selected profile's, unless a task
     /// overrides it.
     pub thinking: Option<String>,
@@ -224,6 +230,7 @@ struct AgentLayer {
     tools: Patch<Vec<StringSource>>,
     harness: Patch<StringSource>,
     isolated: Patch<bool>,
+    extensions: Patch<Vec<String>>,
 }
 
 /// A merged field: its unread value and the layer that set it.
@@ -237,6 +244,7 @@ struct MergedAgent {
     tools: Slot<Vec<StringSource>>,
     harness: Slot<StringSource>,
     isolated: Slot<bool>,
+    extensions: Slot<Vec<String>>,
     source: Source,
 }
 
@@ -291,6 +299,7 @@ pub(crate) fn load_from(
                 tools: None,
                 harness: None,
                 isolated: None,
+                extensions: None,
                 source,
             });
             agent.source = source;
@@ -300,6 +309,7 @@ pub(crate) fn load_from(
             apply(&mut agent.tools, patch.tools, source);
             apply(&mut agent.harness, patch.harness, source);
             apply(&mut agent.isolated, patch.isolated, source);
+            apply(&mut agent.extensions, patch.extensions, source);
         }
     }
 
@@ -370,6 +380,19 @@ fn resolve_agent(
             harness.as_str()
         );
     }
+    let extensions = match merged.extensions {
+        None => Vec::new(),
+        Some((entries, source)) => {
+            field_sources.insert("extensions", source);
+            entries
+        }
+    };
+    if !extensions.is_empty() && harness != crate::harness::Harness::Pi {
+        bail!(
+            "extensions: only the pi harness loads extensions, not '{}'",
+            harness.as_str()
+        );
+    }
     let models = match merged.models {
         None => None,
         Some((aliases, source)) => {
@@ -408,6 +431,7 @@ fn resolve_agent(
         system_prompt,
         tools,
         isolated,
+        extensions,
         thinking: profile.and_then(|p| p.thinking.clone()),
         source: merged.source,
         field_sources,
@@ -508,6 +532,31 @@ fn parse_agent(value: &Value, base: &Path, path: &str) -> Result<AgentLayer> {
         Some(Value::Bool(value)) => Patch::Set(*value),
         Some(other) => bail!("{path}.isolated: expected a boolean, found {}", kind(other)),
     };
+    agent.extensions = match fields.get("extensions") {
+        None => Patch::Absent,
+        Some(Value::Null) => Patch::Clear,
+        Some(Value::Array(items)) => Patch::Set(
+            items
+                .iter()
+                .enumerate()
+                .map(|(index, item)| match item {
+                    Value::String(entry) if entry.is_empty() => {
+                        bail!("{path}.extensions[{index}]: must not be empty")
+                    }
+                    Value::String(entry) => resolve_extension(entry, base)
+                        .with_context(|| format!("{path}.extensions[{index}]")),
+                    other => bail!(
+                        "{path}.extensions[{index}]: expected a string, found {}",
+                        kind(other)
+                    ),
+                })
+                .collect::<Result<_>>()?,
+        ),
+        Some(other) => bail!(
+            "{path}.extensions: expected an array of strings, found {}",
+            kind(other)
+        ),
+    };
     agent.models = match fields.get("models") {
         None => Patch::Absent,
         Some(Value::Null) => Patch::Clear,
@@ -587,6 +636,22 @@ fn parse_profile(value: &Value, path: &str) -> Result<ModelProfile> {
         thinking: text("thinking")?,
         provider: text("provider")?,
     })
+}
+
+fn resolve_extension(entry: &str, base: &Path) -> Result<String> {
+    let path = if let Some(rest) = entry.strip_prefix("./") {
+        base.join(rest)
+    } else if entry.starts_with("../") {
+        base.join(entry)
+    } else if let Some(rest) = entry.strip_prefix("~/") {
+        let Some(home) = dirs::home_dir() else {
+            bail!("cannot expand '~/': no home directory");
+        };
+        home.join(rest)
+    } else {
+        return Ok(entry.to_string());
+    };
+    Ok(path.to_string_lossy().into_owned())
 }
 
 /// A string field where null clears an inherited value.
@@ -859,5 +924,108 @@ mod tests {
             r#"{"agents": {"a": {"harness": "claude-code", "isolated": false}}}"#,
         );
         assert!(manifest.is_ok());
+    }
+
+    #[test]
+    fn extensions_merge_across_layers_and_null_clears_them() {
+        let (_dir, manifest) = layers(
+            r#"{"agents": {"kept": {"extensions": ["npm:auth"]},
+                           "replaced": {"extensions": ["npm:auth", "npm:other"]},
+                           "cleared": {"extensions": ["npm:auth"]}, "bare": {}}}"#,
+            r#"{"agents": {"replaced": {"extensions": ["/abs/ext.ts"]},
+                           "cleared": {"extensions": null}}}"#,
+        );
+        let manifest = manifest.unwrap();
+        let kept = manifest.get("kept").unwrap();
+        assert_eq!(kept.extensions, vec!["npm:auth".to_string()]);
+        assert_eq!(kept.field_sources.get("extensions"), Some(&Source::User));
+        let replaced = manifest.get("replaced").unwrap();
+        assert_eq!(replaced.extensions, vec!["/abs/ext.ts".to_string()]);
+        assert_eq!(
+            replaced.field_sources.get("extensions"),
+            Some(&Source::Project)
+        );
+        let cleared = manifest.get("cleared").unwrap();
+        assert!(cleared.extensions.is_empty());
+        assert_eq!(cleared.field_sources.get("extensions"), None);
+        assert!(manifest.get("bare").unwrap().extensions.is_empty());
+    }
+
+    #[test]
+    fn extensions_must_be_an_array_of_non_empty_strings() {
+        for (project, expected) in [
+            (
+                r#"{"agents": {"a": {"extensions": "npm:auth"}}}"#,
+                "agents.a.extensions: expected an array of strings, found a string",
+            ),
+            (
+                r#"{"agents": {"a": {"extensions": ["npm:auth", 1]}}}"#,
+                "agents.a.extensions[1]: expected a string, found a number",
+            ),
+            (
+                r#"{"agents": {"a": {"extensions": [{"file": "x.ts"}]}}}"#,
+                "agents.a.extensions[0]: expected a string, found an object",
+            ),
+            (
+                r#"{"agents": {"a": {"extensions": [""]}}}"#,
+                "agents.a.extensions[0]: must not be empty",
+            ),
+        ] {
+            let (_dir, manifest) = layers("{}", project);
+            let err = format!("{:#}", manifest.unwrap_err());
+            assert!(err.contains(expected), "{project}: {err}");
+        }
+    }
+
+    #[test]
+    fn extensions_are_pi_only_when_non_empty() {
+        let (_dir, manifest) = layers(
+            "{}",
+            r#"{"agents": {"a": {"harness": "claude-code", "extensions": ["npm:auth"]}}}"#,
+        );
+        let err = format!("{:#}", manifest.unwrap_err());
+        assert!(
+            err.contains("extensions: only the pi harness loads extensions"),
+            "{err}"
+        );
+        let (_dir, manifest) = layers(
+            "{}",
+            r#"{"agents": {"a": {"harness": "claude-code", "extensions": []}}}"#,
+        );
+        assert!(manifest.is_ok());
+    }
+
+    #[test]
+    fn relative_extension_paths_resolve_against_the_declaring_manifest() {
+        let (dir, manifest) = layers(
+            r#"{"agents": {"user": {"extensions": ["./ext/user.ts"]}}}"#,
+            r#"{"agents": {"a": {"extensions": [
+                "./ext/auth.ts", "../shared/x.ts", "~/ext/home.ts",
+                "/abs/ext.ts", "npm:@scope/pkg", "builtin:name", "ext/bare.ts"
+            ]}}}"#,
+        );
+        let manifest = manifest.unwrap();
+        let global = dir.path().join("global");
+        let project = dir.path().join("project");
+        let home = dirs::home_dir().unwrap();
+        assert_eq!(
+            manifest.get("user").unwrap().extensions,
+            vec![global.join("ext/user.ts").to_string_lossy().into_owned()]
+        );
+        assert_eq!(
+            manifest.get("a").unwrap().extensions,
+            vec![
+                project.join("ext/auth.ts").to_string_lossy().into_owned(),
+                project
+                    .join("../shared/x.ts")
+                    .to_string_lossy()
+                    .into_owned(),
+                home.join("ext/home.ts").to_string_lossy().into_owned(),
+                "/abs/ext.ts".to_string(),
+                "npm:@scope/pkg".to_string(),
+                "builtin:name".to_string(),
+                "ext/bare.ts".to_string(),
+            ]
+        );
     }
 }

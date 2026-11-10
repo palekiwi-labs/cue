@@ -128,6 +128,7 @@ fn list_agents(json: bool) -> Result<()> {
                     "system_prompt": agent.system_prompt,
                     "tools": agent.tools,
                     "isolated": agent.isolated,
+                    "extensions": agent.extensions,
                     "thinking": agent.thinking,
                     "source": agent.source.as_str(),
                     "field_sources": agent
