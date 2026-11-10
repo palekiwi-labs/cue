@@ -262,6 +262,10 @@ fn pi_argv(
     if agent.isolated {
         args.extend(PI_ISOLATION_FLAGS.iter().map(|flag| flag.to_string()));
     }
+    for extension in &agent.extensions {
+        args.push("-e".to_string());
+        args.push(extension.clone());
+    }
     if let Some(model) = &agent.model {
         args.push("--model".to_string());
         args.push(model.clone());
@@ -1013,6 +1017,45 @@ mod tests {
                 "--no-approve",
                 "hello"
             ]
+        );
+    }
+
+    #[test]
+    fn an_isolated_agent_still_loads_its_named_extensions() {
+        let mut agent = agent();
+        agent.tools = None;
+        agent.isolated = true;
+        agent.extensions = vec!["npm:auth".into(), "/abs/ext.ts".into()];
+        let args = argv(Harness::Pi, "run-1", &agent, "hello", None);
+        assert_eq!(
+            &args[6..],
+            [
+                "--no-extensions",
+                "--no-skills",
+                "--no-context-files",
+                "--no-prompt-templates",
+                "--no-mcp",
+                "--no-approve",
+                "-e",
+                "npm:auth",
+                "-e",
+                "/abs/ext.ts",
+                "--model",
+                "anthropic/haiku",
+                "hello"
+            ]
+        );
+    }
+
+    #[test]
+    fn a_non_isolated_agent_loads_extensions_alongside_its_defaults() {
+        let mut agent = agent();
+        agent.tools = None;
+        agent.extensions = vec!["npm:auth".into()];
+        let args = argv(Harness::Pi, "run-1", &agent, "hello", None);
+        assert_eq!(
+            &args[6..],
+            ["-e", "npm:auth", "--model", "anthropic/haiku", "hello"]
         );
     }
 
