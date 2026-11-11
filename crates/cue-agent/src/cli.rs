@@ -29,6 +29,9 @@ pub enum Commands {
         /// Only batches belonging to this job
         #[arg(long, value_name = "JOB_ID")]
         job: Option<String>,
+        /// Only batches with a job, a batch label or a task label
+        #[arg(long)]
+        labeled: bool,
         /// Output structured JSON
         #[arg(long)]
         json: bool,

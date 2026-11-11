@@ -193,6 +193,12 @@ impl Batch {
         self.record["batch_id"].as_str().unwrap_or_default()
     }
 
+    fn labeled(&self) -> bool {
+        !self.record["job"].is_null()
+            || !self.record["label"].is_null()
+            || self.runs().iter().any(|run| !run["label"].is_null())
+    }
+
     fn runs(&self) -> &[Value] {
         self.record["runs"].as_array().map_or(&[], Vec::as_slice)
     }
@@ -401,13 +407,17 @@ pub struct Filter {
     /// At most this many, newest first.
     pub limit: Option<usize>,
     pub job: Option<String>,
+    /// Only batches with a job, a batch label or a task label.
+    pub labeled: bool,
 }
 
 impl Filter {
     fn matches(&self, batch: &Batch) -> bool {
-        self.job
+        let job = self
+            .job
             .as_ref()
-            .is_none_or(|job| batch.record["job"]["id"].as_str() == Some(job))
+            .is_none_or(|job| batch.record["job"]["id"].as_str() == Some(job));
+        job && (!self.labeled || batch.labeled())
     }
 }
 
