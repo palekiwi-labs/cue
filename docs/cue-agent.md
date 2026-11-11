@@ -690,7 +690,7 @@ found and stopped from a separate process. Every command takes `--json`
 (except `logs`, which prints raw records) and needs no identifiers to start:
 
 ```sh
-cue-agent ps [--all] [--since WHEN] [--limit N] [--job ID] [--json]
+cue-agent ps [--all] [--since WHEN] [--limit N] [--job ID] [--labeled] [--json]
 cue-agent status <batch-id|run-id> [--json]
 cue-agent logs <run-id> [--stderr] [--follow]
 cue-agent stop <batch-id|run-id> [--wait] [--json]
@@ -707,8 +707,9 @@ active entry; a crashed one is listed once and its entry then removed. `--all`
 lists every batch with a monitoring record. `--since` keeps batches started
 at or after a moment, given as Unix seconds or as a duration back from now
 (`90s`, `30m`, `2h`, `7d`); `--limit` keeps the newest `N`; `--job` keeps
-batches of one job. With `--all` the history is scanned newest first and
-the scan stops at the `--since` bound or once `--limit` batches are found,
+batches of one job; `--labeled` keeps batches with a job, a batch label or a
+task label, judged from the record before any run events are read. With
+`--all` the history is scanned newest first and the scan stops at the `--since` bound or once `--limit` batches are found,
 so polling costs what it returns, not the whole history. Each batch
 reports its `label` and `job` (`id` and `label`, or null). The state
 directory must be on a

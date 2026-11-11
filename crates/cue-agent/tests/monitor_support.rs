@@ -210,6 +210,38 @@ fn batches_carry_an_optional_job_and_ps_filters_by_it() {
 }
 
 #[test]
+fn ps_labeled_keeps_batches_with_a_job_or_label_and_limits_only_those() {
+    let sandbox = sandbox();
+    let task = json!([{"agent": "alpha", "prompt": "one"}]);
+    let by_job = run_receipt(&sandbox, &json!({"job": {"id": "j-1"}, "tasks": task}));
+    let by_batch = run_receipt(&sandbox, &json!({"label": "batch", "tasks": task}));
+    let by_task = run_receipt(
+        &sandbox,
+        &json!({"tasks": [{"agent": "alpha", "prompt": "one", "label": "task"}]}),
+    );
+    run_receipt(&sandbox, &json!({"tasks": task}));
+    run_receipt(&sandbox, &json!({"tasks": task}));
+
+    let ids = |args: &[&str]| -> Vec<Value> {
+        let mut ids: Vec<Value> = ps_all(&sandbox, args)
+            .iter()
+            .map(|batch| batch["batch_id"].clone())
+            .collect();
+        ids.sort_by_key(|id| id.to_string());
+        ids
+    };
+    let mut expected = vec![
+        by_job["batch_id"].clone(),
+        by_batch["batch_id"].clone(),
+        by_task["batch_id"].clone(),
+    ];
+    expected.sort_by_key(|id| id.to_string());
+    assert_eq!(ids(&["--labeled"]), expected);
+    assert_eq!(ids(&["--labeled", "--limit", "3"]), expected);
+    assert_eq!(ids(&[]).len(), 5);
+}
+
+#[test]
 fn a_malformed_job_is_rejected_before_anything_runs() {
     let sandbox = sandbox();
     for job in [

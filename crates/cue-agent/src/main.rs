@@ -46,6 +46,7 @@ fn run() -> Result<ExitCode> {
             since,
             limit,
             job,
+            labeled,
             json,
         } => {
             let now = std::time::SystemTime::now()
@@ -60,6 +61,7 @@ fn run() -> Result<ExitCode> {
                 since,
                 limit,
                 job,
+                labeled,
             })?;
             if json {
                 println!("{}", serde_json::to_string(&report)?);
