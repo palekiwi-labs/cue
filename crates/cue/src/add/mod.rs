@@ -52,7 +52,7 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
         store_root: store_root.as_deref(),
     };
 
-    let path = match cue_type.as_str() {
+    let (path, replaced) = match cue_type.as_str() {
         "task" | "spec" | "plan" | "note" | "trace" => {
             add_central_markdown(write, frontmatter, &cue_type)
         }
@@ -90,6 +90,12 @@ pub fn add(root: &Path, opts: AddOptions) -> Result<PathBuf> {
     if let Err(error) = record() {
         eprintln!("Warning: artifact created but activity recording failed: {error:#}");
     }
+    if !replaced
+        && let Ok(store) = store::root(store_root.as_deref())
+        && let Some(address) = crate::hooks::address_of(&path, &store)
+    {
+        crate::hooks::dispatch(crate::hooks::Event::ArtifactCreate, &address, &store);
+    }
     Ok(path)
 }
 
@@ -97,7 +103,7 @@ fn add_central_markdown(
     write: CentralWrite<'_>,
     mut frontmatter: Vec<(String, String)>,
     cue_type: &str,
-) -> Result<PathBuf> {
+) -> Result<(PathBuf, bool)> {
     let CentralWrite {
         root,
         filename,
@@ -196,20 +202,20 @@ fn add_central_markdown(
         filename.to_string()
     };
     let file_path = context_dir.join(cue_type).join(filename);
-    write_new_file(&file_path, force, || {
+    let replaced = write_new_file(&file_path, force, || {
         let mut final_content = build_frontmatter_bytes(&frontmatter)?;
         final_content.extend_from_slice(content);
         Ok(final_content)
     })?;
 
-    Ok(file_path)
+    Ok((file_path, replaced))
 }
 
 fn add_central_json(
     write: CentralWrite<'_>,
     metadata: Vec<(String, String)>,
     cue_type: &str,
-) -> Result<PathBuf> {
+) -> Result<(PathBuf, bool)> {
     let CentralWrite {
         root,
         filename,
@@ -227,7 +233,7 @@ fn add_central_json(
     };
     let file_path = context_dir.join(cue_type).join(filename);
 
-    write_new_file(&file_path, force, || {
+    let replaced = write_new_file(&file_path, force, || {
         let value: serde_json::Value = serde_json::from_slice(content)
             .with_context(|| format!("{cue_type} content must be valid JSON"))?;
         let serde_json::Value::Object(mut object) = value else {
@@ -251,7 +257,7 @@ fn add_central_json(
         Ok(bytes)
     })?;
 
-    Ok(file_path)
+    Ok((file_path, replaced))
 }
 
 /// Write a `bin` artifact: something an operator or an agent runs.
@@ -262,7 +268,10 @@ fn add_central_json(
 /// content is inspected. An opaque executable has nowhere to carry metadata, so
 /// supplying any is a caller error rather than something silently dropped, and
 /// it is refused before anything is written.
-fn add_central_bin(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> Result<PathBuf> {
+fn add_central_bin(
+    write: CentralWrite<'_>,
+    metadata: Vec<(String, String)>,
+) -> Result<(PathBuf, bool)> {
     let CentralWrite {
         root,
         filename,
@@ -278,12 +287,15 @@ fn add_central_bin(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> 
 
     let (context_dir, _resolved) = central_context_dir(root, context, store_root)?;
     let file_path = context_dir.join("bin").join(filename);
-    write_new_executable(&file_path, force, content)?;
+    let replaced = write_new_executable(&file_path, force, content)?;
 
-    Ok(file_path)
+    Ok((file_path, replaced))
 }
 
-fn add_central_tmp(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> Result<PathBuf> {
+fn add_central_tmp(
+    write: CentralWrite<'_>,
+    metadata: Vec<(String, String)>,
+) -> Result<(PathBuf, bool)> {
     let CentralWrite {
         root,
         filename,
@@ -317,9 +329,9 @@ fn add_central_tmp(write: CentralWrite<'_>, metadata: Vec<(String, String)>) -> 
         }
     };
     let file_path = artifact_dir.join(filename);
-    write_new_file(&file_path, force, || Ok(content.to_vec()))?;
+    let replaced = write_new_file(&file_path, force, || Ok(content.to_vec()))?;
 
-    Ok(file_path)
+    Ok((file_path, replaced))
 }
 
 /// Resolve the destination context directory, requiring both a selected
@@ -342,11 +354,12 @@ fn central_context_dir(
     Ok((context_dir, resolved))
 }
 
-fn write_new_file<F>(file_path: &Path, force: bool, content: F) -> Result<()>
+fn write_new_file<F>(file_path: &Path, force: bool, content: F) -> Result<bool>
 where
     F: FnOnce() -> Result<Vec<u8>>,
 {
-    if file_path.exists() && !force {
+    let existed = file_path.exists();
+    if existed && !force {
         bail!(
             "File exists: {}. Use --force to overwrite.",
             file_path.display()
@@ -356,15 +369,16 @@ where
     fs::create_dir_all(file_path.parent().expect("artifact path has a parent"))?;
     fs::write(file_path, content()?)
         .with_context(|| format!("Failed to write to {}", file_path.display()))?;
-    Ok(())
+    Ok(existed)
 }
 
 /// Publish `content` at `file_path` as an executable file.
 ///
 /// Stage bytes and permissions before publication. Without `force`, publication
 /// refuses an existing name even if it appeared after the pre-check.
-fn write_new_executable(file_path: &Path, force: bool, content: &[u8]) -> Result<()> {
-    if file_path.exists() && !force {
+fn write_new_executable(file_path: &Path, force: bool, content: &[u8]) -> Result<bool> {
+    let existed = file_path.exists();
+    if existed && !force {
         bail!(
             "File exists: {}. Use --force to overwrite.",
             file_path.display()
@@ -396,7 +410,7 @@ fn write_new_executable(file_path: &Path, force: bool, content: &[u8]) -> Result
                 .context(format!("Failed to write to {}", file_path.display()))
         }
     })?;
-    Ok(())
+    Ok(existed)
 }
 
 /// Create the staging file with the same `0o666` request `fs::write` makes, so

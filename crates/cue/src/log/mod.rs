@@ -101,6 +101,9 @@ pub fn add_entry(root: &Path, opts: LogAddOptions) -> Result<PathBuf> {
             .with_context(|| format!("Failed to write to {}", path.display()))?;
         file.write_all(b"\n")
             .with_context(|| format!("Failed to write to {}", path.display()))?;
+        if let Some(address) = crate::hooks::address_of(&path, &store_root) {
+            crate::hooks::dispatch(crate::hooks::Event::LogEntryAdd, &address, &store_root);
+        }
         return Ok(path);
     }
 }

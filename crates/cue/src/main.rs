@@ -5,6 +5,7 @@ mod cli;
 mod commands;
 mod config;
 mod git;
+mod hooks;
 mod list;
 mod log;
 mod render;

@@ -918,6 +918,9 @@ fn handle_create(
     let frontmatter = serde_yaml::to_string(&metadata)?;
     std::fs::create_dir_all(&context_dir)?;
     std::fs::write(context_path, format!("---\n{frontmatter}---\n"))?;
+    if let Some(address) = crate::hooks::address_of(&context_dir, &store_root) {
+        crate::hooks::dispatch(crate::hooks::Event::ContextCreate, &address, &store_root);
+    }
 
     println!("Created {}/{}", repository_scope.display(), name);
     Ok(())
