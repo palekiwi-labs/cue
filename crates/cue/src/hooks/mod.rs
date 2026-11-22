@@ -1,9 +1,10 @@
 //! Global lifecycle hooks: executables run after a successful store write.
 //!
 //! Hooks live under `<config>/hooks/all.d/` (every event) and
-//! `<config>/hooks/<event>.d/` (one event). Each receives a JSON payload on
-//! stdin and the dispatch context in `CUE_HOOK_*` variables. Hook failures
-//! never fail the write.
+//! `<config>/hooks/<event>.d/` (one event). Both directories are merged and
+//! run in lexical order of file name; on equal names the `all.d` hook runs
+//! first. Each hook receives a JSON payload on stdin and the dispatch context
+//! in `CUE_HOOK_*` variables. Hook failures never fail the write.
 
 use serde::Serialize;
 use std::ffi::OsString;
@@ -13,7 +14,7 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::mpsc;
+use std::sync::{Arc, Mutex, mpsc};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 use uuid::Uuid;
 
@@ -21,6 +22,7 @@ const DEFAULT_MAX_DEPTH: u32 = 4;
 const DEFAULT_TIMEOUT_MS: u64 = 3_000;
 const DEFAULT_BUDGET_MS: u64 = 10_000;
 const STDERR_TAIL_BYTES: usize = 2_048;
+const STDERR_DRAIN_MS: u64 = 100;
 const IGNORED_SUFFIXES: [&str; 5] = ["~", ".bak", ".swp", ".orig", ".tmp"];
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -40,12 +42,21 @@ impl Event {
     }
 }
 
+/// JSON object written to a hook's stdin.
+///
+/// This is the contract with hook authors: incompatible changes bump `v`,
+/// new keys may be added without a bump.
 #[derive(Serialize)]
 struct Payload<'a> {
+    /// Payload schema version, currently 1.
     v: u32,
+    /// Event name, e.g. `artifact_create`.
     event: &'a str,
+    /// Unique id of this event, also exported as `CUE_HOOK_EVENT_ID`.
     event_id: String,
+    /// Canonical store address of what was written.
     address: &'a str,
+    /// UTC RFC 3339 time of the write.
     occurred_at: String,
 }
 
@@ -59,6 +70,9 @@ struct Lineage {
 impl Lineage {
     fn from_env() -> Self {
         let event_id = Uuid::new_v4().to_string();
+        // Inside a hook, CUE_HOOK_EVENT_ID names the event that ran it, which
+        // is the parent of this write; CUE_HOOK_PARENT_EVENT_ID is one level
+        // further up and is only informational for hooks.
         let parent_event_id = non_empty_var("CUE_HOOK_EVENT_ID");
         let root_event_id = non_empty_var("CUE_HOOK_ROOT_EVENT_ID")
             .or_else(|| parent_event_id.clone())
@@ -174,7 +188,8 @@ pub fn dispatch(event: Event, address: &str, store_root: &Path) {
             Some(parent) => command.env("CUE_HOOK_PARENT_EVENT_ID", parent),
             None => command.env_remove("CUE_HOOK_PARENT_EVENT_ID"),
         };
-        let outcome = run(command, &payload, limit);
+        let own_group = lineage.depth == 1;
+        let outcome = run(command, &payload, limit, own_group);
         match outcome {
             Ok(run) => {
                 let name = if run.timed_out {
@@ -203,13 +218,26 @@ pub fn dispatch(event: Event, address: &str, store_root: &Path) {
                     Some(run.stderr_tail).filter(|tail| !tail.is_empty()),
                 );
             }
-            Err(error) => {
+            Err(RunError::Spawn(error)) => {
                 eprintln!(
                     "Warning: cue hook {} could not run: {error}",
                     hook.display()
                 );
                 record(
                     "spawn_failed",
+                    Some(&hook),
+                    None,
+                    None,
+                    Some(error.to_string()),
+                );
+            }
+            Err(RunError::Wait(error)) => {
+                eprintln!(
+                    "Warning: cue hook {} killed after a wait error: {error}",
+                    hook.display()
+                );
+                record(
+                    "wait_failed",
                     Some(&hook),
                     None,
                     None,
@@ -227,14 +255,32 @@ struct RunResult {
     stderr_tail: String,
 }
 
-fn run(mut command: Command, payload: &[u8], limit: Duration) -> std::io::Result<RunResult> {
+enum RunError {
+    Spawn(std::io::Error),
+    Wait(std::io::Error),
+}
+
+/// Run one hook with `payload` on stdin, killing it after `limit`.
+///
+/// With `own_group` the hook leads a new process group and a timeout kills
+/// the whole group. Without it (a hook of a write made by another hook) the
+/// hook stays in the enclosing hook's group, so the outer timeout reaches it
+/// too; its own timeout then kills only the hook process.
+fn run(
+    mut command: Command,
+    payload: &[u8],
+    limit: Duration,
+    own_group: bool,
+) -> Result<RunResult, RunError> {
     command
         .stdin(Stdio::piped())
         .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .process_group(0);
+        .stderr(Stdio::piped());
+    if own_group {
+        command.process_group(0);
+    }
     let started = Instant::now();
-    let mut child = command.spawn()?;
+    let mut child = command.spawn().map_err(RunError::Spawn)?;
 
     if let Some(mut stdin) = child.stdin.take() {
         let payload = payload.to_vec();
@@ -242,43 +288,61 @@ fn run(mut command: Command, payload: &[u8], limit: Duration) -> std::io::Result
             let _ = stdin.write_all(&payload);
         });
     }
-    let (tail_tx, tail_rx) = mpsc::channel();
+    let tail = Arc::new(Mutex::new(Vec::new()));
+    let (done_tx, done_rx) = mpsc::channel::<()>();
     if let Some(mut stderr) = child.stderr.take() {
+        let tail = Arc::clone(&tail);
         std::thread::spawn(move || {
-            let mut tail = Vec::new();
             let mut buf = [0u8; 4096];
             while let Ok(read) = stderr.read(&mut buf) {
                 if read == 0 {
                     break;
                 }
+                let mut tail = tail.lock().unwrap_or_else(|poison| poison.into_inner());
                 tail.extend_from_slice(&buf[..read]);
                 if tail.len() > STDERR_TAIL_BYTES {
-                    tail.drain(..tail.len() - STDERR_TAIL_BYTES);
+                    let excess = tail.len() - STDERR_TAIL_BYTES;
+                    tail.drain(..excess);
                 }
             }
-            let _ = tail_tx.send(tail);
+            let _ = done_tx.send(());
         });
     }
 
     let pid = child.id() as i32;
+    let kill = || {
+        let target = if own_group { -pid } else { pid };
+        // SAFETY: kill(2) on the hook process, or on the process group it
+        // leads when spawned with process_group(0); no memory is touched.
+        unsafe {
+            libc::kill(target, libc::SIGKILL);
+        }
+    };
     let (status, timed_out) = loop {
-        if let Some(status) = child.try_wait()? {
-            break (status, false);
+        match child.try_wait() {
+            Ok(Some(status)) => break (status, false),
+            Ok(None) => {}
+            Err(error) => {
+                kill();
+                let _ = child.wait();
+                return Err(RunError::Wait(error));
+            }
         }
         if started.elapsed() >= limit {
-            // SAFETY: kill(2) on the hook's own process group, created by
-            // process_group(0) above; no memory is touched.
-            unsafe {
-                libc::kill(-pid, libc::SIGKILL);
+            kill();
+            match child.wait() {
+                Ok(status) => break (status, true),
+                Err(error) => return Err(RunError::Wait(error)),
             }
-            break (child.wait()?, true);
         }
         std::thread::sleep(Duration::from_millis(5));
     };
     let duration = started.elapsed();
-    let tail = tail_rx
-        .recv_timeout(Duration::from_millis(100))
-        .unwrap_or_default();
+    let _ = done_rx.recv_timeout(Duration::from_millis(STDERR_DRAIN_MS));
+    let tail = tail
+        .lock()
+        .map(|tail| tail.clone())
+        .unwrap_or_else(|poison| poison.into_inner().clone());
 
     Ok(RunResult {
         exit_code: status.code(),
@@ -395,6 +459,12 @@ fn rfc3339_now() -> String {
     )
 }
 
+/// Proleptic Gregorian (year, month, day) for `days` since 1970-01-01.
+///
+/// Howard Hinnant's `civil_from_days` algorithm
+/// (<https://howardhinnant.github.io/date_algorithms.html>): 719 468 shifts
+/// the epoch to 0000-03-01, 146 097 is days per 400-year era, and months are
+/// counted from March so the leap day falls at the end of the year.
 fn civil_from_days(days: i64) -> (i64, u32, u32) {
     let z = days + 719_468;
     let era = z.div_euclid(146_097);

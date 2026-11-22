@@ -354,12 +354,14 @@ fn central_context_dir(
     Ok((context_dir, resolved))
 }
 
+/// Write `content` at `file_path`; returns whether an existing file was
+/// replaced (only possible with `force`).
 fn write_new_file<F>(file_path: &Path, force: bool, content: F) -> Result<bool>
 where
     F: FnOnce() -> Result<Vec<u8>>,
 {
-    let existed = file_path.exists();
-    if existed && !force {
+    let replaced = file_path.exists();
+    if replaced && !force {
         bail!(
             "File exists: {}. Use --force to overwrite.",
             file_path.display()
@@ -369,16 +371,17 @@ where
     fs::create_dir_all(file_path.parent().expect("artifact path has a parent"))?;
     fs::write(file_path, content()?)
         .with_context(|| format!("Failed to write to {}", file_path.display()))?;
-    Ok(existed)
+    Ok(replaced)
 }
 
 /// Publish `content` at `file_path` as an executable file.
 ///
 /// Stage bytes and permissions before publication. Without `force`, publication
-/// refuses an existing name even if it appeared after the pre-check.
+/// refuses an existing name even if it appeared after the pre-check. Returns
+/// whether an existing file was replaced.
 fn write_new_executable(file_path: &Path, force: bool, content: &[u8]) -> Result<bool> {
-    let existed = file_path.exists();
-    if existed && !force {
+    let replaced = file_path.exists();
+    if replaced && !force {
         bail!(
             "File exists: {}. Use --force to overwrite.",
             file_path.display()
@@ -410,7 +413,7 @@ fn write_new_executable(file_path: &Path, force: bool, content: &[u8]) -> Result
                 .context(format!("Failed to write to {}", file_path.display()))
         }
     })?;
-    Ok(existed)
+    Ok(replaced)
 }
 
 /// Create the staging file with the same `0o666` request `fs::write` makes, so

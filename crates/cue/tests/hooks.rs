@@ -414,3 +414,92 @@ fn no_hooks_dir_is_a_no_op() {
     fx.add_note("idea").success();
     assert!(fx.dispatch_log().is_empty());
 }
+
+#[test]
+fn every_artifact_type_fires_artifact_create() {
+    let fx = Fixture::new();
+    fx.hook("artifact_create.d", "rec", RECORDER);
+
+    fx.cue()
+        .args(["add", "probe", "-", "--type", "bin", "--context", "work"])
+        .write_stdin("#!/bin/sh\n")
+        .assert()
+        .success();
+    fx.cue()
+        .args([
+            "add",
+            "findings",
+            "{}",
+            "--type",
+            "review",
+            "--context",
+            "work",
+        ])
+        .assert()
+        .success();
+    fx.cue()
+        .args(["add", "dump.txt", "x", "--type", "tmp", "--context", "work"])
+        .assert()
+        .success();
+
+    let addresses: Vec<_> = fx
+        .calls()
+        .into_iter()
+        .map(|(_, payload, _)| payload["address"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(addresses.len(), 3, "{addresses:?}");
+    assert_eq!(addresses[0], "acme/widgets/work/bin/probe");
+    assert_eq!(addresses[1], "acme/widgets/work/review/findings.json");
+    assert!(addresses[2].starts_with("acme/widgets/work/tmp/"));
+    assert!(addresses[2].ends_with("/dump.txt"));
+}
+
+#[test]
+fn stderr_is_kept_when_a_background_job_holds_the_pipe() {
+    let fx = Fixture::new();
+    fx.hook(
+        "all.d",
+        "10-fail",
+        "#!/bin/sh\necho before-exit >&2\nsleep 3 &\nexit 2\n",
+    );
+
+    fx.add_note("idea").success();
+    let log = fx.dispatch_log();
+    assert_eq!(log[0]["outcome"], "failed");
+    assert_eq!(log[0]["stderr_tail"], "before-exit");
+}
+
+#[test]
+fn timeout_reaches_hooks_of_nested_writes() {
+    let fx = Fixture::new();
+    let cue = assert_cmd::cargo::cargo_bin("cue");
+    let marker = fx.env.temp_dir.path().join("nested-survived");
+    fx.hook(
+        "artifact_create.d",
+        "10-nest",
+        &format!(
+            "#!/bin/sh\n[ \"$CUE_HOOK_DEPTH\" = 1 ] || {{ sleep 2; touch {}; exit 0; }}\n\"{}\" add inner body --type note --context work >/dev/null 2>&1\n",
+            marker.display(),
+            cue.display()
+        ),
+    );
+
+    fx.cue()
+        .env("CUE_HOOK_TIMEOUT_MS", "500")
+        .env("CUE_HOOK_BUDGET_MS", "600")
+        .args([
+            "add",
+            "outer",
+            "body",
+            "--type",
+            "note",
+            "--context",
+            "work",
+        ])
+        .assert()
+        .success();
+    assert_eq!(fx.dispatch_log().last().unwrap()["outcome"], "timeout");
+
+    std::thread::sleep(Duration::from_millis(2500));
+    assert!(!marker.exists(), "nested hook escaped the outer timeout");
+}
