@@ -7,6 +7,10 @@ rust-version = "1.98"
 [dependencies]
 anyhow = "1.0.102"
 dirs = "6.0.0"
+serde = { version = "1.0.228", features = ["derive"] }
+serde_yaml = "0.9"
+tempfile = "3.27.0"
+uuid = { version = "1", features = ["v4"] }
 
 [dev-dependencies]
 tempfile = "3.27.0"

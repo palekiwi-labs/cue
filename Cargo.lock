@@ -739,7 +739,10 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "dirs",
+ "serde",
+ "serde_yaml",
  "tempfile",
+ "uuid",
 ]
 
 [[package]]

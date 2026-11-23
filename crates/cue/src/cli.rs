@@ -128,6 +128,58 @@ pub enum Commands {
         #[command(subcommand)]
         command: ContextCommands,
     },
+    /// Change frontmatter fields of a task, plan, note or context
+    #[command(arg_required_else_help = true)]
+    Update(UpdateArgs),
+}
+
+#[derive(clap::Args)]
+pub struct UpdateArgs {
+    /// Canonical address: <org>/<repo>/<context> or
+    /// <org>/<repo>/<context>/<type>/<name>
+    pub address: String,
+    /// New title
+    #[arg(long)]
+    pub title: Option<String>,
+    /// New status (task, plan, note): open, in-progress, complete, closed
+    #[arg(long, value_parser = cuelib::update::STATUSES.to_vec())]
+    pub status: Option<String>,
+    /// New priority (task): critical, high, normal, low
+    #[arg(long, value_parser = cuelib::update::PRIORITIES.to_vec())]
+    pub priority: Option<String>,
+    /// New description (context)
+    #[arg(long)]
+    pub description: Option<String>,
+    /// New kind (context): work, coord, reference
+    #[arg(long, value_parser = cuelib::update::KINDS.to_vec())]
+    pub kind: Option<String>,
+    /// New mode (context): research, design, build, review, learn
+    #[arg(long, value_parser = cuelib::update::MODES.to_vec())]
+    pub mode: Option<String>,
+    /// Canonical address of the new parent
+    #[arg(long)]
+    pub parent: Option<String>,
+    /// Remove the parent
+    #[arg(long, conflicts_with = "parent")]
+    pub no_parent: bool,
+    /// Add a ref, keeping the others (repeatable)
+    #[arg(long, value_name = "ADDRESS")]
+    pub add_ref: Vec<String>,
+    /// Remove a ref, keeping the others (repeatable)
+    #[arg(long, value_name = "ADDRESS")]
+    pub remove_ref: Vec<String>,
+    /// Replace all refs with these (repeatable)
+    #[arg(long, value_name = "ADDRESS")]
+    pub set_refs: Vec<String>,
+    /// Remove all refs
+    #[arg(long)]
+    pub clear_refs: bool,
+    /// Report the changes without writing them
+    #[arg(long)]
+    pub dry_run: bool,
+    /// Output structured JSON
+    #[arg(long)]
+    pub json: bool,
 }
 
 #[derive(Subcommand)]

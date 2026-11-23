@@ -5,3 +5,4 @@ pub mod list;
 pub mod log;
 pub mod render;
 pub mod status;
+pub mod update;
