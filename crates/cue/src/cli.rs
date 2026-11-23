@@ -131,6 +131,18 @@ pub enum Commands {
     /// Change frontmatter fields of a task, plan, note or context
     #[command(arg_required_else_help = true)]
     Update(UpdateArgs),
+    /// Delete an artifact nothing links to
+    #[command(arg_required_else_help = true)]
+    Delete {
+        /// Canonical artifact address: <org>/<repo>/<context>/<type>/<name>
+        address: String,
+        /// Show what would be deleted without deleting
+        #[arg(long)]
+        dry_run: bool,
+        /// Output as JSON
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(clap::Args)]

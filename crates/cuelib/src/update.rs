@@ -517,7 +517,7 @@ fn new_refs(store: &Path, current: &Mapping, refs: &Refs) -> Result<Vec<String>>
     Ok(list)
 }
 
-fn lock(store: &Path) -> Result<File> {
+pub(crate) fn lock(store: &Path) -> Result<File> {
     let dir = store.join(".state");
     std::fs::create_dir_all(&dir).with_context(|| format!("could not create {}", dir.display()))?;
     let path = dir.join("mutation.lock");

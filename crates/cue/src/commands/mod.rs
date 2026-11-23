@@ -1,6 +1,7 @@
 pub mod activity;
 pub mod add;
 pub mod context;
+pub mod delete;
 pub mod list;
 pub mod log;
 pub mod render;
