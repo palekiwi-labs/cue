@@ -309,14 +309,14 @@ pub fn update(store: &Path, address: &str, request: &Request, dry_run: bool) -> 
         changes: Vec::new(),
     };
     for (field, value) in request.scalars() {
-        edit.set(field, Some(Value::from(value)))?;
+        edit.set(field.key(), Some(Value::from(value)))?;
     }
     match &request.parent {
         Some(Parent::Set(parent)) => {
             check_parent(store, &address, target, parent)?;
-            edit.set(Field::Parent, Some(Value::from(parent.as_str())))?;
+            edit.set("parent", Some(Value::from(parent.as_str())))?;
         }
-        Some(Parent::Clear) => edit.set(Field::Parent, None)?,
+        Some(Parent::Clear) => edit.set("parent", None)?,
         None => {}
     }
     if request.refs != Refs::default() {
@@ -324,7 +324,7 @@ pub fn update(store: &Path, address: &str, request: &Request, dry_run: bool) -> 
         if !old_refs(&current).is_ok_and(|old| old == list) {
             let value = (!list.is_empty())
                 .then(|| Value::Sequence(list.into_iter().map(Value::from).collect()));
-            edit.set(Field::Refs, value)?;
+            edit.set("refs", value)?;
         }
     }
 
@@ -333,6 +333,50 @@ pub fn update(store: &Path, address: &str, request: &Request, dry_run: bool) -> 
         bail!("frontmatter would exceed {max_lines} lines; artifact would be hidden from listings");
     }
     if !edit.changes.is_empty() && !dry_run {
+        write_atomic(&path, &edit.text)?;
+    }
+    Ok(Mutation {
+        mutation_id: uuid::Uuid::new_v4().to_string(),
+        address: address.text,
+        changes: edit.changes,
+    })
+}
+
+/// Set or clear a context's archive stamp under the mutation lock.
+/// Repeated archival keeps the existing stamp and produces no changes.
+pub fn archive(store: &Path, address: &str, archived: bool) -> Result<Mutation> {
+    let address = Address::parse(address)?;
+    if !address.is_context() {
+        bail!("expected a context address");
+    }
+    let _lock = lock(store)?;
+    let path = address.path(store);
+    if !path.is_file() {
+        bail!("no context at {}", address.as_str());
+    }
+    let text = std::fs::read_to_string(&path)
+        .with_context(|| format!("could not read {}", path.display()))?;
+    let current = frontmatter::validate(&text)?;
+    let old = current.get("archived_at").filter(|v| !v.is_null());
+    let new = if archived {
+        Some(match old {
+            Some(value) => value.clone(),
+            None => Value::from(
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)?
+                    .as_secs(),
+            ),
+        })
+    } else {
+        None
+    };
+    let mut edit = Edit {
+        text,
+        current: &current,
+        changes: Vec::new(),
+    };
+    edit.set("archived_at", new)?;
+    if !edit.changes.is_empty() {
         write_atomic(&path, &edit.text)?;
     }
     Ok(Mutation {
@@ -356,8 +400,7 @@ struct Edit<'a> {
 }
 
 impl Edit<'_> {
-    fn set(&mut self, field: Field, new: Option<Value>) -> Result<()> {
-        let key = field.key();
+    fn set(&mut self, key: &'static str, new: Option<Value>) -> Result<()> {
         let old = self
             .current
             .get(key)

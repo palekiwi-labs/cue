@@ -28,6 +28,9 @@ const IGNORED_SUFFIXES: [&str; 5] = ["~", ".bak", ".swp", ".orig", ".tmp"];
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Event {
     ArtifactCreate,
+    ArtifactUpdate,
+    ArtifactDelete,
+    ContextUpdate,
     ContextCreate,
     LogEntryAdd,
 }
@@ -36,6 +39,9 @@ impl Event {
     pub fn name(self) -> &'static str {
         match self {
             Event::ArtifactCreate => "artifact_create",
+            Event::ArtifactUpdate => "artifact_update",
+            Event::ArtifactDelete => "artifact_delete",
+            Event::ContextUpdate => "context_update",
             Event::ContextCreate => "context_create",
             Event::LogEntryAdd => "log_entry_add",
         }
@@ -58,6 +64,17 @@ struct Payload<'a> {
     address: &'a str,
     /// UTC RFC 3339 time of the write.
     occurred_at: String,
+    session_id: Option<String>,
+    #[serde(flatten)]
+    mutation: MutationPayload<'a>,
+}
+
+#[derive(Default, Serialize)]
+struct MutationPayload<'a> {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    mutation_id: Option<&'a str>,
+    #[serde(flatten)]
+    change: Option<&'a cuelib::update::Change>,
 }
 
 struct Lineage {
@@ -98,6 +115,7 @@ struct LogRecord<'a> {
     root_event_id: &'a str,
     depth: u32,
     address: &'a str,
+    session_id: Option<String>,
     outcome: &'a str,
     #[serde(skip_serializing_if = "Option::is_none")]
     hook: Option<String>,
@@ -112,6 +130,41 @@ struct LogRecord<'a> {
 /// Run every hook registered for `event` after a successful write of
 /// `address` in the store at `store_root`. Never returns an error.
 pub fn dispatch(event: Event, address: &str, store_root: &Path) {
+    dispatch_payload(event, address, store_root, MutationPayload::default());
+}
+
+pub fn dispatch_update(mutation: &cuelib::update::Mutation, store_root: &Path) {
+    let event = if mutation.address.split('/').count() == 3 {
+        Event::ContextUpdate
+    } else {
+        Event::ArtifactUpdate
+    };
+    for change in &mutation.changes {
+        dispatch_payload(
+            event,
+            &mutation.address,
+            store_root,
+            MutationPayload {
+                mutation_id: Some(&mutation.mutation_id),
+                change: Some(change),
+            },
+        );
+    }
+}
+
+pub fn dispatch_delete(address: &str, mutation_id: &str, store_root: &Path) {
+    dispatch_payload(
+        Event::ArtifactDelete,
+        address,
+        store_root,
+        MutationPayload {
+            mutation_id: Some(mutation_id),
+            change: None,
+        },
+    );
+}
+
+fn dispatch_payload(event: Event, address: &str, store_root: &Path, mutation: MutationPayload<'_>) {
     let lineage = Lineage::from_env();
     let occurred_at = rfc3339_now();
     let Some(config) = hooks_dir() else {
@@ -135,6 +188,7 @@ pub fn dispatch(event: Event, address: &str, store_root: &Path) {
             root_event_id: &lineage.root_event_id,
             depth: lineage.depth,
             address,
+            session_id: non_empty_var("PI_SESSION_ID"),
             outcome,
             hook: hook.map(|path| path.display().to_string()),
             exit_code,
@@ -160,6 +214,8 @@ pub fn dispatch(event: Event, address: &str, store_root: &Path) {
         event_id: lineage.event_id.clone(),
         address,
         occurred_at,
+        session_id: non_empty_var("PI_SESSION_ID"),
+        mutation,
     })
     .expect("hook payload serializes");
     let timeout = Duration::from_millis(env_number("CUE_HOOK_TIMEOUT_MS", DEFAULT_TIMEOUT_MS));

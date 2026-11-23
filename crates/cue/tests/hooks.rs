@@ -43,7 +43,7 @@ impl Fixture {
 
     fn cue(&self) -> assert_cmd::Command {
         let mut cmd = self.env.command();
-        cmd.env("HOOK_OUT", &self.out);
+        cmd.env("HOOK_OUT", &self.out).env_remove("PI_SESSION_ID");
         cmd
     }
 
@@ -136,7 +136,17 @@ fn all_three_events_reach_a_hook_with_minimal_payload() {
         let object = payload.as_object().unwrap();
         let mut keys: Vec<_> = object.keys().map(String::as_str).collect();
         keys.sort();
-        assert_eq!(keys, ["address", "event", "event_id", "occurred_at", "v"]);
+        assert_eq!(
+            keys,
+            [
+                "address",
+                "event",
+                "event_id",
+                "occurred_at",
+                "session_id",
+                "v"
+            ]
+        );
         assert_eq!(payload["v"], 1);
         assert_eq!(env_value(env, "event"), payload["event"]);
         assert_eq!(env_value(env, "event_id"), payload["event_id"]);
@@ -150,6 +160,189 @@ fn all_three_events_reach_a_hook_with_minimal_payload() {
         let occurred_at = payload["occurred_at"].as_str().unwrap();
         assert!(occurred_at.ends_with('Z') && occurred_at.contains('T'));
     }
+}
+
+#[test]
+fn updates_emit_each_changed_field_with_a_shared_mutation_id() {
+    let fx = Fixture::new();
+    fx.add_note("idea").success();
+    fx.hook("artifact_update.d", "rec", RECORDER);
+    let output = fx
+        .cue()
+        .env("PI_SESSION_ID", "session-123")
+        .args([
+            "update",
+            "acme/widgets/work/note/idea.md",
+            "--title",
+            "New title",
+            "--status",
+            "complete",
+            "--json",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let mutation: Value = serde_json::from_slice(&output).unwrap();
+    let calls = fx.calls();
+    assert_eq!(calls.len(), 2);
+    for (index, (_, payload, _)) in calls.iter().enumerate() {
+        assert_eq!(payload["event"], "artifact_update");
+        assert_eq!(payload["mutation_id"], mutation["mutation_id"]);
+        assert_eq!(payload["field"], mutation["changes"][index]["field"]);
+        assert_eq!(payload["old"], mutation["changes"][index]["old"]);
+        assert_eq!(payload["new"], mutation["changes"][index]["new"]);
+        assert_eq!(payload["session_id"], "session-123");
+    }
+    fx.cue()
+        .args([
+            "update",
+            "acme/widgets/work/note/idea.md",
+            "--title",
+            "New title",
+        ])
+        .assert()
+        .success();
+    fx.cue()
+        .args([
+            "update",
+            "acme/widgets/work/note/idea.md",
+            "--title",
+            "Dry",
+            "--dry-run",
+        ])
+        .assert()
+        .success();
+    assert_eq!(fx.calls().len(), 2);
+    assert_ne!(calls[0].1["event_id"], calls[1].1["event_id"]);
+    assert!(
+        fx.dispatch_log()
+            .iter()
+            .all(|r| r["session_id"] == "session-123")
+    );
+}
+
+#[test]
+fn creation_payloads_and_dispatch_logs_include_the_session() {
+    let fx = Fixture::new();
+    fx.hook("all.d", "rec", RECORDER);
+    fx.cue()
+        .env("PI_SESSION_ID", "creator")
+        .args(["context", "create", "other"])
+        .assert()
+        .success();
+    fx.cue()
+        .env("PI_SESSION_ID", "creator")
+        .args(["add", "idea", "body", "--type", "note", "--context", "work"])
+        .assert()
+        .success();
+    fx.cue()
+        .env("PI_SESSION_ID", "creator")
+        .args(["log", "add", "--title", "hello", "--context", "work"])
+        .assert()
+        .success();
+    assert_eq!(fx.calls().len(), 3);
+    for (_, payload, _) in fx.calls() {
+        assert_eq!(payload["session_id"], "creator");
+        assert!(payload.get("mutation_id").is_none());
+    }
+    assert!(
+        fx.dispatch_log()
+            .iter()
+            .all(|r| r["session_id"] == "creator")
+    );
+}
+
+#[test]
+fn deletion_dispatches_only_after_success_and_not_for_dry_run() {
+    let fx = Fixture::new();
+    fx.add_note("idea").success();
+    fx.hook("all.d", "rec", RECORDER);
+    let address = "acme/widgets/work/note/idea.md";
+    fx.cue()
+        .args(["delete", address, "--dry-run"])
+        .assert()
+        .success();
+    assert!(fx.calls().is_empty());
+    let output = fx
+        .cue()
+        .args(["delete", address, "--json"])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let deletion: Value = serde_json::from_slice(&output).unwrap();
+    let calls = fx.calls();
+    assert_eq!(calls.len(), 1);
+    assert_eq!(calls[0].1["event"], "artifact_delete");
+    assert_eq!(calls[0].1["mutation_id"], deletion["mutation_id"]);
+    assert_eq!(calls[0].1["address"], address);
+    assert!(calls[0].1["session_id"].is_null());
+    assert!(fx.dispatch_log()[0]["session_id"].is_null());
+    assert!(!fx.env.cue_store().join(address).exists());
+    fx.cue().args(["delete", address]).assert().failure();
+    assert_eq!(fx.calls().len(), 1);
+}
+
+#[test]
+fn context_updates_and_archival_emit_changes_but_noops_do_not() {
+    let fx = Fixture::new();
+    fx.hook("context_update.d", "rec", RECORDER);
+    let address = "acme/widgets/work";
+    fx.cue()
+        .args(["update", address, "--title", "Renamed", "--dry-run"])
+        .assert()
+        .success();
+    fx.cue()
+        .args(["context", "unarchive", address])
+        .assert()
+        .success();
+    assert!(fx.calls().is_empty());
+    fx.cue()
+        .args(["update", address, "--title", "Renamed"])
+        .assert()
+        .success();
+    fx.cue()
+        .args(["update", address, "--title", "Renamed"])
+        .assert()
+        .success();
+    fx.cue()
+        .args(["context", "archive", address])
+        .assert()
+        .success();
+    fx.cue()
+        .args(["context", "archive", address])
+        .assert()
+        .success();
+    fx.cue()
+        .args(["context", "unarchive", address])
+        .assert()
+        .success();
+    fx.cue()
+        .args(["context", "unarchive", address])
+        .assert()
+        .success();
+    let calls = fx.calls();
+    assert_eq!(calls.len(), 3);
+    assert!(
+        calls
+            .iter()
+            .all(|(_, p, _)| p["event"] == "context_update" && p["address"] == address)
+    );
+    assert_eq!(calls[0].1["field"], "title");
+    assert_eq!(calls[1].1["field"], "archived_at");
+    assert!(calls[1].1["old"].is_null());
+    assert!(calls[1].1["new"].is_u64());
+    assert_eq!(calls[2].1["old"], calls[1].1["new"]);
+    assert!(calls[2].1["new"].is_null());
+    assert_ne!(calls[1].1["mutation_id"], calls[2].1["mutation_id"]);
+    fx.cue()
+        .args(["update", address, "--status", "complete"])
+        .assert()
+        .failure();
+    assert_eq!(fx.calls().len(), 3);
 }
 
 #[test]
