@@ -111,6 +111,9 @@ fn main() -> anyhow::Result<()> {
         Commands::Context { command } => {
             commands::context::handle(&cwd, command, store_root)?;
         }
+        Commands::Update(args) => {
+            commands::update::handle(args, store_root)?;
+        }
     }
 
     Ok(())

@@ -68,10 +68,12 @@ observability stack (`acuity`), and a terminal kanban view (`curator`).
 The memory core (`cue`/`cuelib`) and the observability stack (`acuity`) are
 independent today; Phase 6 will wire live `acuity` data into `curator`.
 
-The artifact store lives at `<main-git-root>/.cue/`. Linked Git worktrees share
-that store, but each worktree keeps its own local `.cue/HEAD` selection. Scoped
-commands resolve their context in this order: an explicit `--task`, then
-`$CUE_TASK`, then the local `.cue/HEAD`, and finally `master`.
+The artifact store is central, at `$CUE_STORE` (default `~/cue`), with one
+scope per repository derived from its origin remote. Scoped commands resolve
+their context in this order: an explicit `--context`, then `$CUE_CONTEXT`,
+then the current branch's `branch.<name>.cue-context` Git configuration.
+With none of these the context is unset: reads widen to the repository
+scope and writes fail.
 
 ## Install (Nix)
 

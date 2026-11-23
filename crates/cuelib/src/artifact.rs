@@ -3,7 +3,7 @@ use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
 
-const FRONTMATTER_MAX_LINES: usize = 64;
+pub const FRONTMATTER_MAX_LINES: usize = 64;
 
 /// Walk `dir` recursively and return all file paths.
 ///
@@ -98,6 +98,23 @@ mod tests {
             extract_frontmatter_yaml(file.path()).as_deref(),
             Some("status: open\n")
         );
+    }
+
+    #[test]
+    fn frontmatter_over_the_cap_is_not_extracted() {
+        let lines: String = (0..FRONTMATTER_MAX_LINES)
+            .map(|i| format!("key{i}: value\n"))
+            .collect();
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "---\n{lines}---\n# Body\n").unwrap();
+        assert!(extract_frontmatter_yaml(file.path()).is_none());
+
+        let lines: String = (0..FRONTMATTER_MAX_LINES - 1)
+            .map(|i| format!("key{i}: value\n"))
+            .collect();
+        let mut file = NamedTempFile::new().unwrap();
+        write!(file, "---\n{lines}---\n# Body\n").unwrap();
+        assert!(extract_frontmatter_yaml(file.path()).is_some());
     }
 
     #[test]
