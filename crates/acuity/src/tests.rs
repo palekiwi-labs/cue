@@ -615,7 +615,11 @@ async fn query_project_dir_filter() {
 
     // Sanity check: unfiltered query returns both rows (proves both inserted).
     let all_page = body_json(get_events(make_app(state.clone()), "").await).await;
-    assert_eq!(all_page.events.len(), 2, "both rows must be present before filtering");
+    assert_eq!(
+        all_page.events.len(),
+        2,
+        "both rows must be present before filtering"
+    );
 
     // Filter for /home/me/other -> only the PD2 row.
     let resp = get_events(make_app(state.clone()), "project_dir=/home/me/other").await;
@@ -638,9 +642,9 @@ async fn query_project_dir_and_session_id_combined_filter() {
 
     // Three events: two share session_id abc-123 (different project_dirs),
     // one has a different session_id.
-    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await;     // abc-123, /home/me/project
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY).await; // abc-123, /home/me/project
     send_request(app.clone(), Some("1"), SESSION_IDLE_BODY_PD2).await; // abc-123, /home/me/other
-    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY_S2).await;  // session-2, /home/me/other
+    send_request(app.clone(), Some("1"), SESSION_IDLE_BODY_S2).await; // session-2, /home/me/other
 
     // Combined: session_id=abc-123 AND project_dir=/home/me/other -> only PD2.
     let resp = get_events(

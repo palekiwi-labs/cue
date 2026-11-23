@@ -114,6 +114,13 @@ fn main() -> anyhow::Result<()> {
         Commands::Update(args) => {
             commands::update::handle(args, store_root)?;
         }
+        Commands::Delete {
+            address,
+            dry_run,
+            json,
+        } => {
+            commands::delete::handle(address, dry_run, json, store_root)?;
+        }
     }
 
     Ok(())
