@@ -20,7 +20,7 @@ use serde::Deserialize;
 use serde_json::json;
 use sqlx::SqlitePool;
 use tracing::{debug, error, info};
-use tracing_subscriber::{EnvFilter, fmt, prelude::*};
+use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 
 #[derive(Clone)]
 struct AppState {
@@ -200,8 +200,8 @@ async fn sse_handler(
 async fn main() -> anyhow::Result<()> {
     // Stderr layer: quiet for the human operator.
     // Filter from RUST_LOG; default acuity=info.
-    let stderr_filter =
-        EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("acuity=info"));
+    let stderr_filter = EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| EnvFilter::new("acuity=info"));
     let stderr_layer = fmt::layer()
         .with_writer(std::io::stderr)
         .with_filter(stderr_filter);
