@@ -24,6 +24,10 @@ pub fn handle(args: UpdateArgs, store_root: Option<&Path>) -> anyhow::Result<()>
     let store = cuelib::store::root(store_root)?;
     let mutation = cuelib::update::update(&store, &args.address, &request, args.dry_run)?;
 
+    if !args.dry_run {
+        crate::hooks::dispatch_update(&mutation, &store);
+    }
+
     if args.json {
         println!("{}", serde_json::to_string_pretty(&mutation)?);
     } else {

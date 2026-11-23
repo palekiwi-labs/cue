@@ -229,54 +229,10 @@ fn archive_one(
 ) -> anyhow::Result<String> {
     let resolved = cuelib::head::resolve_selector(selector)?;
     let address = resolved.address(cwd)?;
-    let context_dir = resolved.context_dir(cwd, store_root)?;
-    let path = context_dir.join("context.md");
-    if !path.is_file() {
-        anyhow::bail!("no context at {address}");
-    }
-
-    let text = std::fs::read_to_string(&path)
-        .with_context(|| format!("could not read {}", path.display()))?;
-    // Whether the context is archived is decided by the parsed record, as
-    // listings decide it. The text editor only handles the canonical
-    // `archived_at:` line; any other spelling is refused rather than left in
-    // place while reporting success.
-    let yaml = extract_frontmatter_yaml(&path).unwrap_or_default();
-    let parsed: serde_yaml::Value = serde_yaml::from_str(&yaml)
-        .with_context(|| format!("invalid context metadata at {}", path.display()))?;
-    let stamp = parsed.get("archived_at");
-    let remove = |text: &str| {
-        cuelib::frontmatter::remove(text, "archived_at")?
-            .context("archived_at is not written as a plain 'archived_at:' line")
-    };
-    let edited = match (archival, stamp) {
-        // Archiving an archived context keeps the stamp it already has.
-        (Archival::Archive, Some(stamp)) if !stamp.is_null() => Ok(None),
-        (Archival::Archive, stamp) => (|| {
-            let now = SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs();
-            // A null stamp is not archived; its line is replaced.
-            let text = match stamp {
-                Some(_) => remove(&text)?,
-                None => text.clone(),
-            };
-            cuelib::frontmatter::insert_if_absent(&text, "archived_at", &now.to_string())
-        })(),
-        (Archival::Unarchive, None) => Ok(None),
-        (Archival::Unarchive, Some(_)) => remove(&text).map(Some),
-    }
-    .with_context(|| format!("could not edit {}", path.display()))?;
-
-    if let Some(edited) = edited {
-        // Replace the record whole, so a reader never sees a partial write.
-        // The temporary file takes the record's permissions, which it would
-        // otherwise replace with its own private mode.
-        let mut file = tempfile::NamedTempFile::new_in(&context_dir)?;
-        file.as_file()
-            .set_permissions(std::fs::metadata(&path)?.permissions())?;
-        std::io::Write::write_all(&mut file, edited.as_bytes())?;
-        file.persist(&path)
-            .with_context(|| format!("could not write {}", path.display()))?;
-    }
+    let store = cuelib::store::root(store_root)?;
+    let mutation =
+        cuelib::update::archive(&store, &address, matches!(archival, Archival::Archive))?;
+    crate::hooks::dispatch_update(&mutation, &store);
     Ok(address)
 }
 
